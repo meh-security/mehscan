@@ -812,6 +812,7 @@ pub(super) fn groups(
     scope: Option<&mehscan_core::ImpactScanScope>,
     include_material: bool,
     selection: &rust_configuration::Selection,
+    parsed: &rust_dependencies::RustSources,
 ) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
     for file in sources.files.values().filter(|file| {
@@ -821,11 +822,9 @@ pub(super) fn groups(
             && !selection.excluded_file(&file.path)
             && (include_material || !is_review_material_path(&file.path))
     }) {
-        let Ok(document) = StrDoc::try_new(&file.source, SupportLang::Rust) else {
+        let Some(root) = parsed.root(&file.path) else {
             continue;
         };
-        let ast = AstGrep::doc(document);
-        let root = ast.root();
         let bindings = Bindings::new(file, &root, selection);
         let protocols = protocols(file, &root, &bindings, selection);
         if protocols.is_empty() {

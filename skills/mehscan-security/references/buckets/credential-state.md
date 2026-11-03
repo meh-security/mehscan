@@ -5,6 +5,12 @@ credential transition or renewal → rejection before the effect**. This applies
 password, passcode, MFA, authenticator, recovery code and API-key changes,
 and token renewal.
 
+Rust `rust_context_*` dependencies can supply typed extractors, validating and
+issuing helpers, import bindings and macro bodies. Their presence does not
+establish effective trait dispatch, active configuration or a credential's
+authority. Trace the same subject and security state through the actual branch;
+use unresolved dependencies as deciding questions rather than safe assumptions.
+
 A valid session identifies a subject but may not satisfy the proof required
 for this particular change. Check whether old-secret confirmation, verified
 recovery token, step-up proof or equivalent policy attaches to the same

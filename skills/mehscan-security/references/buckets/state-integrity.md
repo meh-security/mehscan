@@ -4,6 +4,12 @@ Trace **caller-controlled value → server authority or allowed transition →
 rejection → persisted effect**. Focus on the exact field or state the review
 names.
 
+For Rust, inspect prepared `rust_context_*` type, helper, binding and macro source
+before repeating lookups. A macro body or transaction-shaped helper does not
+prove that the same connection/lock covers the complete check/change/write.
+Distinguish source candidates from established dispatch, and retain unknown
+macro expansion, target/features and connection identity when they decide it.
+
 - **Object binding:** Identify a sensitive writable field and the persistence
   boundary. A typed request or annotation is not a write allowlist by itself.
 - **CSRF:** Establish a cross-site request the attacker can cause, delivery of

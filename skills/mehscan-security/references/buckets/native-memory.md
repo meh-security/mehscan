@@ -3,6 +3,36 @@
 Match the exact operation to its authoritative extent, object and branch.
 Attacker-controlled input is not required for every memory defect.
 
+Rust `raw_operation_definition` and the captured parameter/owner identify the
+selected operation. Review each invariant separately: vector metadata uses
+element counts and initialized length no greater than capacity; ownership must
+transfer the same live allocation exactly once; retyping must preserve allocation
+size/alignment and valid initialized representation. A byte pointer's apparent
+alignment does not establish the allocation layout required at deallocation.
+`Copy` does not exclude padding, and a plain-data bound alone does not guarantee
+that changing the allocation's element alignment is valid. A repair for metadata
+or padding is not closure for another invariant. See the
+[vector reconstruction contract](https://doc.rust-lang.org/std/vec/struct.Vec.html#method.from_raw_parts).
+
+For raw slices and copies exposed through safe APIs, check every relevant pointer,
+extent, alignment, mutability and lifetime condition. A non-null check does not
+validate arbitrary non-null addresses or lengths. For slice-derived pointers,
+compare the count with the exact source/destination bounds before the operation;
+account for element size and overlap. `copy` permits overlap;
+`copy_nonoverlapping` does not. Bitwise copying owning values also needs an
+ownership transfer: inspect the actual source suppression and destination Drop,
+including custom element Drop and unwind paths. Follow the original binding
+through moves and shadowing; forgetting a replacement owner does not release the
+original one. An opaque helper leaves its precise effect unresolved. See
+[raw-copy requirements](https://doc.rust-lang.org/std/ptr/fn.copy_nonoverlapping.html).
+
+`rust_context_*` captures provide bounded typed definitions, import/re-export
+bindings and macro bodies as source context. They do not prove trait dispatch,
+macro expansion, active features, caller authority or a transaction's coverage.
+Use the exact bound implementation when established; identify the unresolved
+binding/configuration when it decides the result. Optional context is separate
+from the selected operation's applicability.
+
 `native_operand_declaration` locates the scalar's declared type; inspect typedefs,
 promotions and the value at the operation before deciding its arithmetic domain.
 `local_call_argument` locates one direct file-local helper argument. Check its

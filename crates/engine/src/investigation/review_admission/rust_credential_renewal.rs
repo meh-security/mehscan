@@ -21,7 +21,7 @@ struct Function {
 
 struct Functions<'a> {
     sources: &'a RepositorySources,
-    models: ModelBindings,
+    models: &'a ModelBindings,
     functions: BTreeMap<String, Vec<Function>>,
 }
 
@@ -330,10 +330,15 @@ impl Function {
 }
 
 impl<'a> Functions<'a> {
-    fn build(sources: &'a RepositorySources, selection: &rust_configuration::Selection) -> Self {
+    fn build(
+        sources: &'a RepositorySources,
+        selection: &rust_configuration::Selection,
+        parsed: &rust_dependencies::RustSources,
+        models: &'a ModelBindings,
+    ) -> Self {
         let mut result = Self {
             sources,
-            models: ModelBindings::build(sources, selection),
+            models,
             functions: BTreeMap::new(),
         };
         for file in sources.files.values().filter(|f| {
@@ -341,12 +346,9 @@ impl<'a> Functions<'a> {
                 && !selection.excluded_file(&f.path)
                 && f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
         }) {
-            let Ok(doc) = StrDoc::try_new(&file.source, ast_grep_language::SupportLang::Rust)
-            else {
+            let Some(root) = parsed.root(&file.path) else {
                 continue;
             };
-            let ast = AstGrep::doc(doc);
-            let root = ast.root();
             let namespace = module(&file.path);
             let mut root_imports = Vec::new();
             for n in root.children().filter(|n| {
@@ -736,12 +738,36 @@ pub(super) fn groups(
     )
 }
 
+#[cfg(test)]
 pub(super) fn configured_groups(
     sources: &RepositorySources,
     existing: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
     include_material: bool,
     selection: &rust_configuration::Selection,
+) -> Vec<ObservationGroup> {
+    let parsed = rust_dependencies::RustSources::build(sources, selection);
+    let models = ModelBindings::build(sources, selection, &parsed);
+    configured_groups_with_context(
+        sources,
+        existing,
+        scope,
+        include_material,
+        selection,
+        &parsed,
+        &models,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn configured_groups_with_context(
+    sources: &RepositorySources,
+    existing: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    include_material: bool,
+    selection: &rust_configuration::Selection,
+    parsed: &rust_dependencies::RustSources,
+    models: &ModelBindings,
 ) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
     if !sources.files.values().any(|f| {
@@ -755,7 +781,7 @@ pub(super) fn configured_groups(
     }) {
         return groups;
     }
-    let index = Functions::build(sources, selection);
+    let index = Functions::build(sources, selection, parsed, models);
     for caller in index
         .functions
         .values()

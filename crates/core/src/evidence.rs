@@ -116,6 +116,9 @@ pub enum Capability {
     /// loop with an explicit exceptional exit. Pending pointee ownership and
     /// cleanup on that exit require review.
     ExceptionalOwnershipCleanup,
+    /// A concrete standard Rust raw-memory operation with source-bound pointer,
+    /// owner or safe API boundary evidence; individual invariants require review.
+    RustRawMemoryReview,
     /// A C-family conversion that may discard higher-order integer bits before
     /// the converted value reaches a security-relevant arithmetic operation.
     IntegerNarrowing,

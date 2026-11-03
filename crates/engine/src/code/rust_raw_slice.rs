@@ -628,7 +628,7 @@ fn is_null<'a>(root: &N<'a>, node: &N<'a>) -> bool {
         )
     })
 }
-fn function_identity<'a>(root: &N<'a>, call: &N<'a>) -> Option<(String, Option<N<'a>>)> {
+pub(crate) fn function_identity<'a>(root: &N<'a>, call: &N<'a>) -> Option<(String, Option<N<'a>>)> {
     let mut function = call.field("function")?;
     if function.kind().as_ref() == "generic_function" {
         function = function.field("function")?;

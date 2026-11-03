@@ -123,7 +123,8 @@ impl Selection {
         locations.extend(fact.captures.iter().map(|(role, capture)| {
             // Supplementary revocation leads do not gate the exchange chain.
             let required = !role.starts_with("security_state_writer")
-                && !role.starts_with("security_state_caller");
+                && !role.starts_with("security_state_caller")
+                && !role.starts_with("rust_context_");
             (capture.location.clone(), required)
         }));
         let mut files = BTreeSet::new();

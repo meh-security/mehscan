@@ -65,6 +65,19 @@ trait implementation. Recognition currently requires supported local definitions
 in one file; arbitrary wrappers, cross-file dispatch and other containers remain
 limited. Unknown external initialization stays a review question.
 
+Rust raw-memory review also connects owned vectors to raw reconstruction,
+bitwise copies to pending ownership, and safe raw-pointer/slice APIs to their
+memory preconditions. Metadata, allocation layout, initialized representation,
+copy ranges and ownership remain separate questions. Supported direct operations
+and source-defined copy helpers retain their source and binding evidence.
+Arbitrary pointer aliasing, generated code and whole-program soundness remain
+outside these bounded relationships.
+
+Rust policy reviews share prepared type, import/re-export, helper and macro
+source context. Definitions are not universal trait-dispatch or macro-expansion
+proof. Unknown implementations and configuration remain explicit, and optional
+context does not change the selected operation's availability.
+
 ## Choose the source you intend to review
 
 Directory scans honor repository ignore files and built-in dependency/build

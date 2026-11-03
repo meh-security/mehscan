@@ -9,10 +9,13 @@
 - Review pending C++ allocations abandoned by explicit exceptional exits.
 - Review nullable Rust buffers passed to raw-slice APIs.
 - Review initialized Rust buffer ranges before publishing their length.
+- Review Rust raw-memory ownership, allocation layout and copy boundaries.
+- Include typed Rust helper and persistence context in AI review.
 - Preserve captured helper evidence during AI review.
 
 ## Bug fixes
 
+- Preserve Rust lifetimes and source lines during AI review.
 - Exclude additional test, spec and sample conventions from ordinary scans.
 - Preserve C# handler bindings and C++ allocation ownership evidence.
 - Review .NET hash operations without inferring password or reset-token use from names.

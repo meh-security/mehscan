@@ -431,7 +431,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
-const RUST_CONFIGURATION_REVISION: &str = "source-modules-and-buffer-effects-v3";
+const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v4";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
@@ -5521,6 +5521,10 @@ fn project_investigation_facts(
         }
     });
     let mut retained_bytes = 0usize;
+    let rust_dependencies = facts
+        .iter()
+        .any(|f| f.role == "rust_dependency_definition_context");
+    let mut rust_bytes = 0usize;
     let angular_packet = facts.iter().any(|fact| {
         matches!(
             fact.role.as_str(),
@@ -5569,6 +5573,27 @@ fn project_investigation_facts(
     }
     for index in order {
         let fact = &mut facts[index];
+        // Prepared Rust relationships already bound the dependency closure.
+        // Keep up to 8 KiB beside the small anchor card; a per-fact limit keeps
+        // large implementations as explicit locators rather than app context.
+        if rust_dependencies
+            && matches!(
+                fact.role.as_str(),
+                "rust_dependency_definition_context" | "captured_definition_context"
+            )
+        {
+            if fact.excerpt.len() <= 4096 && rust_bytes + fact.excerpt.len() <= 8192 {
+                rust_bytes += fact.excerpt.len();
+            } else {
+                fact.excerpt.clear();
+                if !fact.provenance.engine.contains("location-only") {
+                    fact.provenance
+                        .engine
+                        .push_str("; location-only review lead");
+                }
+            }
+            continue;
+        }
         if helper_inline.contains(&index) {
             continue;
         }
@@ -5662,6 +5687,7 @@ fn review_playbook_bucket(
             | Capability::RustRawSliceConstruction
             | Capability::ContainerBorrowLifetime
             | Capability::ExceptionalOwnershipCleanup
+            | Capability::RustRawMemoryReview
     ) {
         return "native_memory";
     }
@@ -9411,6 +9437,7 @@ fn captured_definition_facts<'a>(
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
     let mut facts = Vec::new();
+    let mut any_truncated = false;
     for item in evidence {
         for (name, capture) in &item.captures {
             if !name.ends_with("_definition")
@@ -9428,7 +9455,7 @@ fn captured_definition_facts<'a>(
             let Ok(file) = sources.file(&capture.location.path) else {
                 continue;
             };
-            let slice = if name == "helper_definition" {
+            let slice = if name == "helper_definition" || name.starts_with("rust_context_") {
                 let start = capture.location.start.byte_offset;
                 let end = capture.location.end.byte_offset;
                 let Some(text) = file.source.get(start..end).filter(|text| !text.is_empty()) else {
@@ -9459,21 +9486,34 @@ fn captured_definition_facts<'a>(
                 continue;
             };
             facts.push(ReviewNeighborhoodFact {
-                role: "captured_definition_context".to_string(),
-                symbol: capture.text.clone(),
+                role: if name.starts_with("rust_context_") {
+                    "rust_dependency_definition_context"
+                } else {
+                    "captured_definition_context"
+                }
+                .to_string(),
+                symbol: if file.language == Some(Language::Rust) {
+                    format!("Rust source definition ({name})")
+                } else {
+                    capture.text.clone()
+                },
                 location: slice.location,
-                excerpt: redact_helper_definition(&capture.text, &slice.text),
+                excerpt: redact_file_helper_definition(file, &capture.text, &slice.text),
                 evidence_id: Some(item.id.clone()),
                 provenance: textual_provenance(
                     "exact evidence-captured definition, bounded and non-flow 1",
                 ),
             });
             if truncated {
-                return (facts, true);
+                if file.language == Some(Language::Rust) {
+                    any_truncated = true;
+                } else {
+                    return (facts, true);
+                }
             }
         }
     }
-    (facts, false)
+    (facts, any_truncated)
 }
 
 fn python_source_file_consumer_facts(
@@ -9773,8 +9813,16 @@ fn build_observation_reviews(
             frontend_facts.extend(frontend_context.import_facts(&frontend_facts));
         }
         facts.append(&mut frontend_facts);
-        let (mut captured_definitions, captured_definitions_truncated) =
-            captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
+        let (mut captured_definitions, captured_definitions_truncated) = captured_definition_facts(
+            sources,
+            group.evidence.iter(),
+            &facts,
+            if file.language == Some(Language::Rust) {
+                8
+            } else {
+                3
+            },
+        );
         for item in &group.evidence {
             facts.extend(prepared_statement_facts(&group.path, &file.source, item));
         }
@@ -10652,7 +10700,7 @@ fn imported_member_definition_facts(
             continue;
         };
         let clipped = truncated || end_line < last_line;
-        let excerpt = redact_helper_definition(&symbol.name, &slice.text);
+        let excerpt = redact_file_helper_definition(file, &symbol.name, &slice.text);
         let complete = !clipped && excerpt == slice.text;
         facts.push(ReviewNeighborhoodFact {
             role: if complete { "imported_member_definition_context" } else { "imported_member_prefix_context" }.into(), symbol: symbol.name.clone(),
@@ -10737,7 +10785,7 @@ fn observation_helper_definition_facts(
                 role: "helper_definition_context".to_string(),
                 symbol: name.clone(),
                 location: slice.location,
-                excerpt: redact_helper_definition(name, &slice.text),
+                excerpt: redact_file_helper_definition(file, name, &slice.text),
                 evidence_id: None,
                 provenance: textual_provenance(
                     "bounded exact helper referenced by observation, lexical non-flow 1",
@@ -17725,7 +17773,7 @@ impl ReviewContextIndex {
                     continue;
                 };
                 truncated |= slice_truncated || end_line < location_end_line;
-                let excerpt = redact_helper_definition(name, &slice.text);
+                let excerpt = redact_file_helper_definition(file, name, &slice.text);
                 facts.push(ReviewNeighborhoodFact {
                     role: "helper_definition_context".to_string(),
                     symbol: name.clone(),
@@ -19898,6 +19946,69 @@ fn facts_cover_location(facts: &[ReviewNeighborhoodFact], location: &Location) -
             && fact.location.start.byte_offset <= location.start.byte_offset
             && fact.location.end.byte_offset >= location.end.byte_offset
     })
+}
+
+fn redact_file_helper_definition(file: &SourceFile, name: &str, excerpt: &str) -> String {
+    if file.language != Some(Language::Rust) {
+        return redact_helper_definition(name, excerpt);
+    }
+    if !is_sensitive_reference_name(name) {
+        return excerpt.into();
+    }
+    fn opaque(source: &str) -> String {
+        String::from_utf8(
+            source
+                .bytes()
+                .map(|b| if matches!(b, b'\r' | b'\n') { b } else { b'*' })
+                .collect(),
+        )
+        .expect("masked bytes are ASCII")
+    }
+    // Rust lifetimes and labels are not quoted strings. Parse literal nodes
+    // rather than consuming the remainder of a definition after an apostrophe.
+    // Keep physical bytes/line extents so the addressed display stays valid.
+    let Ok(doc) = StrDoc::try_new(excerpt, SupportLang::Rust) else {
+        return opaque(excerpt);
+    };
+    let tree = AstGrep::doc(doc);
+    if tree.root().dfs().any(|n| n.is_error() || n.is_missing())
+        || excerpt.to_ascii_lowercase().contains("begin private key")
+        || excerpt
+            .to_ascii_lowercase()
+            .contains("begin rsa private key")
+    {
+        return opaque(excerpt);
+    }
+    let mut bytes = excerpt.as_bytes().to_vec();
+    for node in tree.root().dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "string_literal" | "raw_string_literal" | "char_literal"
+        )
+    }) {
+        let range = node.range();
+        let text = &excerpt[range.clone()];
+        let quote = if node.kind().as_ref() == "char_literal" {
+            b'\''
+        } else {
+            b'"'
+        };
+        let Some(first) = text.as_bytes().iter().position(|b| *b == quote) else {
+            continue;
+        };
+        let Some(last) = text.as_bytes().iter().rposition(|b| *b == quote) else {
+            continue;
+        };
+        if last <= first {
+            return opaque(excerpt);
+        }
+        for byte in &mut bytes[range.start + first + 1..range.start + last] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b'*';
+            }
+        }
+    }
+    String::from_utf8(bytes).expect("masked literal bytes retain UTF-8")
 }
 
 fn redact_helper_definition(name: &str, excerpt: &str) -> String {
@@ -24083,6 +24194,36 @@ mod tests {
     }
 
     #[test]
+    fn rust_dependency_projection_preserves_bodies_with_a_separate_hard_budget() {
+        let location = location_from_offsets("src/lib.rs", "effect();", 0, 9);
+        let mut facts = [
+            "source_context",
+            "captured_definition_context",
+            "rust_dependency_definition_context",
+            "rust_dependency_definition_context",
+        ]
+        .into_iter()
+        .map(|role| ReviewNeighborhoodFact {
+            role: role.into(),
+            symbol: "helper".into(),
+            location: location.clone(),
+            excerpt: if role == "source_context" {
+                "effect();".into()
+            } else {
+                "x".repeat(4096)
+            },
+            evidence_id: Some("ev-selected".into()),
+            provenance: textual_provenance("bounded Rust dependency"),
+        })
+        .collect::<Vec<_>>();
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &location);
+        assert_eq!(facts[0].excerpt, "effect();");
+        assert_eq!(facts[1].excerpt.len() + facts[2].excerpt.len(), 8192);
+        assert!(facts[3].excerpt.is_empty());
+        assert!(facts[3].provenance.engine.contains("location-only"));
+    }
+
+    #[test]
     fn investigation_projection_retains_exact_anchor_after_artifact_ids_are_assigned() {
         let source = format!(
             "{}sink(user_input);\n{}",
@@ -24509,6 +24650,45 @@ mod tests {
                 && fact.symbol == "notevil"
                 && fact.excerpt.contains("^1.3.3")
         }));
+    }
+
+    #[test]
+    fn rust_sensitive_definition_redaction_preserves_lifetimes_labels_and_physical_lines() {
+        let text = "pub fn token<'a>(value:&'a str, n:Notify<'_>) {\r\n 'again:loop{let secret=r##\"first\r\nsecond\"##;let ch='é';let byte=b'\\n';break 'again;}\r\n issue(value);\r\n}\r\n";
+        let file = SourceFile {
+            path: "src/lib.rs".into(),
+            language: Some(Language::Rust),
+            source: text.into(),
+        };
+        let redacted = redact_file_helper_definition(&file, "password_token", text);
+        assert!(redacted.contains("token<'a>"));
+        assert!(redacted.contains("Notify<'_>"));
+        assert!(redacted.contains("'again:loop"));
+        assert!(redacted.contains("break 'again"));
+        assert!(redacted.contains("issue(value)"));
+        assert!(!redacted.contains("first"));
+        assert!(!redacted.contains("second"));
+        assert!(!redacted.contains('é'));
+        assert_eq!(redacted.len(), text.len());
+        let partial = "fn password<'a>(){let value=\"secret-unterminated\n";
+        let masked = redact_file_helper_definition(&file, "password_value", partial);
+        assert!(!masked.contains("secret"));
+        assert_eq!(masked.len(), partial.len());
+        assert_eq!(masked.lines().count(), partial.lines().count());
+        assert_eq!(
+            redacted
+                .match_indices('\n')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>(),
+            text.match_indices('\n').map(|(i, _)| i).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            redacted
+                .match_indices('\r')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>(),
+            text.match_indices('\r').map(|(i, _)| i).collect::<Vec<_>>()
+        );
     }
 
     #[test]

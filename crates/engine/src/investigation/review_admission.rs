@@ -5,6 +5,8 @@ mod python_credentials;
 mod rust_buffer_initialization;
 mod rust_configuration;
 mod rust_credential_renewal;
+mod rust_dependencies;
+mod rust_raw_memory;
 mod rust_shared_state;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
@@ -66,19 +68,26 @@ fn server_mutation_review_marker_groups(
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
     let selection =
         rust_configuration::Selection::build(sources, configurations, include_review_material);
-    let mut groups = rust_shared_state::configured_groups(
+    let parsed = rust_dependencies::RustSources::build(sources, &selection);
+    let models = rust_shared_state::ModelBindings::build(sources, &selection, &parsed);
+    let dependencies = rust_dependencies::Dependencies::build(sources, &selection, &parsed);
+    let mut groups = rust_shared_state::configured_groups_with_context(
         sources,
         existing_evidence,
         scope,
         include_review_material,
         &selection,
+        &parsed,
+        &models,
     );
-    groups.extend(rust_credential_renewal::configured_groups(
+    groups.extend(rust_credential_renewal::configured_groups_with_context(
         sources,
         existing_evidence,
         scope,
         include_review_material,
         &selection,
+        &parsed,
+        &models,
     ));
     groups.extend(rust_buffer_initialization::groups(
         sources,
@@ -86,6 +95,15 @@ fn server_mutation_review_marker_groups(
         scope,
         include_review_material,
         &selection,
+        &parsed,
+    ));
+    groups.extend(rust_raw_memory::groups(
+        sources,
+        scope,
+        include_review_material,
+        &selection,
+        &parsed,
+        &dependencies,
     ));
     let mut seen = BTreeSet::new();
     for file in sources.files.values() {
@@ -310,6 +328,7 @@ fn server_mutation_review_marker_groups(
             });
         }
     }
+    dependencies.enrich(&mut groups);
     for group in &mut groups {
         for fact in &mut group.evidence {
             selection.annotate(fact);
@@ -578,6 +597,42 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    if let Some(e) = evidence
+        .iter()
+        .find(|e| e.capability == Capability::RustRawMemoryReview)
+    {
+        let (question, title) = match e.rule_id.as_str() {
+            "rust-vector-metadata-review" => (
+                "Do the reconstructed vector's length and capacity operands represent the correct element counts, with initialized length no greater than its actual capacity? Trace their source and arithmetic. Ownership and allocation layout are separate obligations.",
+                "Review reconstructed vector metadata",
+            ),
+            "rust-vector-ownership-review" => (
+                "Does reconstruction transfer this live vector allocation exactly once, without a remaining owner or earlier destruction? Check consuming raw-parts APIs, ManuallyDrop, forget, rebinding and possible unwinding before ownership is disabled. Metadata and allocation layout are separate obligations.",
+                "Review vector ownership handoff",
+            ),
+            "rust-vector-layout-review" => (
+                "Does the reconstructed element type preserve the original allocation size and alignment, and are the exposed bytes initialized and valid for the new representation? Copy alone does not exclude padding. Check actual trait guarantees and deallocation layout; metadata ordering and owner handoff are separate.",
+                "Review raw vector allocation layout",
+            ),
+            "rust-raw-copy-range-review" => (
+                "Do the effective source and destination ranges cover this copy count in elements, with valid alignment and initialized storage as required? Establish the same objects and rejecting checks before the copy. copy_nonoverlapping additionally requires disjoint ranges; copy permits overlap.",
+                "Review raw copy ranges",
+            ),
+            "rust-owned-buffer-copy-review" => (
+                "Does this bitwise copy leave live source-owned values duplicated in storage that will also destroy them? Trace the actual copy helper, destination ownership/drop, source suppression and generic element bounds. Distinguish Copy bytes, transfer, opaque effects, copy bounds and panic paths.",
+                "Review bitwise ownership transfer",
+            ),
+            _ => (
+                "Can a safe caller supply a pointer or extent that violates this raw memory operation's validity, alignment, initialized range or ownership contract? Establish the actual public/FFI boundary and effective checks; a null or zero-length check alone does not validate arbitrary non-null memory.",
+                "Review safe raw-memory boundary",
+            ),
+        };
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_raw_memory_invariant_review",
+            security_question: question,
+            title,
+        });
+    }
     if evidence
         .iter()
         .any(|e| e.capability == Capability::ExceptionalOwnershipCleanup)

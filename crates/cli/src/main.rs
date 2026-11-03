@@ -3612,30 +3612,32 @@ fn compact_helper_context(
         }).collect::<Vec<_>>();
     // Path candidates intentionally omit captures. The definition fact remains
     // bound to this exact evidence ID; do not infer a target from its spelling.
-    let Some(fact) = review["facts"]
+    for fact in review["facts"]
         .as_array()
         .into_iter()
         .flatten()
-        .find(|fact| {
-            fact["role"] == "captured_definition_context"
+        .filter(|fact| {
+            (fact["role"] == "captured_definition_context"
+                || fact["role"] == "rust_dependency_definition_context")
                 && fact["evidence_id"] == anchor["id"]
                 && fact["excerpt"]
                     .as_str()
                     .is_some_and(|text| !text.is_empty())
         })
-    else {
-        return contexts;
-    };
-    let location = &fact["location"];
-    let exact_excerpt = match (
-        location["start"]["byte_offset"].as_u64(),
-        location["end"]["byte_offset"].as_u64(),
-        fact["excerpt"].as_str(),
-    ) {
-        (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
-        _ => false,
-    };
-    contexts.push(serde_json::json!({
+        .take(if review["language"] == "rust" { 8 } else { 1 })
+    {
+        let location = &fact["location"];
+        let exact_excerpt = match (
+            location["start"]["byte_offset"].as_u64(),
+            location["end"]["byte_offset"].as_u64(),
+            fact["excerpt"].as_str(),
+        ) {
+            (Some(start), Some(end), Some(text)) => {
+                end.checked_sub(start) == Some(text.len() as u64)
+            }
+            _ => false,
+        };
+        contexts.push(serde_json::json!({
         "role": fact["role"], "symbol": fact["symbol"],
         "location": {
             "path": location["path"], "start_line": location["start"]["line"], "end_line": location["end"]["line"],
@@ -3645,6 +3647,7 @@ fn compact_helper_context(
         "excerpt": fact["excerpt"],
         "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
     }));
+    }
     contexts
 }
 
@@ -4553,6 +4556,24 @@ mod tests {
         assert_eq!(context.len(), 1);
         assert_eq!(context[0]["location"]["path"], "helper.ts");
         assert_eq!(context[0]["truncated"], false);
+        let mut rust = review.clone();
+        rust["language"] = serde_json::json!("rust");
+        let mut second = rust["facts"][0].clone();
+        second["symbol"] = serde_json::json!("Actor");
+        second["location"]["path"] = serde_json::json!("identity.rs");
+        rust["facts"].as_array_mut().unwrap().push(second);
+        let mut unrelated = rust["facts"][0].clone();
+        unrelated["evidence_id"] = serde_json::json!("another-operation");
+        rust["facts"].as_array_mut().unwrap().push(unrelated);
+        let delivered = super::compact_helper_context(&rust, &anchor);
+        assert_eq!(
+            delivered.len(),
+            2,
+            "all bounded Rust dependencies must reach the skill, with per-operation attribution"
+        );
+        assert_eq!(delivered[1]["symbol"], "Actor");
+        rust["facts"][1]["role"] = serde_json::json!("rust_dependency_definition_context");
+        assert_eq!(super::compact_helper_context(&rust, &anchor).len(), 2);
         for rule in [
             "go-md5-password-hash",
             "java-helper-summary",

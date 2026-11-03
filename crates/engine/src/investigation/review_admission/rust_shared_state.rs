@@ -71,15 +71,7 @@ pub(super) fn qualified(current: &str, name: &str) -> String {
 }
 
 fn capture(file: &SourceFile, node: &AstNode<'_>) -> Capture {
-    Capture {
-        text: node.text().into_owned(),
-        location: location_from_offsets(
-            &file.path,
-            &file.source,
-            node.range().start,
-            node.range().end,
-        ),
-    }
+    super::rust_dependencies::capture(file, node)
 }
 
 pub(super) fn owns(node: &AstNode<'_>, function: &AstNode<'_>) -> bool {
@@ -217,18 +209,20 @@ pub(super) fn imports(
 }
 
 impl Index {
-    fn build(sources: &RepositorySources, selection: &rust_configuration::Selection) -> Self {
+    fn build(
+        sources: &RepositorySources,
+        selection: &rust_configuration::Selection,
+        parsed: &rust_dependencies::RustSources,
+    ) -> Self {
         let mut index = Self::default();
         for file in sources.files.values().filter(|f| {
             f.language == Some(Language::Rust)
                 && !selection.excluded_file(&f.path)
                 && f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
         }) {
-            let Ok(document) = StrDoc::try_new(&file.source, SupportLang::Rust) else {
+            let Some(root) = parsed.root(&file.path) else {
                 continue;
             };
-            let ast = AstGrep::doc(document);
-            let root = ast.root();
             let mut facts = FileIndex {
                 module: module(&file.path),
                 ..Default::default()
@@ -441,8 +435,9 @@ impl ModelBindings {
     pub(super) fn build(
         sources: &RepositorySources,
         selection: &rust_configuration::Selection,
+        parsed: &rust_dependencies::RustSources,
     ) -> Self {
-        Self(Index::build(sources, selection))
+        Self(Index::build(sources, selection, parsed))
     }
 
     pub(super) fn resolve_type(&self, path: &str, name: &str) -> Option<String> {
@@ -600,12 +595,36 @@ pub(super) fn groups(
     )
 }
 
+#[cfg(test)]
 pub(super) fn configured_groups(
     sources: &RepositorySources,
     existing: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
     include_material: bool,
     selection: &rust_configuration::Selection,
+) -> Vec<ObservationGroup> {
+    let parsed = rust_dependencies::RustSources::build(sources, selection);
+    let models = ModelBindings::build(sources, selection, &parsed);
+    configured_groups_with_context(
+        sources,
+        existing,
+        scope,
+        include_material,
+        selection,
+        &parsed,
+        &models,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn configured_groups_with_context(
+    sources: &RepositorySources,
+    existing: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    include_material: bool,
+    selection: &rust_configuration::Selection,
+    parsed: &rust_dependencies::RustSources,
+    models: &ModelBindings,
 ) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
     if !sources.files.values().any(|f| {
@@ -615,17 +634,15 @@ pub(super) fn configured_groups(
     }) {
         return groups;
     }
-    let index = Index::build(sources, selection);
+    let index = &models.0;
     for file in sources.files.values().filter(|f| {
         !selection.excluded_file(&f.path)
             && eligible(f, scope, include_material)
             && f.source.contains("+=")
     }) {
-        let Ok(document) = StrDoc::try_new(&file.source, SupportLang::Rust) else {
+        let Some(root) = parsed.root(&file.path) else {
             continue;
         };
-        let ast = AstGrep::doc(document);
-        let root = ast.root();
         let Some(file_index) = index.files.get(&file.path) else {
             continue;
         };

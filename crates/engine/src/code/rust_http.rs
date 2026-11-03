@@ -352,7 +352,7 @@ fn unwrap_type<'a>(root: &N<'a>, ty: &N<'a>) -> Option<N<'a>> {
 
 // Resolve only visible explicit imports. Inline modules do not inherit a
 // parent's uses, and local/generic type shadows cannot certify a library type.
-pub(super) fn canonical<'a>(
+pub(crate) fn canonical<'a>(
     _root: &N<'a>,
     site: &N<'a>,
     text: &str,
