@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 type N<'a> = Node<'a, StrDoc<SupportLang>>;
 const MAX_TERMS: usize = 32;
 const MAX_DEPENDENCIES: usize = 64;
+const MAX_CLAUSES_PER_TERM: usize = 64;
 
 #[derive(Default)]
 pub(crate) struct RustModules {
@@ -120,6 +121,7 @@ struct File {
 struct State {
     seen: bool,
     unresolved: bool,
+    limited: bool,
     terms: BTreeSet<BTreeSet<usize>>,
     dependencies: BTreeSet<usize>,
 }
@@ -138,13 +140,21 @@ impl State {
         if !self.seen {
             return self;
         }
-        self.dependencies
-            .extend(ids.iter().map(|id| clauses[*id].dependency));
-        if ids.iter().any(|id| clauses[*id].truth == Some(false)) {
+        if let Some(id) = ids.iter().find(|id| clauses[**id].truth == Some(false)) {
             self.terms.clear();
             // A false local predicate excludes even an unresolved incoming route.
             self.unresolved = false;
-        } else {
+            self.limited = false;
+            // This predicate decides the route independently of earlier detail.
+            self.dependencies = [clauses[*id].dependency].into();
+            return self;
+        }
+        if self.terms.is_empty() && !self.unresolved {
+            return self;
+        }
+        self.dependencies
+            .extend(ids.iter().map(|id| clauses[*id].dependency));
+        if !self.terms.is_empty() {
             let unknown: BTreeSet<_> = ids
                 .iter()
                 .copied()
@@ -166,6 +176,7 @@ impl State {
     fn merge(&mut self, other: Self) {
         self.seen |= other.seen;
         self.unresolved |= other.unresolved;
+        self.limited |= other.limited;
         self.terms.extend(other.terms);
         self.dependencies.extend(other.dependencies);
         if self.terms.contains(&BTreeSet::new()) {
@@ -175,10 +186,21 @@ impl State {
     }
 
     fn bound(&mut self) {
-        if self.terms.len() > MAX_TERMS || self.dependencies.len() > MAX_DEPENDENCIES {
-            self.unresolved = true;
-            while self.terms.len() > MAX_TERMS {
-                self.terms.pop_last();
+        if self.terms.len() > MAX_TERMS
+            || self
+                .terms
+                .iter()
+                .any(|term| term.len() > MAX_CLAUSES_PER_TERM)
+            || self.dependencies.len() > MAX_DEPENDENCIES
+        {
+            self.limited = true;
+            if !self.terms.contains(&BTreeSet::new()) && (!self.terms.is_empty() || self.unresolved)
+            {
+                // Discarding constraints cannot create a weaker known route.
+                // Unknown keeps the observation; a later false predicate or
+                // separately established unconditional root can still decide.
+                self.unresolved = true;
+                self.terms.clear();
             }
             while self.dependencies.len() > MAX_DEPENDENCIES {
                 self.dependencies.pop_last();
@@ -227,7 +249,11 @@ impl State {
             })
             .collect::<Vec<_>>();
         if self.unresolved || !self.seen {
-            terms.push("unresolved source-module alternatives".into());
+            terms.push(if self.limited {
+                "source-module detail limit reached; inspect configuration dependencies".into()
+            } else {
+                "unresolved source-module alternatives".into()
+            });
         }
         if terms.is_empty() {
             terms.push("all established source-module inclusions are excluded".into());
@@ -437,6 +463,11 @@ impl Builder {
                 .or_default()
                 .insert(id);
         }
+        let false_scopes: BTreeSet<_> = conditions
+            .iter()
+            .filter(|(_, ids)| ids.iter().any(|id| self.clauses[*id].truth == Some(false)))
+            .map(|(range, _)| *range)
+            .collect();
         let mut attributes = BTreeMap::<usize, Vec<N<'_>>>::new();
         let mut index = super::rust_cfg::AttributeIndex::default();
         let mut file = File::default();
@@ -471,13 +502,7 @@ impl Builder {
             let inactive = relevant
                 && std::iter::once(affected.clone())
                     .chain(affected.ancestors())
-                    .any(|scope| {
-                        conditions
-                            .get(&(scope.range().start, scope.range().end))
-                            .is_some_and(|ids| {
-                                ids.iter().any(|id| self.clauses[*id].truth == Some(false))
-                            })
-                    });
+                    .any(|scope| false_scopes.contains(&(scope.range().start, scope.range().end)));
             if !inactive {
                 if kind.as_ref() == "macro_definition" {
                     file.opaque = true;
@@ -572,6 +597,12 @@ impl Builder {
             };
             let mut clauses = BTreeSet::<usize>::new();
             for ancestor in std::iter::once(node.clone()).chain(node.ancestors()) {
+                // File predicates were applied once on entry to this file.
+                // Repeating them on every outgoing edge multiplies retained
+                // state without adding another applicability relationship.
+                if ancestor.node_id() == root.node_id() {
+                    continue;
+                }
                 if let Some(ids) = conditions.get(&(ancestor.range().start, ancestor.range().end)) {
                     clauses.extend(ids);
                 }
@@ -1160,4 +1191,39 @@ fn builtin_macro(name: &str) -> bool {
             | "column"
             | "module_path"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_route_conjunctions_remain_bounded_without_claiming_unconditional_availability() {
+        let clauses: Vec<_> = (0..4096)
+            .map(|i| Clause {
+                truth: None,
+                text: format!("feature=\"f{i}\""),
+                dependency: i,
+            })
+            .collect();
+        let mut state = State::root(4096);
+        for id in 0..clauses.len() {
+            state = state.constrain(&[id].into(), &clauses);
+            assert!(state.terms.iter().all(|term| term.len() <= 64));
+            assert!(state.dependencies.len() <= 64);
+        }
+        let availability = state.availability(&clauses);
+        assert_eq!(availability.state, AvailabilityState::Unknown);
+        assert!(
+            availability
+                .condition
+                .unwrap()
+                .contains("detail limit reached")
+        );
+        state.merge(State::root(4097));
+        assert_eq!(
+            state.availability(&clauses).state,
+            AvailabilityState::Always
+        );
+    }
 }

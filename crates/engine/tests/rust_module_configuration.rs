@@ -64,6 +64,96 @@ const QUERY: &str =
     "pub async fn run(q:&str,pool:&sqlx::PgPool){sqlx::query(q).execute(pool).await;}";
 
 #[test]
+fn deep_conditional_routes_preserve_a_decisive_false_cut_and_an_alternate_live_root() {
+    for (cut, alternate) in [(false, false), (true, false), (true, true)] {
+        let depth = 80;
+        let mut files = Vec::new();
+        for i in 0..depth {
+            let path = if i == 0 {
+                "src/lib.rs".into()
+            } else {
+                format!("src/m{i}.rs")
+            };
+            let condition = if cut && i == depth - 1 {
+                "any()".into()
+            } else {
+                format!("feature=\"f{i}\"")
+            };
+            files.push((
+                path,
+                format!("#[cfg({condition})] #[path=\"m{}.rs\"] mod next;", i + 1),
+            ));
+        }
+        let leaf = format!("src/m{depth}.rs");
+        files.push((leaf.clone(), QUERY.into()));
+        if alternate {
+            files.push((
+                "src/main.rs".into(),
+                format!("#[path=\"m{depth}.rs\"] mod shared;fn main(){{}}"),
+            ));
+        }
+        let inputs: Vec<_> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        let result = scan(&inputs, false);
+        let expected = if alternate {
+            Some(AvailabilityState::Always)
+        } else if cut {
+            None
+        } else {
+            Some(AvailabilityState::Unknown)
+        };
+        assert_eq!(
+            state(&result, &leaf),
+            expected,
+            "cut={cut}, alternate={alternate}"
+        );
+        if cut && !alternate {
+            let configuration = &result.coverage.source_configurations[&leaf];
+            assert_eq!(
+                configuration.availability.state,
+                AvailabilityState::Excluded
+            );
+            assert!(
+                configuration
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.declaration.text.contains("cfg(any())")),
+                "retain the deciding false predicate after earlier detail was bounded"
+            );
+        }
+    }
+}
+
+#[test]
+fn common_file_conditions_and_independent_local_module_conditions_both_survive() {
+    let result = scan(
+        &[
+            (
+                "src/lib.rs",
+                "#![cfg(feature=\"whole\")]\n#[cfg(feature=\"left\")] mod left;mod right;",
+            ),
+            ("src/left.rs", QUERY),
+            ("src/right.rs", QUERY),
+        ],
+        false,
+    );
+    for (path, local) in [("src/left.rs", true), ("src/right.rs", false)] {
+        let fact = result
+            .evidence
+            .iter()
+            .find(|fact| fact.location.path == path)
+            .unwrap();
+        let availability = fact.context.availability.as_ref().unwrap();
+        assert_eq!(availability.state, AvailabilityState::Conditional);
+        let condition = availability.condition.as_deref().unwrap();
+        assert!(condition.contains("whole"));
+        assert_eq!(condition.contains("left"), local);
+    }
+}
+
+#[test]
 fn unknown_package_expansion_uses_one_witness_and_keeps_the_actual_module_route() {
     for count in [16, 128] {
         let mut parent = "#[cfg(feature=\"extra\")] mod helper;\n".to_string();
