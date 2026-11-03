@@ -46,12 +46,49 @@ struct Definition {
     bindings: Vec<Capture>,
 }
 
+struct ImportBinding {
+    aliases: Vec<(String, String)>,
+    declaration: Capture,
+}
+#[derive(Default)]
+struct ScopeImports {
+    scopes: BTreeMap<usize, Vec<ImportBinding>>,
+}
+impl ScopeImports {
+    fn build(
+        file: &SourceFile,
+        selection: &rust_configuration::Selection,
+        root: &Node<'_, StrDoc<SupportLang>>,
+    ) -> Self {
+        let mut result = Self::default();
+        for declaration in root.dfs().filter(|n| {
+            n.kind().as_ref() == "use_declaration" && !selection.excluded(&file.path, n.range())
+        }) {
+            let Some(scope) = declaration.parent() else {
+                continue;
+            };
+            let mut imports = Vec::new();
+            rust_shared_state::imports(&declaration, "", false, &mut imports);
+            result
+                .scopes
+                .entry(scope.range().start)
+                .or_default()
+                .push(ImportBinding {
+                    aliases: imports.into_iter().map(|(a, t, _)| (a, t)).collect(),
+                    declaration: capture(file, &declaration),
+                });
+        }
+        result
+    }
+}
+
 pub(super) struct Dependencies {
     definitions: Vec<Definition>,
     names: BTreeMap<String, Vec<usize>>,
     operations: BTreeMap<String, Vec<usize>>,
     implementations: BTreeMap<String, Vec<usize>>,
     macros: BTreeMap<(String, String), Vec<usize>>,
+    imports: BTreeMap<String, ScopeImports>,
     cache: RefCell<BTreeMap<usize, (Vec<usize>, bool)>>,
 }
 
@@ -81,6 +118,7 @@ fn canonical(
     module: &str,
     node: &Node<'_, StrDoc<SupportLang>>,
     value: &str,
+    prepared: Option<&ScopeImports>,
 ) -> String {
     let head = value.split("::").next().unwrap_or(value);
     if node
@@ -101,6 +139,24 @@ fn canonical(
             "block" | "declaration_list" | "source_file"
         )
     }) {
+        if let Some(prepared) = prepared {
+            for binding in prepared
+                .scopes
+                .get(&scope.range().start)
+                .into_iter()
+                .flatten()
+            {
+                for (alias, target) in &binding.aliases {
+                    if alias == head {
+                        choices.insert(format!("{target}{}", &value[head.len()..]));
+                    }
+                }
+            }
+            if !choices.is_empty() {
+                break;
+            }
+            continue;
+        }
         for item in scope.children().filter(|n| {
             n.kind().as_ref() == "use_declaration" && !selection.excluded(file, n.range())
         }) {
@@ -136,6 +192,7 @@ pub(super) fn type_key(
         &local_module(file, node),
         node,
         compact(&node.text()).split('<').next().unwrap_or_default(),
+        None,
     )
 }
 
@@ -151,6 +208,7 @@ impl Dependencies {
             operations: BTreeMap::new(),
             implementations: BTreeMap::new(),
             macros: BTreeMap::new(),
+            imports: BTreeMap::new(),
             cache: RefCell::new(BTreeMap::new()),
         };
         for file in sources
@@ -161,6 +219,7 @@ impl Dependencies {
             let Some(root) = parsed.root(&file.path) else {
                 continue;
             };
+            let imports = ScopeImports::build(file, selection, &root);
             for node in root.dfs().filter(|n| {
                 matches!(
                     n.kind().as_ref(),
@@ -212,6 +271,7 @@ impl Dependencies {
                             &module,
                             &n,
                             compact(&n.text()).split('<').next().unwrap_or_default(),
+                            Some(&imports),
                         )
                     });
                 let function = node.kind().as_ref() == "function_item";
@@ -269,7 +329,14 @@ impl Dependencies {
                         }) {
                             variables.insert(
                                 p.text().into_owned(),
-                                canonical(selection, &file.path, &module, &t, &compact(&t.text())),
+                                canonical(
+                                    selection,
+                                    &file.path,
+                                    &module,
+                                    &t,
+                                    &compact(&t.text()),
+                                    Some(&imports),
+                                ),
                             );
                         }
                     }
@@ -292,6 +359,7 @@ impl Dependencies {
                                 &module,
                                 &child,
                                 &compact(&child.text()),
+                                Some(&imports),
                             ),
                             macro_call: false,
                         });
@@ -305,6 +373,7 @@ impl Dependencies {
                                     &module,
                                     &m,
                                     &compact(&m.text()),
+                                    Some(&imports),
                                 ),
                                 macro_call: true,
                             });
@@ -334,7 +403,14 @@ impl Dependencies {
                             if let Some(rest) = text.strip_prefix("Self::") {
                                 owner.as_ref().map(|o| format!("{o}::{rest}"))
                             } else {
-                                Some(canonical(selection, &file.path, &module, &callee, &text))
+                                Some(canonical(
+                                    selection,
+                                    &file.path,
+                                    &module,
+                                    &callee,
+                                    &text,
+                                    Some(&imports),
+                                ))
                             }
                         };
                         if let Some(name) = target {
@@ -360,17 +436,18 @@ impl Dependencies {
                         "source_file" | "declaration_list" | "block"
                     )
                 }) {
-                    for declaration in scope.children().filter(|n| {
-                        n.kind().as_ref() == "use_declaration"
-                            && !selection.excluded(&file.path, n.range())
-                    }) {
-                        let mut imports = Vec::new();
-                        rust_shared_state::imports(&declaration, "", false, &mut imports);
-                        if imports
+                    for binding in imports
+                        .scopes
+                        .get(&scope.range().start)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if binding
+                            .aliases
                             .iter()
-                            .any(|(alias, _, _)| identifiers.contains(alias))
+                            .any(|(alias, _)| identifiers.contains(alias))
                         {
-                            bindings.push(capture(file, &declaration));
+                            bindings.push(binding.declaration.clone());
                         }
                     }
                 }
@@ -438,6 +515,7 @@ impl Dependencies {
                     });
                 }
             }
+            index.imports.insert(file.path.clone(), imports);
         }
         for slots in index.operations.values_mut() {
             slots.sort_by_key(|slot| index.definitions[*slot].capture.location.start.byte_offset);
@@ -500,6 +578,7 @@ impl Dependencies {
             &module,
             &function,
             &compact(&function.text()),
+            self.imports.get(file),
         );
         let slots = self.names.get(&key)?;
         (slots.len() == 1).then(|| &self.definitions[slots[0]].capture)
@@ -565,12 +644,16 @@ impl Dependencies {
                     .values()
                     .filter_map(|c| {
                         self.operations.get(&c.location.path).and_then(|items| {
-                            items.iter().copied().find(|i| {
-                                self.definitions[*i].capture.location.start.byte_offset
-                                    == c.location.start.byte_offset
-                                    && self.definitions[*i].capture.location.end.byte_offset
+                            items
+                                .binary_search_by_key(&c.location.start.byte_offset, |i| {
+                                    self.definitions[*i].capture.location.start.byte_offset
+                                })
+                                .ok()
+                                .map(|p| items[p])
+                                .filter(|i| {
+                                    self.definitions[*i].capture.location.end.byte_offset
                                         == c.location.end.byte_offset
-                            })
+                                })
                         })
                     })
                     .collect::<Vec<_>>();

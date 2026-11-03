@@ -94,6 +94,13 @@ fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
     Some(result)
 }
 fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
+    let mut function = call.field("function")?;
+    if function.kind().as_ref() == "generic_function" {
+        function = function.field("function")?;
+    }
+    if !matches!(function.kind().as_ref(), "identifier" | "scoped_identifier") {
+        return None;
+    }
     let (value, _) = crate::code::rust_raw_slice::function_identity(root, call)?;
     canonical(root, call, &value)
 }
