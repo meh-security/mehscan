@@ -405,6 +405,9 @@ pub struct ReviewInventory {
     /// Invalidates cached Rust facts without expiring unrelated language work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rust_configuration_revision: Option<String>,
+    /// Invalidates cached C++ effects without expiring unrelated languages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpp_effect_revision: Option<String>,
     pub source_fingerprint: String,
     pub include_review_material: bool,
     pub entries: Vec<ReviewInventoryEntry>,
@@ -429,6 +432,7 @@ impl ReviewInventory {
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
 const RUST_CONFIGURATION_REVISION: &str = "source-modules-and-buffer-effects-v3";
+const CPP_EFFECT_REVISION: &str = "vector-loop-borrows-v1";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -454,6 +458,17 @@ fn validate_inventory_source_binding(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
+    if inventory
+        .scan
+        .coverage
+        .languages
+        .contains_key(&Language::Cpp)
+        && inventory.cpp_effect_revision.as_deref() != Some(CPP_EFFECT_REVISION)
+    {
+        return Err(EngineError(
+            "review inventory is stale: C++ container effects changed; regenerate it".into(),
+        ));
+    }
     if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
@@ -764,6 +779,11 @@ pub fn build_review_inventory_scoped_with_native_backends(
     Ok(ReviewInventory {
         identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
+        cpp_effect_revision: scan
+            .coverage
+            .languages
+            .contains_key(&Language::Cpp)
+            .then(|| CPP_EFFECT_REVISION.to_string()),
         rust_configuration_revision: scan
             .coverage
             .languages
@@ -5638,7 +5658,9 @@ fn review_playbook_bucket(
     let has = |name: &str| tags.contains(name);
     if matches!(
         capability,
-        Capability::BufferLengthPublication | Capability::RustRawSliceConstruction
+        Capability::BufferLengthPublication
+            | Capability::RustRawSliceConstruction
+            | Capability::ContainerBorrowLifetime
     ) {
         return "native_memory";
     }

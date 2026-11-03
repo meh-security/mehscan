@@ -580,6 +580,16 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
     if evidence
         .iter()
+        .any(|e| e.capability == Capability::ContainerBorrowLifetime)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_container_borrow_lifetime_review",
+            security_question: "Can this outward element pointer survive a later mutation of the same persistent vector, including repeated keys or iterations? Establish the callee's storage effect and subsequent pointer use; evaluate entry, capacity and duplicate guards for that exact object.",
+            title: "Review persistent vector element lifetime",
+        });
+    }
+    if evidence
+        .iter()
         .any(|e| e.capability == Capability::BufferLengthPublication)
     {
         return Some(OperationReviewContract {

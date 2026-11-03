@@ -48,7 +48,7 @@ pub(crate) enum ParseOutcome {
     },
 }
 
-pub(crate) const NATIVE_PASS_NAMES: [&str; 22] = [
+pub(crate) const NATIVE_PASS_NAMES: [&str; 23] = [
     "api_context",
     "arithmetic",
     "domain_bounds",
@@ -71,6 +71,7 @@ pub(crate) const NATIVE_PASS_NAMES: [&str; 22] = [
     "ownership",
     "buffer",
     "defined_copy",
+    "vector_borrows",
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -79,7 +80,7 @@ pub(crate) struct FileScanTiming {
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
-    pub native_pass_microseconds: [u128; 22],
+    pub native_pass_microseconds: [u128; NATIVE_PASS_NAMES.len()],
     pub security_paths_microseconds: u128,
     pub postprocessing_microseconds: u128,
     pub declarative_patterns_considered: usize,
@@ -199,7 +200,7 @@ pub(crate) fn scan_source(
 
     // Admission and native invariant passes share the same file-owned identity
     // index. Qualified calls must not acquire a different contract downstream.
-    let mut native_pass_microseconds = [0; 22];
+    let mut native_pass_microseconds = [0; NATIVE_PASS_NAMES.len()];
     let native_started = Instant::now();
     let native_api = super::native_api::NativeApiContext::new(&root, language);
     native_pass_microseconds[0] = native_started.elapsed().as_micros();
@@ -2056,6 +2057,17 @@ pub(crate) fn scan_source(
             &mut evidence,
         );
     native_pass_microseconds[7] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    super::cpp_vector_borrows::add_observations(
+        path,
+        &root,
+        language,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[22] = native_started.elapsed().as_micros();
     native_started = Instant::now();
     let mut native_libxml2_paths = super::native_libxml2::add_native_libxml2_observations(
         path,

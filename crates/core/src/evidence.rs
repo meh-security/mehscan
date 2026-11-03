@@ -108,6 +108,10 @@ pub enum Capability {
     CppRaiiOwner,
     /// Direct construction of a standard unique owner from a raw local.
     CppOwnershipTransfer,
+    /// A raw element borrow is published from a persistent standard vector
+    /// that can be mutated on a later iteration. Storage and subsequent use
+    /// of the pointer remain review obligations.
+    ContainerBorrowLifetime,
     /// A C-family conversion that may discard higher-order integer bits before
     /// the converted value reaches a security-relevant arithmetic operation.
     IntegerNarrowing,

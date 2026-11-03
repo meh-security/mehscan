@@ -41,6 +41,18 @@ they could change the verdict. Also distinguish a negative count passed to a
 generic `std::copy_n` from a negative value converted into an unsigned count
 before that call; their effects differ. See the [standard copy-count semantics](https://eel.is/c++draft/alg.copy#lib:copy_n).
 
+For persistent-vector borrows, follow `container_binding`, `persistent_storage`,
+`mutation_*`, `borrow_*` and `outward_call_*` through the supplied operation.
+A pointer passed outward is not proof that the callee retains or later uses it;
+resolve that storage/use question when it decides the verdict. Repeated loop
+iterations can revisit the same keyed vector. Resize or growth can invalidate
+its existing element pointers even when the borrow appears later in one iteration.
+Check duplicate-entry and capacity guards on that same vector before mutation.
+An empty-vector guard that rejects populated entries can prevent a second
+mutation of storage already lending elements. Do not require exhaustive caller
+discovery once the selected relationship is settled. Keep capacity, allocation
+failure and unrelated lifetime claims separate. See [vector invalidation](https://eel.is/c++draft/vector.capacity).
+
 For Rust raw slices, use `null_pointer`, `safe_constructor`, `field_transfer`
 and `safe_accessor` to check that a possible null state belongs to the same
 object field. A raw slice requires a non-null pointer even for zero length.

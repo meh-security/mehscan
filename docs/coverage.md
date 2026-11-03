@@ -33,6 +33,14 @@ Arbitrary wrappers, overload resolution, implicit member lookup, virtual calls
 and cross-function ranges remain limited. A buffer copy in source can therefore
 lack a review question even when a related low-level API is recognized elsewhere.
 
+Selected C++ vector lifetime reviews connect an explicitly typed `std::vector`
+reference in a loop to persistent keyed storage, mutations and element addresses
+passed to outward insertion calls. The review checks whether the callee retains
+the pointer, whether it is used later, and whether duplicate-entry or capacity
+guards keep it valid. This currently covers supported same-file relationships;
+inferred container types, arbitrary aliases, other containers and a complete
+control-flow or lifetime model remain outside that recognition.
+
 Rust raw-slice analysis follows selected null field initializers from safe
 constructors, including a defined raw-record transfer, into a safe accessor of
 the same owned type. A rejecting null check closes only the non-null invariant.

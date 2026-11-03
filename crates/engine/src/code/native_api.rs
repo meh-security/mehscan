@@ -282,6 +282,21 @@ impl NativeApiContext {
             }
         }
         self.resolve(&text, call.range().start, &scopes, 0)
+            .filter(|name| *name != "vector")
+    }
+
+    /// Resolve only an explicitly named standard vector type, sharing the
+    /// API index's namespace, alias, macro and visible-definition guards.
+    pub(crate) fn standard_vector_type(&self, node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        let text = compact(node.text().as_ref());
+        let Some((name, _)) = text.split_once('<').filter(|(_, rest)| rest.ends_with('>')) else {
+            return false;
+        };
+        let scopes = node
+            .ancestors()
+            .map(|n| (n.range().start, n.range().end))
+            .collect::<Vec<_>>();
+        self.resolve(name, node.range().start, &scopes, 0) == Some("vector")
     }
 
     pub(super) fn local_shadow(&self, call: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
@@ -338,7 +353,7 @@ impl NativeApiContext {
                     let target = binding.target.as_deref()?;
                     return self.resolve(target, offset, scopes, depth + 1);
                 }
-                return (!matches!(canonical, "copy" | "copy_n")
+                return (!matches!(canonical, "copy" | "copy_n" | "vector")
                     && !self.global_definition_shadows(name, offset))
                 .then_some(canonical);
             }
@@ -387,10 +402,10 @@ impl NativeApiContext {
             }
             return self.resolve(target, offset, scopes, depth + 1);
         }
-        standard_name(text).filter(|name| !matches!(*name, "copy" | "copy_n"))
+        standard_name(text).filter(|name| !matches!(*name, "copy" | "copy_n" | "vector"))
     }
 
-    fn macro_precedes(&self, name: &str, offset: usize) -> bool {
+    pub(super) fn macro_precedes(&self, name: &str, offset: usize) -> bool {
         self.macros.get(name).is_some_and(|start| *start <= offset)
     }
 
@@ -622,6 +637,7 @@ fn standard_name(name: &str) -> Option<&'static str> {
         "fread" => "fread",
         "copy" => "copy",
         "copy_n" => "copy_n",
+        "vector" => "vector",
         _ => return None,
     })
 }

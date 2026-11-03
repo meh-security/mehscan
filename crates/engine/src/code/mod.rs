@@ -1,6 +1,8 @@
 pub mod comments;
 mod conditional;
 mod context;
+mod cpp_flow;
+mod cpp_vector_borrows;
 mod csharp_archive;
 mod csharp_business;
 mod csharp_crypto;
