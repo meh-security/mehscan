@@ -407,6 +407,8 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
                         "path":location["path"],
                         "start_line":location["start"]["line"],
                         "end_line":location["end"]["line"],
+                        "start_column":location["start"]["column"],
+                        "end_column":location["end"]["column"],
                         "start_byte_offset":location["start"]["byte_offset"],
                         "end_byte_offset":location["end"]["byte_offset"],
                     },
@@ -608,7 +610,7 @@ mod tests {
     #[test]
     fn configuration_provenance_is_shared_while_each_question_keeps_its_applicability() {
         let dependency = json!({"declaration":{"text":"#[cfg(feature=\"extra\")] mod shared;",
-            "location":{"path":"src/lib.rs","start":{"line":1,"byte_offset":0},"end":{"line":1,"byte_offset":35}}},
+            "location":{"path":"src/lib.rs","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":1,"column":36,"byte_offset":35}}},
             "source_sha256":"source-version","target_path":"src/shared.rs","truncated":true});
         let a = json!({"review_id":"a","selected_anchor_id":"anchor-a",
             "source_configuration":{"availability":{"state":"conditional","condition":"feature=extra"},"dependencies":[dependency.clone()]}});
@@ -636,6 +638,8 @@ mod tests {
         assert_eq!(context["target_path"], dependency["target_path"]);
         assert_eq!(context["truncated"], true);
         assert_eq!(context["location"]["start_byte_offset"], 0);
+        assert_eq!(context["location"]["start_column"], 1);
+        assert_eq!(context["location"]["end_column"], 36);
         let mut other_target = b.clone();
         other_target["source_configuration"]["dependencies"][0]["target_path"] =
             json!("src/other.rs");
