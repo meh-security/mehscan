@@ -1,17 +1,10 @@
+mod support;
 use mehscan_core::{Capability, SecurityPathState};
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn typed_constructor_copies_keep_subtraction_and_other_buffer_invariants_separate() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-copy-effects-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-copy-effects");
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("buffer.hpp"),
@@ -244,14 +237,7 @@ fn typed_constructor_copies_keep_subtraction_and_other_buffer_invariants_separat
 
 #[test]
 fn integer_comparisons_follow_literal_bases_signedness_and_binding() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-copy-literals-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-copy-literals");
     fs::create_dir_all(&root).unwrap();
     let cases = [
         (
@@ -382,14 +368,7 @@ fn integer_comparisons_follow_literal_bases_signedness_and_binding() {
 
 #[test]
 fn namespace_imports_aliases_and_declared_overloads_keep_constructor_identity() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-copy-lookup-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-copy-lookup");
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("blocks.cpp"), r#"
         namespace wire {
@@ -490,14 +469,7 @@ fn namespace_imports_aliases_and_declared_overloads_keep_constructor_identity() 
 
 #[test]
 fn helpers_preserve_parameter_roles_and_do_not_certify_argument_side_effects() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-copy-helpers-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-copy-helpers");
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("foreign.hpp"),

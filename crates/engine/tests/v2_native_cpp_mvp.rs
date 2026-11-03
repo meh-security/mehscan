@@ -1,20 +1,13 @@
+mod support;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{AvailabilityState, CandidateReport, Capability, Language, SecurityPathState};
 
 #[test]
 fn native_same_path_check_use_requires_atomic_or_nofollow_controls() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-toctou-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-toctou");
     fs::create_dir_all(&root).expect("create TOCTOU fixture");
     let source = r#"
 #define F_OK 0
@@ -111,14 +104,7 @@ void cases(char *p1, char *p2, char *p3, char *p4, char *p5,
 
 #[test]
 fn native_same_path_paths_share_one_sink_evidence_item() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-shared-toctou-sink-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-shared-toctou-sink");
     fs::create_dir_all(&root).expect("create shared TOCTOU sink fixture");
     fs::write(
         root.join("shared.c"),
@@ -157,14 +143,7 @@ void shared_sink(char *path, void *metadata) {
 
 #[test]
 fn libarchive_extraction_keeps_path_symlink_and_privilege_invariants_separate() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-libarchive-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-libarchive");
     fs::create_dir_all(&root).expect("create libarchive fixture");
     let source = r#"
 #define ARCHIVE_EXTRACT_OWNER 1
@@ -277,14 +256,7 @@ void cases(void *reader, void *entry, void *disk, void *conditional_disk, int dy
 
 #[test]
 fn libxml2_external_entity_options_preserve_partial_control_semantics() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-libxml2-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-libxml2");
     fs::create_dir_all(&root).expect("create libxml2 fixture");
     let source = r#"
 typedef void xmlDoc;
@@ -384,14 +356,7 @@ fn fixture_root() -> PathBuf {
 
 #[test]
 fn raw_native_buffer_writes_stay_out_of_ai_observation_jobs() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-buffer-review-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-buffer-review");
     fs::create_dir_all(&root).expect("create native buffer review fixture");
     fs::write(
         root.join("buffer.c"),
@@ -442,14 +407,7 @@ void linked_copy(char *destination) {
 
 #[test]
 fn cpp_allocation_families_and_unique_ownership_are_bounded() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-cpp-ownership-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("cpp-ownership");
     fs::create_dir_all(&root).expect("create C++ ownership fixture");
     fs::write(
         root.join("ownership.cpp"),
@@ -576,14 +534,7 @@ void cases(Widget *other, void *storage) {
 
 #[test]
 fn conditional_unique_owners_keep_all_origins_without_duplicate_facts_or_cross_branch_protection() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-conditional-owner-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("conditional-owner");
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("owners.cpp"),
@@ -655,14 +606,7 @@ void cases(bool choose) {
 
 #[test]
 fn local_heap_lifetime_requires_an_established_release_contract() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-heap-lifetime-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("native-heap-lifetime");
     fs::create_dir_all(&root).expect("create heap-lifetime fixture");
     let source = |cpp: bool| {
         let cast = if cpp { "(char *)" } else { "" };
@@ -1033,14 +977,7 @@ fn scans_c_and_cpp_with_portable_and_native_security_relationships() {
 
 #[test]
 fn compile_commands_selects_c_preprocessor_profile_without_running_compiler() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-build-profile-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-build-profile");
     fs::create_dir_all(&root).expect("create temporary fixture");
     fs::write(
         root.join("profile.c"),
@@ -1116,14 +1053,7 @@ fn compile_commands_selects_c_preprocessor_profile_without_running_compiler() {
 
 #[test]
 fn static_build_profiles_select_only_literal_unconditional_c_family_branches() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-static-build-profile-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-static-build-profile");
     for directory in ["cmake", "meson", "bazel"] {
         fs::create_dir_all(root.join(directory)).expect("create build-profile directory");
     }
@@ -1180,14 +1110,7 @@ fn static_build_profiles_select_only_literal_unconditional_c_family_branches() {
 
 #[test]
 fn recovered_native_arithmetic_paths_keep_all_referenced_evidence() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-recovered-arithmetic-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-recovered-arithmetic");
     fs::create_dir_all(&root).expect("create temporary fixture");
     fs::write(
         root.join("recovered.c"),
@@ -1219,14 +1142,7 @@ fn recovered_native_arithmetic_paths_keep_all_referenced_evidence() {
 
 #[test]
 fn derived_domain_limit_distinguishes_broad_and_exact_count_validation() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-domain-limit-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-domain-limit");
     fs::create_dir_all(&root).expect("create temporary fixture");
     fs::write(
         root.join("palette.c"),
@@ -1303,14 +1219,7 @@ fn derived_domain_limit_distinguishes_broad_and_exact_count_validation() {
 
 #[test]
 fn fixed_width_multiplication_requires_a_memory_extent_handoff_and_range_guard() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-multiplication-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-multiplication");
     fs::create_dir_all(&root).expect("create temporary fixture");
     fs::write(
         root.join("rows.c"),
@@ -1400,14 +1309,7 @@ fn fixed_width_multiplication_requires_a_memory_extent_handoff_and_range_guard()
 
 #[test]
 fn recovered_cpp_multiplication_keeps_the_bounded_memory_handoff() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-cpp-recovered-multiplication-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("cpp-recovered-multiplication");
     fs::create_dir_all(&root).expect("create temporary fixture");
     fs::write(
         root.join("rows.cpp"),
@@ -1439,14 +1341,7 @@ fn recovered_cpp_multiplication_keeps_the_bounded_memory_handoff() {
 
 #[test]
 fn an_uncalled_architecture_validator_does_not_protect_an_allocation() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-allocation-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-allocation");
     fs::create_dir_all(&root).expect("create temporary fixture");
     let boundary = |suffix: &str| {
         format!(
@@ -1563,14 +1458,7 @@ fn an_uncalled_architecture_validator_does_not_protect_an_allocation() {
 
 #[test]
 fn callback_stack_state_requires_restoration_before_post_return_dereference() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-lifetime-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-lifetime");
     fs::create_dir_all(&root).expect("create temporary fixture");
     let callback = |suffix: &str| {
         format!(
@@ -1690,14 +1578,7 @@ fn callback_stack_state_requires_restoration_before_post_return_dereference() {
 
 #[test]
 fn exceptional_state_requires_fatal_rejection_before_indexed_dereference() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-exceptional-state-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-exceptional-state");
     fs::create_dir_all(&root).expect("create temporary fixture");
     let initializer = |suffix: &str| {
         format!(
@@ -1816,14 +1697,7 @@ fn exceptional_state_requires_fatal_rejection_before_indexed_dereference() {
 
 #[test]
 fn exceptional_state_rejects_unrelated_owners_scopes_and_component_domains() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-exceptional-state-negative-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-exceptional-state-negative");
     fs::create_dir_all(root.join("nss")).expect("create nss fixture directory");
     fs::create_dir_all(root.join("gnutls")).expect("create gnutls fixture directory");
 
@@ -1906,14 +1780,7 @@ unsigned backend_handoff(image *image) { return backend_read(image->palette); }
 
 #[test]
 fn persistent_allocation_requires_matching_ownership_registration() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-ownership-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-ownership");
     fs::create_dir_all(&root).expect("create temporary fixture");
     let producer = |suffix: &str| {
         format!(
@@ -2006,14 +1873,7 @@ fn persistent_allocation_requires_matching_ownership_registration() {
 
 #[test]
 fn bounded_string_copy_requires_capacity_and_explicit_termination() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-termination-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-termination");
     fs::create_dir_all(&root).expect("create termination fixture");
     let source = |suffix: &str| {
         let size = if suffix == "c" {
@@ -2125,14 +1985,7 @@ fn bounded_string_copy_requires_capacity_and_explicit_termination() {
 
 #[test]
 fn signed_values_require_nonnegative_proof_before_memory_size_conversion() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-signed-size-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-signed-size");
     fs::create_dir_all(&root).expect("create signed-size fixture");
     let source = |cpp: bool| {
         let cast = if cpp {
@@ -2229,14 +2082,7 @@ fn signed_values_require_nonnegative_proof_before_memory_size_conversion() {
 
 #[test]
 fn drogon_routes_keep_authentication_separate_from_resource_ownership() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-drogon-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-drogon");
     fs::create_dir_all(&root).expect("create Drogon fixture");
     fs::write(
         root.join("Token.cc"),

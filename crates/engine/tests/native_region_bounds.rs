@@ -1,18 +1,11 @@
+mod support;
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::SecurityPathState;
 
 #[test]
 fn image_copy_regions_require_both_axes_before_the_write() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-region-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-region");
     fs::create_dir_all(&root).expect("create destination-region fixture");
     let source = r#"
 typedef unsigned int u32;

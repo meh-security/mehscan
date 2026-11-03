@@ -1,18 +1,11 @@
+mod support;
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{Capability, SecurityPathState};
 
 #[test]
 fn implicit_standard_counts_require_a_visible_signed_scalar_and_unchanged_guard() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-implicit-size-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-implicit-size");
     fs::create_dir_all(&root).unwrap();
     let cases = [
         (

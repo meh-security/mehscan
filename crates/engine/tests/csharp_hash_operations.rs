@@ -1,18 +1,9 @@
+mod support;
 use mehscan_core::{EvidenceKind, ScanResult};
-use std::{
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
 
 fn scan(source: &str) -> ScanResult {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-csharp-hash-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("csharp-hash");
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("input.cs"), source).unwrap();
     let result = mehscan_engine::scan_path(&root).unwrap();

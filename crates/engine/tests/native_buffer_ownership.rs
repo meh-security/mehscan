@@ -1,17 +1,10 @@
+mod support;
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::Capability;
 
 fn scan_source(label: &str, extension: &str, source: &str) -> mehscan_core::ScanResult {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-buffer-{label}-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir(&format!("native-buffer-{label}"));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join(format!("input.{extension}")), source).unwrap();
     let result = mehscan_engine::scan_path(&root).unwrap();
@@ -253,14 +246,7 @@ dst[7]=0; }
 
 #[test]
 fn capacity_and_termination_require_the_consumed_array_binding() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-buffer-owner-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("native-buffer-owner");
     fs::create_dir_all(&root).unwrap();
     let source = r#"#include <string.h>
 char global_dst[64];

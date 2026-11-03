@@ -1,6 +1,6 @@
+mod support;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{Capability, FileStatus};
 
@@ -12,15 +12,7 @@ fn fixture_root() -> PathBuf {
 
 #[test]
 fn ordinary_excluded_extensions_are_counted_without_per_file_ledger_entries() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-omitted-coverage-{}-{nonce}",
-        std::process::id()
-    ));
-    fs::create_dir(&root).expect("temporary fixture directory");
+    let root = support::temp_dir("omitted-coverage");
     for index in 0..4 {
         fs::write(root.join(format!("asset_{index}.as")), "").expect("ignored file");
     }
@@ -150,15 +142,7 @@ fn include_tests_promotes_excluded_supported_sources_into_sast() {
 
 #[test]
 fn generated_frontend_content_is_secret_only_unless_explicitly_included() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-generated-frontend-{}-{nonce}",
-        std::process::id()
-    ));
-    fs::create_dir(&root).expect("temporary fixture directory");
+    let root = support::temp_dir("generated-frontend");
     let generated = format!(
         "const endpoint = request.query.url; fetch(endpoint); /*{}*/\n//# sourceMappingURL=compiled.js.map\n",
         "x".repeat(70 * 1024)
@@ -212,14 +196,7 @@ fn generated_frontend_content_is_secret_only_unless_explicitly_included() {
 
 #[test]
 fn exact_unit_test_directories_are_excluded_without_hiding_lookalikes() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-unit-test-policy-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("unit-test-policy");
     fs::create_dir_all(root.join("apps/unit_tests")).expect("unit-test fixture directory");
     fs::create_dir_all(root.join("apps/unitary")).expect("production fixture directory");
     fs::write(
@@ -273,14 +250,7 @@ fn exact_unit_test_directories_are_excluded_without_hiding_lookalikes() {
 
 #[test]
 fn end_to_end_and_spec_sources_do_not_supply_default_scan_evidence() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-e2e-file-policy-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("e2e-file-policy");
     let tests = [
         "src/login.e2e-spec.ts",
         "src/login.e2e-test.ts",

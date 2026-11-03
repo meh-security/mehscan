@@ -1,18 +1,11 @@
+mod support;
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{AvailabilityState, Capability};
 
 #[test]
 fn source_configuration_is_retained_without_assuming_manifest_defaults_or_host_target() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-rust-configuration-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir("rust-configuration");
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("Cargo.toml"), "[package]\nname='configuration'\nversion='0.1.0'\n[features]\ndefault=['server']\nserver=[]\n").unwrap();
     fs::write(

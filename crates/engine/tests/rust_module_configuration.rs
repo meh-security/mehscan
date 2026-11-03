@@ -1,20 +1,10 @@
+mod support;
 use mehscan_core::{AvailabilityState, ScanResult};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, fs};
 
 fn scan(files: &[(&str, &str)], include_tests: bool) -> ScanResult {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-module-cfg-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("module-cfg");
     fs::create_dir_all(&root).unwrap();
     let mut sources: BTreeMap<_, _> = files
         .iter()
@@ -475,14 +465,7 @@ fn path_loaded_files_and_root_loaded_files_keep_separate_search_contexts() {
 
 #[test]
 fn observation_packets_carry_configuration_and_changed_manifests_reject_reuse() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-cfg-packet-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("cfg-packet");
     fs::create_dir_all(root.join("src")).unwrap();
     let cargo = "[package]\nname=\"sample\"\nversion=\"0.1.0\"\n";
     fs::write(root.join("Cargo.toml"), cargo).unwrap();

@@ -1,3 +1,4 @@
+mod support;
 use std::path::PathBuf;
 
 use mehscan_core::{Capability, Language, LiteralState, ScanResult, SecurityPathState};
@@ -31,14 +32,7 @@ fn php_review_outline_extracts_function_identity_from_mixed_grammar() {
 
 #[test]
 fn php_file_policy_excludes_tests_generated_files_and_vendor() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-php-policy-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("php-policy");
     std::fs::create_dir_all(root.join("vendor")).unwrap();
     let source = "<?php shell_exec($_GET['command']);";
     for path in [

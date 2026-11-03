@@ -1,8 +1,5 @@
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+mod support;
+use std::{fs, path::PathBuf};
 
 const SOURCE: &str = r#"
 extern crate std;
@@ -38,14 +35,7 @@ pub fn flush<B:Region+?Sized>(window:&mut Window<'_,B>) { let _carrier=window.br
 struct Project(PathBuf);
 impl Project {
     fn new(source: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "mehscan-buffer-prefix-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = support::temp_dir("buffer-prefix");
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(
             root.join("Cargo.toml"),

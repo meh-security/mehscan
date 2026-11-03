@@ -1,3 +1,4 @@
+mod support;
 use mehscan_core::{Capability, Language};
 use std::path::PathBuf;
 
@@ -1053,15 +1054,7 @@ fn explicit_member_receivers_preserve_boundary_and_path_ownership() {
 fn incompatible_path_and_text_arguments_do_not_become_deterministic_paths() {
     // Deliberately incompatible Java argument types: syntax alone is not a
     // proved invocation. In particular, a Path object is not command/SQL text.
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-kotlin-types-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let root = support::temp_dir("kotlin-types");
     let source = root.join("app.kt");
     std::fs::write(
         &source,

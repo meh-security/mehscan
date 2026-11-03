@@ -1,17 +1,10 @@
+mod support;
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::SecurityPathState;
 
 fn fixture_root(label: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-native-serialized-blob-{label}-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = support::temp_dir(&format!("native-serialized-blob-{label}"));
     fs::create_dir_all(&root).expect("create serialized-blob fixture");
     root
 }

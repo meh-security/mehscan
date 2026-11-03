@@ -1,19 +1,10 @@
+mod support;
 use mehscan_core::{Capability, SecurityPathState};
-use std::{
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
 
 #[test]
 fn safe_null_field_construction_requires_a_nonnull_raw_slice_boundary() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-rust-raw-slice-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = support::temp_dir("rust-raw-slice");
     fs::create_dir_all(&root).unwrap();
     let cases = [
         (

@@ -1,21 +1,11 @@
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+mod support;
+use std::{fs, path::PathBuf};
 
 struct Project(PathBuf);
 
 impl Project {
     fn new(parent: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "mehscan-rust-review-cfg-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = support::temp_dir("rust-review-cfg");
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(
             root.join("Cargo.toml"),
