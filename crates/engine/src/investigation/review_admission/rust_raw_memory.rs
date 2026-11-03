@@ -851,6 +851,12 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        // A renamed SDK function can hide its spelling at the call. Keep the
+        // whole file in that case; the binding resolver still decides identity.
+        let raw_alias = root.dfs().any(|n| {
+            n.kind().as_ref() == "use_as_clause"
+                && (n.text().contains("from_raw_parts") || n.text().contains("copy"))
+        });
         let mut relevant = false;
         for implementation in root.dfs().filter(|n| {
             n.kind().as_ref() == "impl_item"
@@ -876,6 +882,18 @@ pub(super) fn groups(
         for function in root.dfs().filter(|n| {
             n.kind().as_ref() == "function_item" && !selection.excluded(&file.path, n.range())
         }) {
+            // Direct SDK operations carry these spellings (or an import alias).
+            // Keep Self constructors separately: their copy helper may live in
+            // another file. Other functions cannot contribute this relationship.
+            if !raw_alias
+                && !function.text().contains("from_raw_parts")
+                && !function.text().contains("copy")
+                && function
+                    .field("return_type")
+                    .is_none_or(|t| compact(&t.text()) != "Self")
+            {
+                continue;
+            }
             if function.dfs().any(|n| n.is_error() || n.is_missing()) {
                 continue;
             }

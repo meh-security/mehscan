@@ -289,6 +289,24 @@ fn short_circuit_drop_suppression_is_not_an_unconditional_transfer() {
 }
 
 #[test]
+fn operation_prefilter_keeps_renamed_sdk_functions_and_cross_file_copy_helpers() {
+    let source = "use std::ptr::copy_nonoverlapping as transfer_bytes;pub fn transfer(s:&[u8],d:&mut[u8],n:usize){unsafe{transfer_bytes(s.as_ptr(),d.as_mut_ptr(),n)}}";
+    assert!(
+        Project::new(source)
+            .rules()
+            .contains(&"rust-raw-copy-range-review".into())
+    );
+    let source = "mod helper;struct Storage{pointer:*mut u8}impl Storage{fn new(value:Box<[u8]>)->Self{let p=helper::duplicate(&value);Self{pointer:p}}}impl Drop for Storage{fn drop(&mut self){}}";
+    let project = Project::new(source);
+    fs::write(project.0.join("src/helper.rs"),"pub fn duplicate(value:&[u8])->*mut u8{let p=std::ptr::null_mut();unsafe{std::ptr::copy_nonoverlapping(value.as_ptr(),p,value.len());}p}").unwrap();
+    assert!(
+        project
+            .rules()
+            .contains(&"rust-owned-buffer-copy-review".into())
+    );
+}
+
+#[test]
 fn local_standard_constructors_are_bound_and_dead_or_foreign_uses_are_not() {
     let source = "pub fn clone_owner()->Vec<u8>{let mut data=Vec::<u8>::with_capacity(8);unsafe{Vec::from_raw_parts(data.as_mut_ptr(),0,data.capacity())}}";
     assert!(
