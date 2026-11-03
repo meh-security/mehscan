@@ -271,6 +271,24 @@ fn reading_the_standard_owner_does_not_reopen_its_transferred_allocation() {
 }
 
 #[test]
+fn short_circuit_drop_suppression_is_not_an_unconditional_transfer() {
+    for expression in [
+        "flag && {std::mem::forget(source);true}",
+        "flag || {std::mem::forget(source);false}",
+    ] {
+        let source = VECTOR
+            .replace("pub fn transfer(", "pub fn transfer(flag:bool,")
+            .replace(" unsafe {", &format!(" let _={expression};\n unsafe {{"));
+        assert!(
+            Project::new(&source)
+                .rules()
+                .contains(&"rust-vector-ownership-review".into()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn local_standard_constructors_are_bound_and_dead_or_foreign_uses_are_not() {
     let source = "pub fn clone_owner()->Vec<u8>{let mut data=Vec::<u8>::with_capacity(8);unsafe{Vec::from_raw_parts(data.as_mut_ptr(),0,data.capacity())}}";
     assert!(

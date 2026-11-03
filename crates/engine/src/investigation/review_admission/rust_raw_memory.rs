@@ -440,6 +440,7 @@ impl<'a> Function<'a> {
                                 | "while_expression"
                                 | "loop_expression"
                                 | "closure_expression"
+                                | "binary_expression"
                         )
                     })
                 {

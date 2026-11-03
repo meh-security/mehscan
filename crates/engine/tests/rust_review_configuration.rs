@@ -266,6 +266,7 @@ fn cached_rust_inventory_from_before_pointer_cast_admission_requires_regeneratio
     for previous in [
         "typed-source-and-raw-memory-v4",
         "typed-source-and-raw-memory-v5",
+        "typed-source-and-raw-memory-v6",
     ] {
         inventory.rust_configuration_revision = Some(previous.into());
         let error =
