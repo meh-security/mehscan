@@ -139,6 +139,7 @@ mod reactive_cleanup;
 mod route_context_cleanup;
 mod rust_cfg;
 mod rust_context;
+mod rust_filesystem;
 pub(crate) mod rust_http;
 pub(crate) mod rust_modules;
 mod rust_project;

@@ -431,7 +431,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
-const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v7";
+const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v8";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
@@ -12904,7 +12904,9 @@ fn observation_groups(
                 .iter()
                 .find(|item| item.id == anchor_id)
                 .expect("observation anchor must remain in its evidence group");
-            let has_source = items.iter().any(|item| item.kind == EvidenceKind::Source);
+            let has_source = items.iter().any(|item| {
+                observation_source_contributes_priority(anchor_evidence, item, sources)
+            });
             let has_sink = anchor_evidence.kind == EvidenceKind::Sink;
             let has_review_operation = matches!(
                 anchor_evidence.kind,
@@ -12948,6 +12950,32 @@ fn observation_groups(
     (groups, exclusions)
 }
 
+fn observation_source_contributes_priority(
+    anchor: &Evidence,
+    source: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if source.kind != EvidenceKind::Source {
+        return false;
+    }
+    if !matches!(
+        anchor.capability,
+        Capability::FilesystemRead | Capability::FilesystemWrite
+    ) {
+        return true;
+    }
+    if !is_local_observation_context(anchor, source, Some(sources)) {
+        return false;
+    }
+    // Returned file contents do not establish control of the input path. Keep
+    // them as context; content-to-path candidates and explicit links retain their
+    // own source relationship independently of observation co-occurrence.
+    source.rule_id != "rust-file-content-input"
+        || (source.location != anchor.location
+            && (anchor.related_evidence.contains(&source.id)
+                || source.related_evidence.contains(&anchor.id)))
+}
+
 fn observation_exclusion_disposition(
     item: &Evidence,
     group: &[Evidence],
@@ -12977,6 +13005,7 @@ fn observation_exclusion_disposition(
     // Node file effects need a bounded source relationship, independently of
     // import spelling. Unlinked effects stay inventory, not AI verdict work.
     if is_source_free_generic_java_log(item, group)
+        || practical_admission::is_non_content_filesystem_effect(item)
         || item
             .tags
             .iter()

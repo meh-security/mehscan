@@ -1,12 +1,11 @@
+mod support;
 use mehscan_core::{Capability, EvidenceKind, SecurityPathState};
 use std::{fs, path::PathBuf};
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("mehscan-filesystem-{name}-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
+        let root = support::temp_dir(&format!("filesystem-{name}"));
         for (path, source) in files {
             fs::write(root.join(path), source).unwrap();
         }
@@ -16,6 +15,287 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[test]
+fn file_contents_do_not_upgrade_unconnected_path_observations() {
+    let fixture = Fixture::new(
+        "source-direction",
+        &[(
+            "app.rs",
+            r#"
+fn own_output(path: &str) { let _ = std::fs::read_to_string(path); }
+fn unrelated(path: &str) {
+    let _content = std::fs::read_to_string("local-config");
+    let _ = std::fs::read(path);
+}
+fn later_output(path: &str) {
+    std::fs::remove_file(path);
+    let _ = std::fs::read_to_string("local-config");
+}
+fn content_selects_path() {
+    let selected = std::fs::read_to_string("selector").unwrap();
+    let _ = std::fs::read(&selected);
+}
+use axum::extract::Path;
+async fn external_path(Path(path): Path<String>) { let _ = std::fs::read(&path); }
+"#,
+        )],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["own_output", "unrelated", "later_output"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost {symbol}");
+        assert!(
+            entries.iter().all(|e| e.evidence_strength == "sink"),
+            "{symbol}: {entries:?}"
+        );
+    }
+    // Direction correction never erases file content sources or actual consumers.
+    assert!(
+        inventory
+            .scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id == "rust-file-content-input")
+    );
+    for symbol in ["content_selects_path", "external_path"] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)
+                    && e.capability == Capability::FilesystemRead
+                    && e.value_hint.is_none()),
+            "lost {symbol}"
+        );
+    }
+    assert!(
+        inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("external_path") && e.review_kind == "path"),
+        "lost actual request-to-path flow"
+    );
+}
+
+#[test]
+fn generated_temporary_selection_is_explicit_research_not_a_safe_verdict() {
+    let fixture = Fixture::new(
+        "temporary-selection",
+        &[
+            (
+                "app.rs",
+                r#"
+use tempfile::NamedTempFile as Scratch;
+fn editor() -> std::io::Result<()> {
+    let file = Scratch::new()?;
+    let path = file.into_temp_path();
+    std::fs::write(&path, "initial")?;
+    let _ = std::fs::read_to_string(&path)?;
+    Ok(())
+}
+fn direct() { let _ = std::fs::read(tempfile::NamedTempFile::new().unwrap().path()); }
+fn custom_root(root: &str) {
+    let file = Scratch::new_in(root).unwrap();
+    let _ = std::fs::read(file.path());
+}
+fn mutable_path(input: std::path::PathBuf) {
+    let file = Scratch::new().unwrap();
+    let mut path = file.into_temp_path();
+    change(&mut path, input);
+    let _ = std::fs::read(&path);
+}
+fn shadowed(input: std::path::PathBuf) {
+    let file = Scratch::new().unwrap();
+    let path = file.into_temp_path();
+    let path = input;
+    let _ = std::fs::read(&path);
+}
+fn destination(input: &str) {
+    let file = Scratch::new().unwrap();
+    std::fs::copy(file.path(), input);
+    std::fs::rename(file.path(), input);
+}
+fn custom_extension() {
+    let file = Scratch::new().unwrap();
+    let _ = std::fs::read(file.path().unwrap());
+}
+#[cfg(test)]
+mod tests { use super::*; struct Scratch; }
+"#,
+            ),
+            (
+                "custom.rs",
+                r#"
+use custom::NamedTempFile;
+fn custom() { let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "local.rs",
+                r#"
+mod tempfile { pub struct NamedTempFile; }
+fn local() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "nested.rs",
+                r#"
+use tempfile::NamedTempFile;
+fn nested() { use other::NamedTempFile; let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "custom_sink.rs",
+                r#"
+use custom::File;
+fn custom_sink() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = File::open(file.path()); }
+"#,
+            ),
+            (
+                "crate_alias.rs",
+                r#"
+extern crate other as tempfile;
+fn crate_alias() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "glob.rs",
+                r#"
+use other::*;
+fn glob() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "child.rs",
+                r#"
+mod child {
+    use tempfile::NamedTempFile;
+    fn child() { let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+}
+"#,
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["editor", "direct"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries.len(),
+            if symbol == "editor" { 2 } else { 1 },
+            "{entries:?}"
+        );
+        assert!(
+            entries.iter().all(|e| e
+                .value_hint
+                .as_ref()
+                .is_some_and(|h| h.reason == "generated_temporary_filesystem_selection")),
+            "{entries:?}"
+        );
+    }
+    for symbol in [
+        "custom_root",
+        "mutable_path",
+        "shadowed",
+        "destination",
+        "custom_extension",
+        "custom",
+        "local",
+        "nested",
+        "custom_sink",
+        "crate_alias",
+        "glob",
+        "child",
+    ] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost {symbol}");
+        assert!(
+            entries.iter().all(|e| e.value_hint.is_none()),
+            "wrong deferral {symbol}: {entries:?}"
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some(symbol)
+                    && e.tags
+                        .iter()
+                        .any(|t| t == "filesystem-path:generated-temporary")),
+            "wrong proof {symbol}"
+        );
+    }
+}
+
+#[test]
+fn inline_sync_handles_are_inventory_but_readable_handles_and_custom_apis_survive() {
+    let fixture = Fixture::new(
+        "sync-only",
+        &[
+            (
+                "app.rs",
+                r#"
+use std::fs::File;
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> { File::open(path)?.sync_all()?; Ok(()) }
+fn sync_data(path: &str) -> std::io::Result<()> { std::fs::File::open(path)?.sync_data()?; Ok(()) }
+fn result_extension(path: &str) { std::fs::File::open(path).sync_data(); }
+fn consumed(path: &str) { let mut file = File::open(path).unwrap(); file.sync_all(); file.read_to_end(&mut Vec::new()); }
+fn returned(path: &str) { return File::open(path); }
+"#,
+            ),
+            (
+                "custom.rs",
+                r#"
+use custom::File;
+fn custom(path: &str) { File::open(path)?.sync_all()?; }
+"#,
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["sync_directory", "sync_data"] {
+        assert!(
+            inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some(symbol)
+                    && e.tags.iter().any(|t| t == "filesystem-effect:sync-only")),
+            "missing purpose {symbol}"
+        );
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)),
+            "sync is not a content-read job: {symbol}"
+        );
+    }
+    for symbol in ["consumed", "returned", "result_extension", "custom"] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)),
+            "lost {symbol}"
+        );
     }
 }
 

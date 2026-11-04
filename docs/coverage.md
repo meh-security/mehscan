@@ -78,6 +78,13 @@ source context. Definitions are not universal trait-dispatch or macro-expansion
 proof. Unknown implementations and configuration remain explicit, and optional
 context does not change the selected operation's availability.
 
+Rust filesystem review distinguishes returned file contents from path-control
+evidence. Value defers operations on proven locally generated temporary paths
+to Comprehensive, which retains file-identity and downstream-content questions.
+Caller-selected temporary directories and mutable or unresolved paths remain
+reviewable. File opens used solely to sync a handle remain in scan evidence
+without becoming content-read reviews.
+
 ## Choose the source you intend to review
 
 Directory scans honor repository ignore files and built-in dependency/build
