@@ -1,3 +1,5 @@
+import os
+
 def direct(request, content):
     with open(request.FILES["upload"].name, "w") as output:
         output.write(content)
