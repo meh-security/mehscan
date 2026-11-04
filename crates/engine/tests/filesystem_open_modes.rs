@@ -117,11 +117,44 @@ fn node_opens_respect_packages_flags_and_aliases_in_all_frontends() {
         );
         for source in [
             "import * as fs from 'custom/files'; function operation(path){return fs.readFileSync(path);}",
+            "import fs from 'fs-extra/esm'; function operation(path){return fs.readFileSync(path);}",
             "import * as fs from 'node:fs'; function operation(fs,path){return fs.readFileSync(path);}",
             "import * as fs from 'node:fs'; function operation(path){fs.readFileSync=custom;return fs.readFileSync(path);}",
             "function unrelated(){const fs=require('node:fs');}function operation(fs,path){return fs.readFileSync(path);}",
         ] {
             check(extension, source, None, false);
+        }
+    }
+}
+
+#[test]
+fn node_compatible_filesystem_packages_keep_only_their_documented_core_exports() {
+    for extension in ["js", "ts", "tsx"] {
+        for package in ["fs-extra", "graceful-fs"] {
+            check(
+                extension,
+                &format!(
+                    "import files from '{package}'; function operation(path){{return files.readFileSync(path);}}"
+                ),
+                Some(Capability::FilesystemRead),
+                false,
+            );
+            check(
+                extension,
+                &format!(
+                    "const files=require('{package}'); function operation(path){{return files.openSync(path,'w');}}"
+                ),
+                Some(Capability::FilesystemWrite),
+                false,
+            );
+            check(
+                extension,
+                &format!(
+                    "import files from '{package}'; function operation(path){{return files.readFileSync(path,{{flag:'w+'}});}}"
+                ),
+                Some(Capability::FilesystemWrite),
+                false,
+            );
         }
     }
 }

@@ -3795,6 +3795,10 @@ fn external_sink_api(callee: &str, imports: &BTreeMap<String, ImportTarget>) -> 
         .unwrap_or(&target.module);
     let package = if package == "fs/promises" {
         "fs.promises"
+    } else if matches!(package, "fs-extra" | "graceful-fs") {
+        // Enumerated packages re-export core fs operations. fs-extra/esm
+        // deliberately omits them and must not inherit this contract.
+        "fs"
     } else {
         package
     };
