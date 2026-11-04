@@ -49,7 +49,14 @@ than rereading equivalent distributions.
   read target.
   Read the actual open flags/mode before calling it a read or write. An
   `filesystem-mode:unresolved` tag asks for the effective mode, not an invented
-  effect. Normalization alone is not root containment. For moves/renames, inspect
+  effect. The read/write capability label is provisional in that case. Resolving
+  an open to creation, truncation or writing does not dismiss the same selected
+  path-access question: assess that effect's target and applicable authority or
+  root constraint. Write-only access disproves a disclosure claim, not an
+  unchecked destination. Keep a decisive missing selector or guard unresolved;
+  ordinary fixed, generated or operator-selected work can close locally without
+  inventing a restricted file service or enumerating every caller.
+  Normalization alone is not root containment. For moves/renames, inspect
   both `path` and `filesystem_source`; a fixed destination or its guard does not
   close an independently selected source. For a Comprehensive recursive-root
   question, follow the content/export/disclosure consumer instead of researching

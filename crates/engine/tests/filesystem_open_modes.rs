@@ -189,6 +189,40 @@ fn filesystem_helper_contracts_keep_mutating_read_flags_and_open_effects() {
 }
 
 #[test]
+fn unknown_open_modes_keep_path_authority_in_the_question_after_effect_resolution() {
+    let root = support::temp_dir("filesystem-mode-question");
+    fs::write(root.join("App.cs"), "class App{object Operation(string path,System.IO.FileStreamOptions options){return new System.IO.FileStream(path,options);}}").unwrap();
+    fs::write(
+        root.join("app.py"),
+        "def operation(path,mode):\n return open(path,mode)\n",
+    )
+    .unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    let ids = inventory
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+        })
+        .map(|e| e.review_id.clone())
+        .collect();
+    let job =
+        mehscan_engine::investigation::build_selected_review_jobs(&root, &inventory, &ids, None)
+            .unwrap();
+    assert_eq!(job.observation_reviews.len(), 2);
+    for review in &job.observation_reviews {
+        assert!(review.title.contains("unresolved open mode"));
+        let question = &review.review_basis.as_ref().unwrap().security_question;
+        assert!(question.contains("creation, truncation or write"));
+        assert!(question.contains("authority or root"));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn python_builtin_sdk_and_path_opens_preserve_effects_and_shadowing() {
     for (imports, expression, capability, unknown) in [
         ("", "open(path,'r+')", Capability::FilesystemWrite, false),

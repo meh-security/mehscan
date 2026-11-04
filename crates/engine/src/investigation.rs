@@ -430,7 +430,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "28";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "29";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -9411,6 +9411,8 @@ fn observation_review_basis(
             contract.security_question.to_string()
         } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
+        } else if unresolved_filesystem_open(evidence) {
+            "What is this open's effective mode, and can its actual read, creation, truncation or write access violate the selected path's applicable authority or root constraint? Resolving it to write-only does not settle destination selection.".to_string()
         } else if evidence.iter().any(|item| {
             item.kind == EvidenceKind::Sink
                 && item.capability == Capability::ResourceAccess
@@ -15608,6 +15610,9 @@ fn observation_review_title(evidence: &[Evidence]) -> String {
     if let Some(origin) = decision_critical_origin(evidence) {
         return origin.title().to_string();
     }
+    if unresolved_filesystem_open(evidence) {
+        return "Review filesystem access with unresolved open mode".to_string();
+    }
     let mut anchors = evidence
         .iter()
         .filter(|item| {
@@ -15639,6 +15644,24 @@ fn observation_review_title(evidence: &[Evidence]) -> String {
         },
         capabilities.into_iter().collect::<Vec<_>>().join(", ")
     )
+}
+
+fn unresolved_filesystem_open(evidence: &[Evidence]) -> bool {
+    evidence.iter().any(|item| {
+        item.kind == EvidenceKind::Sink
+            && matches!(
+                item.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+            && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-22")
+            && (item
+                .tags
+                .iter()
+                .any(|tag| tag == "filesystem-mode:unresolved")
+                || item.context.operand_facts.iter().any(|fact| {
+                    fact.role == "filesystem_mode" && !fact.remaining_checks.is_empty()
+                }))
+    })
 }
 
 fn observation_review_questions(
