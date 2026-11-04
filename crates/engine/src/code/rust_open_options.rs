@@ -57,7 +57,15 @@ pub(super) fn add<'a>(
 fn scope(node: &RustNode<'_>) -> bool {
     matches!(
         node.kind().as_ref(),
-        "source_file" | "declaration_list" | "block" | "function_item" | "closure_expression"
+        "source_file"
+            | "declaration_list"
+            | "block"
+            | "function_item"
+            | "closure_expression"
+            | "for_expression"
+            | "match_arm"
+            | "if_expression"
+            | "while_expression"
     )
 }
 
@@ -72,7 +80,11 @@ fn scope_id(node: &RustNode<'_>) -> ScopeId {
             "declaration_list" => 1,
             "block" => 2,
             "function_item" => 3,
-            _ => 4,
+            "closure_expression" => 4,
+            "for_expression" => 5,
+            "match_arm" => 6,
+            "if_expression" => 7,
+            _ => 8,
         },
     )
 }
@@ -273,6 +285,14 @@ impl<'a> Walker<'a, '_> {
 
     fn binding(&self, at: &RustNode<'_>, name: &str) -> Option<(ScopeId, String)> {
         for ancestor in at.ancestors().filter(scope) {
+            if ancestor.kind().as_ref() == "if_expression"
+                && ancestor
+                    .field("alternative")
+                    .is_some_and(|n| n.range().contains(&at.range().start))
+            {
+                // `if let` bindings do not extend into its else branch.
+                continue;
+            }
             let key = (scope_id(&ancestor), name.into());
             if self.bindings.contains_key(&key) {
                 return Some(key);
@@ -375,6 +395,36 @@ impl<'a> Walker<'a, '_> {
             }
             "call_expression" => return self.call(node, depth + 1),
             _ => (),
+        }
+        // Pattern-bound values have their own lexical identity. An untyped
+        // closure/loop/match binding must never borrow an outer SDK builder.
+        if matches!(
+            node.kind().as_ref(),
+            "for_expression" | "match_arm" | "let_condition"
+        ) && let Some(pattern) = node.field("pattern")
+        {
+            let owner = if node.kind().as_ref() == "let_condition" {
+                enclosing_scope(node)
+            } else {
+                scope_id(node)
+            };
+            for name in pattern.dfs().filter(|n| n.kind().as_ref() == "identifier") {
+                self.bindings
+                    .insert((owner, name.text().into_owned()), None);
+            }
+        }
+        if node.kind().as_ref() == "closure_expression"
+            && let Some(parameters) = node.field("parameters")
+        {
+            for pattern in parameters
+                .children()
+                .filter(|n| n.is_named() && n.kind().as_ref() != "parameter")
+            {
+                for name in pattern.dfs().filter(|n| n.kind().as_ref() == "identifier") {
+                    self.bindings
+                        .insert((scope_id(node), name.text().into_owned()), None);
+                }
+            }
         }
         let uncertain = matches!(
             node.kind().as_ref(),
@@ -508,6 +558,7 @@ impl<'a> Walker<'a, '_> {
             self.invalidate(id);
         }
         if function.kind().as_ref() == "identifier"
+            && self.binding(call, function.text().as_ref()).is_none()
             && self.names.factory(call, function.text().as_ref())
         {
             // Declared SDK return ownership is sufficient for an observation,

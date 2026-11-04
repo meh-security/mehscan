@@ -51,6 +51,7 @@ fn typed_local(path: &str) { let o: std::fs::OpenOptions = configured(); let _ =
 fn configured_options() -> Options { let mut o = Options::new(); o.write(true); o }
 fn helper_return(path: &str) { let _ = configured_options().create_new(true).open(path); }
 fn permissions(path: &str) { let mut o = Options::new(); o.write(true).create_new(true); std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600); let _ = o.open(path); }
+fn else_outer(path: &str, value: Option<Custom>) { let mut options = Options::new(); options.read(true); if let Some(options) = value { use_custom(options); } else { let _ = options.open(path); } }
 fn separate(path: &str) { let mut o = Options::new(); o.read(true); let _ = o.open(path); o.write(true); let _ = o.open(path); }
 async fn asynchronous(path: &str) { let _ = tokio::fs::OpenOptions::new().write(true).create(true).open(path).await; }
 mod child {
@@ -96,6 +97,7 @@ mod child {
         ("typed_local", Capability::FilesystemRead, "unresolved"),
         ("helper_return", Capability::FilesystemWrite, "unresolved"),
         ("permissions", Capability::FilesystemWrite, "write"),
+        ("else_outer", Capability::FilesystemRead, "read"),
         ("nested", Capability::FilesystemRead, "read"),
     ] {
         let effects = inventory
@@ -161,6 +163,13 @@ fn wrapper() -> Vec<std::fs::OpenOptions> { unimplemented!() }
 fn wrapper_return(path: &str) { let _ = wrapper().read(true).open(path); }
 fn factory() -> std::fs::OpenOptions { unimplemented!() }
 fn shadowed_factory(path: &str) { let factory = || Custom; let _ = factory().open(path); }
+fn closure_shadow(path: &str) { let options = std::fs::OpenOptions::new(); let _ = |options| options.open(path); }
+fn for_shadow(path: &str, values: Vec<Custom>) { let options = std::fs::OpenOptions::new(); for options in values { let _ = options.open(path); } }
+fn match_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); match value { Some(options) => { let _ = options.open(path); }, None => () } }
+fn if_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); if let Some(options) = value { let _ = options.open(path); } }
+fn while_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); while let Some(options) = value { let _ = options.open(path); break; } }
+fn closure_factory_shadow(path: &str) { let _ = |factory| factory().open(path); }
+fn for_factory_shadow(path: &str, values: Vec<Custom>) { for factory in values { let _ = factory().open(path); } }
 "#,
             ),
             (
