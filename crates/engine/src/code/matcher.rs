@@ -1967,6 +1967,17 @@ pub(crate) fn scan_source(
         summary_pass_started,
     );
     let summary_pass_started = start_summary_pass();
+    super::rust_open_options::add(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    finish_summary_pass("super::rust_open_options::add", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::rust_context::annotate_rust_build_script(path, language, &mut evidence);
     finish_summary_pass(
         "super::rust_context::annotate_rust_build_script",

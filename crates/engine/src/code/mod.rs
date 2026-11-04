@@ -142,6 +142,7 @@ mod rust_context;
 mod rust_filesystem;
 pub(crate) mod rust_http;
 pub(crate) mod rust_modules;
+mod rust_open_options;
 mod rust_project;
 pub(crate) mod rust_raw_slice;
 mod scanner;
