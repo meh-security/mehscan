@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 export function Review(props: {
   query: string;
   url: string;

@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 function review(query: string, url: string, path: string, code: string) {
   connection.query(query);
   axios.get(url);
