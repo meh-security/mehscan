@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const SOURCE_RULE_ID: &str = "c-family-serialized-scalar-load";
@@ -39,6 +40,7 @@ struct MemoryUses<'tree> {
     operation: Node<'tree, StrDoc<SupportLang>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_loaded_extent_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -46,6 +48,7 @@ pub(crate) fn add_native_loaded_extent_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -72,7 +75,7 @@ pub(crate) fn add_native_loaded_extent_observations<'tree>(
         }) else {
             continue;
         };
-        let Some(uses) = memory_uses(&scope, &extent) else {
+        let Some(uses) = memory_uses(&scope, &extent, api) else {
             continue;
         };
         if extent.operands.iter().any(|operand| {
@@ -294,6 +297,7 @@ fn is_scalar_loader(callee: &str) -> bool {
 fn memory_uses<'tree>(
     scope: &Node<'tree, StrDoc<SupportLang>>,
     extent: &Extent<'tree>,
+    api: &NativeApiContext,
 ) -> Option<MemoryUses<'tree>> {
     let after = extent.declaration.range().end;
     let allocation = scope
@@ -311,7 +315,7 @@ fn memory_uses<'tree>(
             node.kind().as_ref() == "call_expression" && node.range().start > allocation.range().end
         })
         .find(|call| {
-            is_memory_operation(call)
+            is_memory_operation(call, api)
                 && named_arguments(call)
                     .iter()
                     .any(|arg| arg.text().trim() == extent.name)
@@ -441,13 +445,11 @@ fn is_allocator(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
     })
 }
 
-fn is_memory_operation(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    call.field("function").is_some_and(|function| {
-        matches!(
-            function.text().trim(),
-            "memcpy" | "memmove" | "memset" | "bcopy" | "fread"
-        )
-    })
+fn is_memory_operation(call: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
+    matches!(
+        api.call_name(call),
+        Some("memcpy" | "memmove" | "memset" | "bcopy" | "fread")
+    )
 }
 
 fn named_arguments<'tree>(

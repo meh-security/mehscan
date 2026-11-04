@@ -148,8 +148,10 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
     let in_nonproduction_directory = components.iter().enumerate().any(|(index, component)| {
         // Below a JVM production source root these names can be namespace
         // segments. Top-level examples and all test/generated roles still apply.
-        if matches!(component.as_str(), "samples" | "examples")
-            && jvm_main.is_some_and(|root| index > root)
+        if matches!(
+            component.as_str(),
+            "sample" | "samples" | "example" | "examples"
+        ) && jvm_main.is_some_and(|root| index > root)
         {
             return false;
         }
@@ -157,6 +159,8 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
             component.as_str(),
             "test"
                 | "tests"
+                | "libtest"
+                | "libtests"
                 | "unit_test"
                 | "unit_tests"
                 | "unit-test"
@@ -170,12 +174,20 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
                 | "test_utils"
                 | "test_crates"
                 | "__tests__"
+                | "__specs__"
                 | "spec"
                 | "specs"
+                | "e2e"
+                | "e2e-tests"
+                | "e2e_tests"
+                | "end-to-end"
+                | "end_to_end"
                 | "fixture"
                 | "fixtures"
                 | "testdata"
+                | "example"
                 | "examples"
+                | "sample"
                 | "samples"
                 | "benches"
                 | "benchmark"
@@ -205,7 +217,18 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains(".spec.")
         || lower.contains(".test.")
+        || lower.contains(".specs.")
+        || lower.contains(".tests.")
+        || lower.contains(".e2e.")
+        || lower.contains(".e2e-spec.")
+        || lower.contains(".e2e-test.")
+        || lower.contains(".integration-spec.")
+        || lower.contains(".unit-spec.")
         || lower.ends_with("_test.go")
+        || (lower.ends_with(".rs")
+            && (matches!(lower.as_str(), "test.rs" | "tests.rs")
+                || lower.ends_with("_test.rs")
+                || lower.ends_with("_tests.rs")))
         || ((lower.ends_with(".py") || lower.ends_with(".pyw"))
             && (lower.starts_with("test_")
                 || lower.ends_with("_test.py")
@@ -371,6 +394,19 @@ mod tests {
             "test_helpers/process.go",
             "src/login.spec.ts",
             "src/login.test.js",
+            "src/login.e2e-spec.ts",
+            "src/login.e2e-test.js",
+            "src/login.integration-spec.ts",
+            "src/login.unit-spec.ts",
+            "src/login.specs.tsx",
+            "src/login.tests.mts",
+            "src/login.e2e.cts",
+            "packages/api/e2e/helpers/client.ts",
+            "packages/api/e2e-tests/client.js",
+            "packages/api/e2e_tests/client.py",
+            "packages/api/end-to-end/client.go",
+            "packages/api/end_to_end/client.rs",
+            "packages/api/__specs__/client.vue",
             "pkg/login_test.go",
             "src/test_login.py",
             "src/login_test.py",
@@ -387,6 +423,11 @@ mod tests {
             "public/app.min.js",
             "internal/api/messages.pb.go",
             "tests/native_test.c",
+            "contrib/libtests/image_check.c",
+            "tools/libtest/check_connection.cpp",
+            "example/server.cc",
+            "server/Sample/handler.c",
+            "sample/client.rs",
             "fuzz/parser.cpp",
             "apps/oss-fuzz/parser.c",
             "Form.Designer.cs",
@@ -405,6 +446,22 @@ mod tests {
             classify_path(Path::new("src/login.ts")),
             FileClass::Supported(Language::Typescript)
         );
+        for path in [
+            "src/e2e-status.ts",
+            "src/specification.ts",
+            "src/contest.ts",
+            "src/libtests_adapter.ts",
+            "src/example_client.ts",
+            "src/sample_store.ts",
+            "src/exampledata/client.ts",
+            "src/app/api/e2e/route.ts",
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::Supported(Language::Typescript),
+                "production lookalike must remain source: {path}"
+            );
+        }
         assert_eq!(
             classify_path(Path::new("apps/unit_testsupport/parser.c")),
             FileClass::Supported(Language::C),
@@ -490,6 +547,8 @@ mod tests {
                 "src/main/java/org/springframework/samples/Owner.java",
                 Language::Java,
             ),
+            ("src/main/java/org/example/Owner.java", Language::Java),
+            ("src/main/kotlin/org/sample/Owner.kt", Language::Kotlin),
         ] {
             assert_eq!(
                 classify_path(Path::new(path)),
@@ -500,6 +559,8 @@ mod tests {
         for path in [
             "samples/app/src/main/kotlin/App.kt",
             "examples/src/main/java/App.java",
+            "example/src/main/java/App.java",
+            "sample/src/main/kotlin/App.kt",
             "src/test/kotlin/org/samples/Owner.kt",
             "src/main/kotlin/tests/App.kt",
         ] {

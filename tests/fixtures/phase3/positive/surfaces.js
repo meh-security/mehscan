@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 function review(query, url, path, code) {
   pool.query(query);
   fetch(url);

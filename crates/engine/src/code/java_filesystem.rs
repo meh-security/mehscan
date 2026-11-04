@@ -116,6 +116,73 @@ fn add_filesystem_access<'tree>(
                 && (imports.contains(&format!("java.nio.file.Files.{operation}"))
                     || imports.contains("java.nio.file.Files.*"));
 
+        let channel = object.as_ref().is_some_and(|o| {
+            (o.text() == "java.nio.channels.FileChannel"
+                || o.text() == "FileChannel"
+                    && imported_exact(
+                        imports,
+                        declarations,
+                        "java.nio.channels.FileChannel",
+                        "FileChannel",
+                    ))
+                && !parameter_shadows_name(&invocation, "FileChannel", Language::Java)
+        }) && operation == "open";
+        let exact_files_call = exact_files_call
+            || object
+                .as_ref()
+                .is_some_and(|o| o.text() == "java.nio.file.Files");
+        if (channel || exact_files_call && operation == "newByteChannel") && !args.is_empty() {
+            let options = &args[1..];
+            let known = options.iter().all(|n| {
+                let text = n.text();
+                [
+                    "READ",
+                    "WRITE",
+                    "APPEND",
+                    "CREATE",
+                    "CREATE_NEW",
+                    "TRUNCATE_EXISTING",
+                    "DELETE_ON_CLOSE",
+                    "SPARSE",
+                    "SYNC",
+                    "DSYNC",
+                    "NOFOLLOW_LINKS",
+                ]
+                .iter()
+                .any(|v| {
+                    text.as_ref() == format!("java.nio.file.StandardOpenOption.{v}")
+                        || text.as_ref() == format!("StandardOpenOption.{v}")
+                            && imported_exact(
+                                imports,
+                                declarations,
+                                "java.nio.file.StandardOpenOption",
+                                "StandardOpenOption",
+                            )
+                        || text.as_ref() == *v
+                            && (imports.contains(&format!("java.nio.file.StandardOpenOption.{v}"))
+                                || imports.contains("java.nio.file.StandardOpenOption.*"))
+                })
+            });
+            let writes = options.iter().any(|n| {
+                ["WRITE", "APPEND", "DELETE_ON_CLOSE"]
+                    .iter()
+                    .any(|v| n.text().rsplit('.').next() == Some(v))
+            });
+            super::filesystem_open::emit(
+                path,
+                &invocation,
+                &args[0],
+                Language::Java,
+                if known { Some(writes) } else { None },
+                options.first(),
+                "",
+                conditional,
+                literals,
+                evidence,
+            );
+            continue;
+        }
+
         if exact_files_call
             && files_read_methods().contains(&operation.as_str())
             && let Some(file_path) = args.first()
@@ -283,9 +350,10 @@ fn add_filesystem_access<'tree>(
             ),
             _ => continue,
         };
-        if short == "FileSystemResource" && !file_resource
-            || short != "FileSystemResource"
-                && !imported_exact(imports, declarations, canonical, short)
+        if kind_text.as_ref() != canonical
+            && (short == "FileSystemResource" && !file_resource
+                || short != "FileSystemResource"
+                    && !imported_exact(imports, declarations, canonical, short))
         {
             continue;
         }

@@ -179,6 +179,15 @@ Do not reread source to populate a journal or copy a query for each sibling ID.
   as missing. If deployment policy decides intentional rich-content trust,
   inspect available deployment evidence, then record that shared gap once.
 
+Keep encoding correctness and security impact separate. A script parse failure,
+changed cosmetic text or a recommendation to use a context-specific encoder does
+not by itself establish a security finding or severity. Identify the actual
+security-relevant effect, such as injected execution, sensitive-data exposure or
+disruption of a protected function. Preserve useful encoding-hardening facts as
+leads; if a deciding effect is genuinely unknown, name it without promoting it.
+An established interpretation boundary violation can still support a conditional
+finding without a deployed exploit. Do not require exhaustive caller discovery.
+
 Raw rich-content output alone is not XSS. Do not assume an authorized publisher
 is lower trust, or call a direct writer safe because its actor policy is unknown.
 An intentional setting that permits raw author content is not itself a bypass.

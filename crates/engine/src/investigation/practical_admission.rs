@@ -49,6 +49,9 @@ pub(super) fn inventory_only(
     evidence: &[Evidence],
     written_code_targets: &BTreeSet<String>,
 ) -> bool {
+    if is_non_content_filesystem_effect(item) {
+        return true;
+    }
     if crate::code::closed_query(item) {
         return true;
     }
@@ -274,6 +277,33 @@ fn suitable_digest_selection(item: &Evidence, sources: &RepositorySources) -> bo
                 }
             })
         });
+    let algorithm = algorithm.or_else(|| {
+        if item.rule_id != "csharp-hash-algorithm-selection" {
+            return None;
+        }
+        let name = item
+            .symbol_resolution
+            .as_ref()?
+            .canonical
+            .strip_prefix("System.Security.Cryptography.")?
+            .split('.')
+            .next()?;
+        match name {
+            "SHA256" | "SHA256Managed" | "SHA256CryptoServiceProvider" | "SHA256Cng" => {
+                Some("sha256")
+            }
+            "SHA384" | "SHA384Managed" | "SHA384CryptoServiceProvider" | "SHA384Cng" => {
+                Some("sha384")
+            }
+            "SHA512" | "SHA512Managed" | "SHA512CryptoServiceProvider" | "SHA512Cng" => {
+                Some("sha512")
+            }
+            "SHA3_256" => Some("sha3256"),
+            "SHA3_384" => Some("sha3384"),
+            "SHA3_512" => Some("sha3512"),
+            _ => None,
+        }
+    });
     algorithm.is_some_and(|algorithm| {
         matches!(
             algorithm.to_ascii_lowercase().replace('-', "").as_str(),
@@ -519,7 +549,43 @@ fn anchor_line<'a>(item: &Evidence, sources: &'a RepositorySources) -> &'a str {
         .unwrap_or("")
 }
 
+pub(super) fn is_non_content_filesystem_effect(item: &Evidence) -> bool {
+    item.rule_id == "rust-filesystem-read"
+        && item.tags.iter().any(|t| t == "filesystem-effect:sync-only")
+        && item.context.operand_facts.iter().any(|f| {
+            f.kind == mehscan_core::OperandFactKind::LocalOperandOrigin
+                && f.role == "resource_operation"
+                && f.value == "std::fs::File::open -> sync-only handle"
+                && f.remaining_checks.is_empty()
+                && f.location == item.location
+        })
+}
+
 pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if matches!(
+        item.capability,
+        Capability::FilesystemRead | Capability::FilesystemWrite
+    ) && item
+        .tags
+        .iter()
+        .any(|t| t == "filesystem-path:generated-temporary")
+        && item.context.operand_facts.iter().any(|f| {
+            f.kind == mehscan_core::OperandFactKind::TemporaryFilesystemPath
+                && f.role == "path"
+                && f.remaining_checks == ["temporary_file_identity_and_content_consumers"]
+                && item
+                    .captures
+                    .get("path")
+                    .is_some_and(|p| p.location == f.location && p.text == f.value)
+        })
+    {
+        return Some(ValueReviewHint {
+            reason: "generated_temporary_filesystem_selection".into(),
+            target: item.location.path.clone(),
+            assumption: "Path selection comes from a locally bound tempfile::NamedTempFile::new, with no caller-selected directory or mutable path binding. Comprehensive retains file identity, interference and downstream content questions; no safe verdict or content trust is inferred.".into(),
+            depends_on: None,
+        });
+    }
     let recursive = item.rule_id == "java-filesystem-read" && item.tags.iter().any(|t| t == "walk")
         || item.rule_id == "csharp-filesystem-read"
             && item.symbol_resolution.as_ref().is_some_and(|s| {

@@ -395,6 +395,39 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
         if !helper_refs.is_empty() {
             card["helper_context_ids"] = json!(helper_refs);
         }
+        if let Some(configuration) = card.get_mut("source_configuration") {
+            let dependencies = configuration["dependencies"].take();
+            let mut refs = Vec::new();
+            for dependency in dependencies.as_array().into_iter().flatten() {
+                let declaration = &dependency["declaration"];
+                let location = &declaration["location"];
+                let source = json!({
+                    "role":"source_configuration",
+                    "location":{
+                        "path":location["path"],
+                        "start_line":location["start"]["line"],
+                        "end_line":location["end"]["line"],
+                        "start_column":location["start"]["column"],
+                        "end_column":location["end"]["column"],
+                        "start_byte_offset":location["start"]["byte_offset"],
+                        "end_byte_offset":location["end"]["byte_offset"],
+                    },
+                    "excerpt":declaration["text"],
+                    "source_sha256":dependency["source_sha256"],
+                    "target_path":dependency["target_path"],
+                    "truncated":dependency["truncated"].as_bool().unwrap_or(false),
+                });
+                let id = register_atomic_context(&mut contexts, source)?;
+                if !refs.contains(&id) {
+                    refs.push(id);
+                }
+            }
+            configuration
+                .as_object_mut()
+                .ok_or("invalid source configuration")?
+                .remove("dependencies");
+            configuration["dependency_context_ids"] = json!(refs);
+        }
         card.as_object_mut()
             .ok_or("invalid review card")?
             .remove("helper_context");
@@ -572,6 +605,55 @@ mod tests {
         let mut conflict = a.clone();
         conflict["source_context"]["excerpt"] = json!("different source");
         assert!(sweep("bundle", vec![a, conflict]).is_err());
+    }
+
+    #[test]
+    fn configuration_provenance_is_shared_while_each_question_keeps_its_applicability() {
+        let dependency = json!({"declaration":{"text":"#[cfg(feature=\"extra\")] mod shared;",
+            "location":{"path":"src/lib.rs","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":1,"column":36,"byte_offset":35}}},
+            "source_sha256":"source-version","target_path":"src/shared.rs","truncated":true});
+        let a = json!({"review_id":"a","selected_anchor_id":"anchor-a",
+            "source_configuration":{"availability":{"state":"conditional","condition":"feature=extra"},"dependencies":[dependency.clone()]}});
+        let b = json!({"review_id":"b","selected_anchor_id":"anchor-b",
+            "source_configuration":{"availability":{"state":"unknown","condition":"unexpanded alternative"},"dependencies":[dependency.clone()]}});
+        let result = sweep("bundle", vec![a.clone(), b.clone()]).unwrap();
+        let rows = result["reviews"].as_array().unwrap();
+        assert_eq!(result["source_contexts"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            rows[0]["source_configuration"]["dependency_context_ids"],
+            rows[1]["source_configuration"]["dependency_context_ids"]
+        );
+        assert_ne!(
+            rows[0]["source_configuration"]["availability"],
+            rows[1]["source_configuration"]["availability"]
+        );
+        assert_ne!(rows[0]["selected_anchor_id"], rows[1]["selected_anchor_id"]);
+        assert!(
+            rows.iter()
+                .all(|row| row["source_configuration"].get("dependencies").is_none())
+        );
+        let context = &result["source_contexts"][0];
+        assert_eq!(context["excerpt"], dependency["declaration"]["text"]);
+        assert_eq!(context["source_sha256"], dependency["source_sha256"]);
+        assert_eq!(context["target_path"], dependency["target_path"]);
+        assert_eq!(context["truncated"], true);
+        assert_eq!(context["location"]["start_byte_offset"], 0);
+        assert_eq!(context["location"]["start_column"], 1);
+        assert_eq!(context["location"]["end_column"], 36);
+        let mut other_target = b.clone();
+        other_target["source_configuration"]["dependencies"][0]["target_path"] =
+            json!("src/other.rs");
+        assert_eq!(
+            sweep("bundle", vec![a.clone(), other_target]).unwrap()["source_contexts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let mut conflicting = b;
+        conflicting["source_configuration"]["dependencies"][0]["declaration"]["text"] =
+            json!("different source");
+        assert!(sweep("bundle", vec![a, conflicting]).is_err());
     }
 
     #[test]

@@ -84,6 +84,15 @@ fn application_call<'a>(root: &KNode<'a>, expression: &KNode<'a>) -> bool {
 
 pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> bool {
     let imports = Imports::build(root);
+    accepts_with_imports(root, &imports, rule, node)
+}
+
+pub(super) fn accepts_with_imports<'a>(
+    root: &KNode<'a>,
+    imports: &Imports,
+    rule: &str,
+    node: &KNode<'a>,
+) -> bool {
     if matches!(rule, "kotlin-ktor-query-source" | "kotlin-ktor-path-source") {
         if node.kind().as_ref() != "indexing_expression" {
             return false;

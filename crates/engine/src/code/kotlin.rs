@@ -35,6 +35,7 @@ pub(crate) use numeric::constant_query_fact;
 pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
+pub(super) use identity::call as filesystem_call;
 use identity::{KNode, binding_type, receiver_unchanged};
 
 pub(super) fn exact_symbol(
@@ -245,7 +246,7 @@ pub(super) fn accept<'a>(
         return cookie::accepts(root, rule, node);
     }
     if rule.starts_with("kotlin-auth0-jwt-") {
-        return jwt::accepts(root, rule, node);
+        return jwt::accepts_with_imports(root, imports, rule, node);
     }
     if rule.starts_with("kotlin-webflux-") {
         return webflux::accepts(root, rule, node);
@@ -260,9 +261,9 @@ pub(super) fn accept<'a>(
         return tls::accepts(root, node);
     }
     if rule == "kotlin-exposed-sql-exec" {
-        return exposed::accepts(root, node);
+        return exposed::accepts_with_imports(root, imports, node);
     }
-    if ktor::accepts(root, rule, node) {
+    if ktor::accepts_with_imports(root, imports, rule, node) {
         return true;
     }
     if rule == "kotlin-url-connection-consumer" && node.kind().as_ref() == "navigation_expression" {
@@ -273,7 +274,7 @@ pub(super) fn accept<'a>(
     };
     // Kotlin File extensions support named arguments; Java methods do not.
     if matches!(rule, "kotlin-file-read" | "kotlin-file-write") {
-        return jvm::accepts(root, rule, node);
+        return jvm::accepts_with_imports(root, imports, rule, node);
     }
     if call
         .arguments
@@ -283,7 +284,7 @@ pub(super) fn accept<'a>(
         return false;
     }
     let observed = call.callee.text();
-    if jvm::accepts(root, rule, node) {
+    if jvm::accepts_with_imports(root, imports, rule, node) {
         return true;
     }
     let Some((receiver, method)) = observed.rsplit_once('.') else {

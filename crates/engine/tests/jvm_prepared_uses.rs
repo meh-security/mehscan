@@ -18,6 +18,62 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn java_prepared_context_keeps_use_size_count_and_callable_budgets() {
+    let body = |name: &str, prefix: String, uses: String| {
+        format!(
+            "void {name}(Connection c,String q) throws Exception {{ var p=c.prepareStatement(q); {prefix} {uses} }}\n"
+        )
+    };
+    let source = format!(
+        "import java.sql.Connection; class Limits {{ {}{}{}{}{} }}",
+        body("twelve", String::new(), "p.executeQuery();".repeat(12)),
+        body("thirteen", String::new(), "p.executeQuery();".repeat(13)),
+        body(
+            "atBudget",
+            "work();".repeat(126),
+            "p.executeQuery();".into()
+        ),
+        body(
+            "overBudget",
+            "work();".repeat(128),
+            "p.executeQuery();".into()
+        ),
+        body(
+            "largeUse",
+            String::new(),
+            format!("p.setString(1,\"{}\");", "x".repeat(4100))
+        )
+    );
+    let fixture = Fixture::new("java-limits", "Limits.java", &source);
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let preparations: Vec<_> = scan
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "java-database-query")
+        .collect();
+    assert_eq!(preparations.len(), 5);
+    for sink in preparations {
+        let facts = sink
+            .context
+            .operand_facts
+            .iter()
+            .filter(|fact| fact.kind == OperandFactKind::PreparedStatementUse)
+            .count();
+        assert_eq!(
+            facts,
+            match sink.enclosing_symbol.as_deref().unwrap() {
+                "twelve" => 12,
+                "atBudget" => 1,
+                _ => 0,
+            },
+            "{}",
+            sink.enclosing_symbol.as_deref().unwrap()
+        );
+    }
+}
+
+#[test]
 fn kotlin_use_cache_stops_after_handoffs_and_keeps_alias_origin() {
     let source = r#"import java.sql.Connection
 fun normal(c: Connection, q: String) { val p = c.prepareStatement(q); p.setString(1,q); p.clearParameters(); p.executeQuery() }

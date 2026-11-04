@@ -48,13 +48,42 @@ pub(crate) enum ParseOutcome {
     },
 }
 
+pub(crate) const NATIVE_PASS_NAMES: [&str; 24] = [
+    "api_context",
+    "arithmetic",
+    "domain_bounds",
+    "region_bounds",
+    "multiplication",
+    "signedness",
+    "heap_lifetime",
+    "cpp_ownership",
+    "libxml2",
+    "libarchive",
+    "toctou",
+    "drogon",
+    "invalidation",
+    "serialized_blob",
+    "loaded_extent",
+    "remaining_input",
+    "allocation",
+    "lifetime",
+    "state",
+    "ownership",
+    "buffer",
+    "defined_copy",
+    "vector_borrows",
+    "exception_cleanup",
+];
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FileScanTiming {
     pub parse_context_microseconds: u128,
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
+    pub native_pass_microseconds: [u128; NATIVE_PASS_NAMES.len()],
     pub security_paths_microseconds: u128,
+    pub postprocessing_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
 }
@@ -75,6 +104,7 @@ pub(crate) struct ScanDependencies<'a> {
     pub drogon_project_context: &'a super::native_drogon::DrogonProjectContext,
     pub native_invalidation_context:
         &'a super::native_invalidation::NativeInvalidationProjectContext,
+    pub native_copy_context: &'a super::native_copy::NativeCopyProjectContext,
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
     pub php_project_context: &'a super::php::PhpProjectContext,
@@ -118,6 +148,7 @@ pub(crate) fn scan_source(
         go_project_context,
         drogon_project_context,
         native_invalidation_context,
+        native_copy_context,
         python_project_context,
         rust_project_context,
         php_project_context,
@@ -149,6 +180,8 @@ pub(crate) fn scan_source(
     let root = ast.root();
     let kotlin_imports =
         (language == Language::Kotlin).then(|| super::kotlin::Imports::build(&root));
+    let rust_context =
+        (language == Language::Rust).then(|| super::rust_context::RustFileContext::new(&root));
     let comments = CommentRanges::from_root(&root);
     let (secret_evidence, secret_suppressed) =
         scan_secrets_if_enabled(scan_secrets, path, source, &comments, secret_allowlist);
@@ -157,22 +190,48 @@ pub(crate) fn scan_source(
         .filter(|node| super::typescript_syntax::unsupported_error(node, language))
         .map(|node| node.range())
         .collect::<Vec<_>>();
-    let conditional = ConditionalRegions::from_source(language, source, build_symbols);
+    let conditional = ConditionalRegions::from_source(language, source, build_symbols)
+        .with_rust_cfg(language, &root);
     let literals = LiteralEnvironment::build(&root, language);
     let symbol_environment =
         FileSymbolEnvironment::build(path, &root, language, source, project_symbols);
+    let php_context = (language == Language::Php)
+        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let parse_context_microseconds = parse_started.elapsed().as_micros();
+
+    // Admission and native invariant passes share the same file-owned identity
+    // index. Qualified calls must not acquire a different contract downstream.
+    let mut native_pass_microseconds = [0; NATIVE_PASS_NAMES.len()];
+    let native_started = Instant::now();
+    let native_api = super::native_api::NativeApiContext::new(&root, language);
+    native_pass_microseconds[0] = native_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
     let mut php_operand_nodes = BTreeMap::new();
-    let php_context = (language == Language::Php)
-        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
+    let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
+    let start_summary_pass = || trace_summary_passes.then(Instant::now);
+    let finish_summary_pass = |name: &str, started: Option<Instant>| {
+        if let Some(started) = started {
+            let microseconds = started.elapsed().as_micros();
+            if microseconds >= 1000 {
+                eprintln!(
+                    "mehscan_pass {}",
+                    serde_json::json!({
+                        "path": path, "language": language, "pass": name, "microseconds": microseconds,
+                    })
+                );
+            }
+        }
+    };
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
     let mut declarative_patterns_skipped = 0;
     let mut extended_symbols = None;
+    let mut database_receivers = None;
+    let mut csharp_hash_receivers = None;
     for compiled_rule in rules {
+        let rule_started = start_summary_pass();
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
             // PHP keywords and function names are case-insensitive. The AST
@@ -192,6 +251,13 @@ pub(crate) fn scan_source(
                 if comments.is_in_comment(range.clone()) {
                     continue;
                 }
+                if matches!(
+                    compiled_rule.rule.id.as_str(),
+                    "c-native-buffer-write" | "cpp-native-buffer-write"
+                ) && !super::native_buffer::accepts_write(matched.get_node(), &native_api)
+                {
+                    continue;
+                }
                 if super::extended_database::is_rule(&compiled_rule.rule.id)
                     && language != Language::Kotlin
                     && language != Language::Php
@@ -202,9 +268,22 @@ pub(crate) fn scan_source(
                         language,
                         matched.get_env().get_match("DATABASE"),
                         matched.get_env().get_match("TYPE"),
-                        matched.get_env().get_match("TYPE").map(|_| {
-                            extended_symbols.get_or_insert_with(|| {
-                                super::extended_database::ExactSymbolIndex::new(&root)
+                        (matched.get_env().get_match("TYPE").is_some() || language == Language::Go)
+                            .then(|| {
+                                extended_symbols.get_or_insert_with(|| {
+                                    super::extended_database::ExactSymbolIndex::new(&root)
+                                }) as &_
+                            }),
+                        matches!(
+                            language,
+                            Language::Javascript
+                                | Language::Typescript
+                                | Language::Tsx
+                                | Language::Python
+                        )
+                        .then(|| {
+                            database_receivers.get_or_insert_with(|| {
+                                super::database_receiver::ReceiverIndex::new(&root)
                             }) as &_
                         }),
                     )
@@ -233,10 +312,10 @@ pub(crate) fn scan_source(
                         .get_env()
                         .get_match("EXTRACTOR")
                         .is_some_and(|extractor| {
-                            super::rust_context::is_exact_axum_extractor(
-                                &root,
-                                extractor.text().trim(),
-                            )
+                            rust_context
+                                .as_ref()
+                                .expect("Rust file context")
+                                .is_exact_axum_extractor(extractor.text().trim())
                         })
                 {
                     continue;
@@ -252,7 +331,14 @@ pub(crate) fn scan_source(
                 ) {
                     let receiver = matched.get_env().get_match("DATABASE");
                     if receiver.is_some_and(|receiver| {
-                        !super::database_receiver::accepts(&root, receiver, language)
+                        !super::database_receiver::accepts(
+                            &root,
+                            receiver,
+                            language,
+                            database_receivers.get_or_insert_with(|| {
+                                super::database_receiver::ReceiverIndex::new(&root)
+                            }),
+                        )
                     }) {
                         continue;
                     }
@@ -271,55 +357,89 @@ pub(crate) fn scan_source(
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-database-query"
-                    && !super::rust_context::is_exact_database_query(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_database_query(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-file-content-input"
-                    && !super::rust_context::is_exact_file_input(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_file_input(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-iron-request-data"
-                    && !super::rust_context::is_exact_iron_request_access(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_iron_request_access(matched.get_node())
                 {
                     continue;
                 }
-                if language == Language::Rust
+                let typed_http_support = if language == Language::Rust
                     && compiled_rule.rule.id == "rust-outbound-http"
-                    && !super::rust_context::is_exact_reqwest_request(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_reqwest_request(matched.get_node())
                 {
-                    continue;
-                }
+                    let Some(support) =
+                        rust_project_context.http_support(path, &root, matched.get_node())
+                    else {
+                        continue;
+                    };
+                    Some(support)
+                } else {
+                    None
+                };
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-iron-response-body"
-                    && !super::rust_context::is_exact_iron_response(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_iron_response(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-ammonia-html-sanitization"
-                    && !super::rust_context::is_exact_ammonia_clean(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_ammonia_clean(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-permissive-cors-review"
-                    && !super::rust_context::is_exact_permissive_cors(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_permissive_cors(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-actix-html-output"
-                    && !super::rust_context::is_exact_actix_html_response(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_actix_html_response(matched.get_node())
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-process-execution"
-                    && !super::rust_context::is_exact_process_execution(&root, matched.get_node())
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_process_execution(matched.get_node())
                 {
                     continue;
                 }
@@ -330,23 +450,30 @@ pub(crate) fn scan_source(
                             | "rust-url-parsing"
                             | "rust-reqwest-tls-verification"
                     )
-                    && !super::rust_context::is_exact_review_control(
-                        &root,
-                        matched.get_node(),
-                        &compiled_rule.rule.id,
-                    )
+                    && !rust_context
+                        .as_ref()
+                        .expect("Rust file context")
+                        .is_exact_review_control(matched.get_node(), &compiled_rule.rule.id)
                 {
                     continue;
                 }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-sql-parameterization"
                     && !matched.get_env().get_match("QUERY").is_some_and(|query| {
-                        super::rust_context::is_effective_sql_parameterization(
-                            &root,
-                            matched.get_node(),
-                            query.text().as_ref(),
-                        )
+                        rust_context
+                            .as_ref()
+                            .expect("Rust file context")
+                            .is_effective_sql_parameterization(
+                                matched.get_node(),
+                                query.text().as_ref(),
+                            )
                     })
+                {
+                    continue;
+                }
+                if language == Language::Go
+                    && compiled_rule.rule.id == "go-outbound-http"
+                    && !super::go_summary_binding::compatible_http_call(&root, matched.get_node())
                 {
                     continue;
                 }
@@ -365,7 +492,14 @@ pub(crate) fn scan_source(
                         "go-database-query" | "go-sql-parameterization"
                     )
                     && matched.get_env().get_match("DB").is_some_and(|receiver| {
-                        super::extended_database::pgx_receiver(&root, matched.get_node(), receiver)
+                        super::extended_database::pgx_receiver(
+                            &root,
+                            matched.get_node(),
+                            receiver,
+                            extended_symbols.get_or_insert_with(|| {
+                                super::extended_database::ExactSymbolIndex::new(&root)
+                            }),
+                        )
                     })
                 {
                     continue;
@@ -382,18 +516,19 @@ pub(crate) fn scan_source(
                 }
                 if language == Language::Csharp
                     && !compiled_rule.rule.symbols.is_empty()
-                    && !call_site(matched.get_node().clone()).is_some_and(|call| {
-                        call.node.kind().as_ref() == "object_creation_expression"
-                            || (call.observed.contains('.')
-                                && !symbol_environment.has_declared_receiver(&call.observed))
-                            || compiled_rule.rule.symbols.iter().any(|symbol| {
-                                symbol_environment
-                                    .resolve(&call.observed, &symbol.canonical)
-                                    .is_some_and(|resolution| {
-                                        resolution.confidence != SymbolConfidence::Ambiguous
-                                    })
-                            })
-                    })
+                    && !call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            call.node.kind().as_ref() == "object_creation_expression"
+                                || (call.observed.contains('.')
+                                    && !symbol_environment.has_declared_receiver(&call.observed))
+                                || compiled_rule.rule.symbols.iter().any(|symbol| {
+                                    symbol_environment
+                                        .resolve(&call.observed, &symbol.canonical)
+                                        .is_some_and(|resolution| {
+                                            resolution.confidence != SymbolConfidence::Ambiguous
+                                        })
+                                })
+                        })
                 {
                     continue;
                 }
@@ -402,26 +537,41 @@ pub(crate) fn scan_source(
                     .tags
                     .iter()
                     .any(|tag| tag == "exact-symbol-ownership")
-                    && !call_site(matched.get_node().clone()).is_some_and(|call| {
-                        compiled_rule.rule.symbols.iter().any(|symbol| {
-                            symbol_environment
-                                .resolve(&call.observed, &symbol.canonical)
-                                .is_some_and(|resolution| {
-                                    resolution.confidence != SymbolConfidence::Ambiguous
-                                })
+                    && !call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            compiled_rule.rule.symbols.iter().any(|symbol| {
+                                symbol_environment
+                                    .resolve(&call.observed, &symbol.canonical)
+                                    .is_some_and(|resolution| {
+                                        resolution.confidence != SymbolConfidence::Ambiguous
+                                    })
+                            })
                         })
-                    })
                 {
                     continue;
                 }
                 if !compiled_rule.rule.symbols.is_empty()
-                    && call_site(matched.get_node().clone()).is_some_and(|call| {
-                        symbol_environment.has_shadowing_parameter(
-                            &call.node,
-                            &call.observed,
-                            language,
-                        )
-                    })
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            call.node.kind().as_ref() != "object_creation_expression"
+                                && symbol_environment.has_shadowing_parameter(
+                                    &call.node,
+                                    &call.observed,
+                                    language,
+                                )
+                        })
+                {
+                    continue;
+                }
+                if compiled_rule.rule.id == "csharp-hash-algorithm-selection"
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            !csharp_hash_receivers
+                                .get_or_insert_with(|| {
+                                    super::csharp_hash::StaticReceiverIndex::new(&root)
+                                })
+                                .accepts(&call.node, &call.observed)
+                        })
                 {
                     continue;
                 }
@@ -433,10 +583,11 @@ pub(crate) fn scan_source(
                         language,
                         Language::Javascript | Language::Typescript | Language::Tsx
                     )
-                    && call_site(matched.get_node().clone()).is_some_and(|call| {
-                        symbol_environment.has_declared_receiver(&call.observed)
-                            && !symbol_environment.has_import_alias_receiver(&call.observed)
-                    })
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            symbol_environment.has_declared_receiver(&call.observed)
+                                && !symbol_environment.has_import_alias_receiver(&call.observed)
+                        })
                 {
                     continue;
                 }
@@ -457,6 +608,9 @@ pub(crate) fn scan_source(
                 }
                 let evidence_location = location(path, matched.get_node());
                 let mut captures = BTreeMap::new();
+                if let Some(support) = typed_http_support {
+                    captures.extend(support);
+                }
                 let mut literal_values = BTreeMap::new();
                 for (semantic_name, variable_name) in &compiled_pattern.specification.captures {
                     if compiled_rule.rule.capability == Capability::ProcessExecution {
@@ -635,21 +789,45 @@ pub(crate) fn scan_source(
                 });
             }
         }
+        finish_summary_pass(&compiled_rule.rule.id, rule_started);
     }
     let declarative_rules_microseconds = declarative_started.elapsed().as_micros();
 
     let symbol_started = Instant::now();
+    // Declarative and symbol matches can name the same observation. Retain the
+    // first matching item, without searching all earlier observations per call.
+    let mut symbol_evidence = BTreeMap::new();
+    for (index, item) in evidence.iter().enumerate() {
+        symbol_evidence
+            .entry((
+                item.rule_id.clone(),
+                item.location.start.byte_offset,
+                item.location.end.byte_offset,
+            ))
+            .or_insert(index);
+    }
     for node in root.dfs() {
-        let Some(call) = call_site(node) else {
+        let Some(call) = call_site(node.clone()).or_else(|| {
+            (language == Language::Csharp)
+                .then(|| csharp_hash_constructor(node))
+                .flatten()
+        }) else {
             continue;
         };
         if comments.is_in_comment(call.node.range()) {
             continue;
         }
-        if symbol_environment.has_shadowing_parameter(&call.node, &call.observed, language) {
+        if call.node.kind().as_ref() != "object_creation_expression"
+            && symbol_environment.has_shadowing_parameter(&call.node, &call.observed, language)
+        {
             continue;
         }
         for compiled_rule in rules {
+            if call.node.kind().as_ref() == "object_creation_expression"
+                && compiled_rule.rule.id != "csharp-hash-algorithm-selection"
+            {
+                continue;
+            }
             for symbol in &compiled_rule.rule.symbols {
                 if matches!(
                     language,
@@ -670,6 +848,14 @@ pub(crate) fn scan_source(
                 if symbol_resolution.confidence == SymbolConfidence::Ambiguous {
                     continue;
                 }
+                if compiled_rule.rule.id == "csharp-hash-algorithm-selection"
+                    && !csharp_hash_receivers
+                        .get_or_insert_with(|| super::csharp_hash::StaticReceiverIndex::new(&root))
+                        .accepts(&call.node, &call.observed)
+                {
+                    continue;
+                }
+
                 // Names-only collectors are not filesystem-content boundaries.
                 // Keep option-selected/recursive roots, which can feed export.
                 if compiled_rule.rule.id == "csharp-filesystem-read"
@@ -684,15 +870,9 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let range = call.node.range();
-                let key = (compiled_rule.rule.id.as_str(), range.start, range.end);
-                if let Some(existing) = evidence.iter_mut().find(|item| {
-                    (
-                        item.rule_id.as_str(),
-                        item.location.start.byte_offset,
-                        item.location.end.byte_offset,
-                    ) == key
-                }) {
-                    existing.symbol_resolution = Some(symbol_resolution);
+                let key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                if let Some(index) = symbol_evidence.get(&key) {
+                    evidence[*index].symbol_resolution = Some(symbol_resolution);
                     continue;
                 }
 
@@ -711,6 +891,7 @@ pub(crate) fn scan_source(
                         },
                     );
                 }
+                symbol_evidence.insert(key, evidence.len());
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
                     kind: compiled_rule.rule.kind,
@@ -742,6 +923,7 @@ pub(crate) fn scan_source(
     }
     let symbol_rules_microseconds = symbol_started.elapsed().as_micros();
     let summaries_started = Instant::now();
+
     if let Some(imports) = kotlin_imports.as_ref() {
         super::kotlin::sources(
             path,
@@ -753,6 +935,7 @@ pub(crate) fn scan_source(
             &mut evidence,
         );
     }
+    let summary_pass_started = start_summary_pass();
     super::node_express::add_typed_express_sources(
         path,
         &root,
@@ -762,6 +945,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_express::add_typed_express_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_express::add_typed_koa_boundaries(
         path,
         &root,
@@ -771,6 +959,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_express::add_typed_koa_boundaries",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_api_boundaries::add_boundaries(
         path,
         &root,
@@ -781,6 +974,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_api_boundaries::add_boundaries",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_ingress::add_bound_parameter_sources(
         path,
         &root,
@@ -790,6 +988,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_ingress::add_bound_parameter_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_ingress::add_spring_parameter_sources(
         path,
         &root,
@@ -799,6 +1002,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_ingress::add_spring_parameter_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_sinks::add_typed_process_sinks(
         path,
         &root,
@@ -808,6 +1016,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_sinks::add_typed_process_sinks",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_network::add_java_network_observations(
         path,
         &root,
@@ -817,6 +1030,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_network::add_java_network_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_filesystem::add_java_filesystem_observations(
         path,
         &root,
@@ -826,6 +1044,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_filesystem::add_java_filesystem_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_crypto::add_java_crypto_observations(
         path,
         &root,
@@ -835,6 +1058,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_crypto::add_java_crypto_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_output::add_java_output_observations(
         path,
         &root,
@@ -844,6 +1072,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_output::add_java_output_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_context::add_java_project_observations(
         path,
         &root,
@@ -854,6 +1087,11 @@ pub(crate) fn scan_source(
         java_project_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_context::add_java_project_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_security::add_spring_security_observations(
         path,
         &root,
@@ -863,6 +1101,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_security::add_spring_security_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_web_policy::add_java_web_policy_observations(
         path,
         &root,
@@ -872,6 +1115,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_web_policy::add_java_web_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_identity::add_java_identity_observations(
         path,
         &root,
@@ -881,6 +1129,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_identity::add_java_identity_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_upload::add_java_upload_observations(
         path,
         &root,
@@ -891,6 +1144,11 @@ pub(crate) fn scan_source(
         java_project_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_upload::add_java_upload_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_persistence::add_java_persistence_observations(
         path,
         &root,
@@ -900,6 +1158,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_persistence::add_java_persistence_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::java_serialization::add_java_serialization_observations(
         path,
         &root,
@@ -909,6 +1172,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::java_serialization::add_java_serialization_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     go_project_context.add_observations(
         path,
         &root,
@@ -918,6 +1186,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass("go_project_context.add_observations", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     python_project_context.add_observations(
         path,
         &root,
@@ -927,6 +1197,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "python_project_context.add_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     rust_project_context.add_observations(
         path,
         &root,
@@ -936,6 +1211,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "rust_project_context.add_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_grpc::add_go_grpc_observations(
         path,
         &root,
@@ -945,6 +1225,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_grpc::add_go_grpc_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_filesystem::add_go_filesystem_observations(
         path,
         &root,
@@ -954,6 +1239,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_filesystem::add_go_filesystem_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_ldap::add_go_ldap_observations(
         path,
         &root,
@@ -963,6 +1253,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_ldap::add_go_ldap_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_policy::add_go_policy_observations(
         path,
         &root,
@@ -972,6 +1267,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_policy::add_go_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_vulnerability::add_go_vulnerability_observations(
         path,
         &root,
@@ -981,6 +1281,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_vulnerability::add_go_vulnerability_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::go_web::add_go_web_observations(
         path,
         &root,
@@ -990,6 +1295,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::go_web::add_go_web_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_rpc::add_rpc_parameter_sources(
         path,
         &root,
@@ -1000,6 +1310,11 @@ pub(crate) fn scan_source(
         csharp_rpc_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_rpc::add_rpc_parameter_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_sinks::add_typed_property_sinks(
         path,
         &root,
@@ -1009,6 +1324,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_sinks::add_typed_property_sinks",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_standalone::add_standalone_observations(
         path,
         &root,
@@ -1018,6 +1338,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_standalone::add_standalone_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_mainstream::add_mainstream_sinks(
         path,
         &root,
@@ -1027,6 +1352,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_mainstream::add_mainstream_sinks",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_mainstream::normalize_filesystem_arguments(
         path,
         &root,
@@ -1034,6 +1364,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_mainstream::normalize_filesystem_arguments",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_archive::add_archive_observations(
         path,
         &root,
@@ -1043,6 +1378,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_archive::add_archive_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_streaming_upload::add_streaming_upload_observations(
         path,
         &root,
@@ -1052,6 +1392,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_streaming_upload::add_streaming_upload_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_deserialization::add_deserialization_observations(
         path,
         &root,
@@ -1062,6 +1407,11 @@ pub(crate) fn scan_source(
         dotnet_project_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_deserialization::add_deserialization_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_injection::add_injection_evidence(
         path,
         &root,
@@ -1071,6 +1421,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_injection::add_injection_evidence",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_mainstream::add_local_redirect_controls(
         path,
         &root,
@@ -1080,6 +1435,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_mainstream::add_local_redirect_controls",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_identity::add_identity_policy_observations(
         path,
         &root,
@@ -1089,6 +1449,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_identity::add_identity_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_legacy_web::add_legacy_web_observations(
         path,
         &root,
@@ -1098,6 +1463,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_legacy_web::add_legacy_web_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_privilege::add_privilege_assignment_observations(
         path,
         &root,
@@ -1107,6 +1477,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_privilege::add_privilege_assignment_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_crypto::add_crypto_policy_observations(
         path,
         &root,
@@ -1116,6 +1491,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_crypto::add_crypto_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_output::add_output_policy_observations(
         path,
         &root,
@@ -1125,6 +1505,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_output::add_output_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_model::add_model_policy_observations(
         path,
         &root,
@@ -1135,6 +1520,11 @@ pub(crate) fn scan_source(
         csharp_model_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_model::add_model_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_sinks::annotate_dynamic_query_composition(
         path,
         &root,
@@ -1142,7 +1532,17 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_sinks::annotate_dynamic_query_composition",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_sinks::annotate_decision_critical_origins(language, &mut evidence);
+    finish_summary_pass(
+        "super::csharp_sinks::annotate_decision_critical_origins",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_handoff::add_forwarded_parameter_sources(
         path,
         &root,
@@ -1153,6 +1553,11 @@ pub(crate) fn scan_source(
         csharp_handoff_context,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_handoff::add_forwarded_parameter_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::csharp_business::add_business_policy_observations(
         path,
         &root,
@@ -1162,8 +1567,13 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::csharp_business::add_business_policy_observations",
+        summary_pass_started,
+    );
     // Standalone source admission is intentionally last among C# semantic
     // passes so it can see every supported impact sink in the symbol.
+    let summary_pass_started = start_summary_pass();
     super::csharp_standalone::add_standalone_sources(
         path,
         &root,
@@ -1172,6 +1582,10 @@ pub(crate) fn scan_source(
         &conditional,
         &literals,
         &mut evidence,
+    );
+    finish_summary_pass(
+        "super::csharp_standalone::add_standalone_sources",
+        summary_pass_started,
     );
     add_express_pug_layout_sinks(
         path,
@@ -1211,6 +1625,7 @@ pub(crate) fn scan_source(
         &symbol_environment,
         &mut evidence,
     );
+    let summary_pass_started = start_summary_pass();
     super::password_lifecycle::add_password_lifecycle(
         path,
         &root,
@@ -1221,6 +1636,11 @@ pub(crate) fn scan_source(
         &symbol_environment,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::password_lifecycle::add_password_lifecycle",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::identity_boundary::add_identity_boundary_observations(
         path,
         source,
@@ -1232,6 +1652,11 @@ pub(crate) fn scan_source(
         &symbol_environment,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::identity_boundary::add_identity_boundary_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::file_roles::add_file_role_observations(
         path,
         &root,
@@ -1241,6 +1666,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::file_roles::add_file_role_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_policy::add_node_policy_observations(
         path,
         &root,
@@ -1250,6 +1680,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_policy::add_node_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_randomness::add_node_randomness_observations(
         path,
         &root,
@@ -1259,6 +1694,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_randomness::add_node_randomness_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     object_input_context.add_observations(
         path,
         source,
@@ -1268,6 +1708,10 @@ pub(crate) fn scan_source(
         &conditional,
         &literals,
         &mut evidence,
+    );
+    finish_summary_pass(
+        "object_input_context.add_observations",
+        summary_pass_started,
     );
     // Prefer an existing specialized selector/predicate over its whole-filter
     // extension, and an exact extended SDK query over the old syntax fallback.
@@ -1303,6 +1747,7 @@ pub(crate) fn scan_source(
                 | "tsx-database-query"
         ) && extended.contains(&(e.location.start.byte_offset, e.location.end.byte_offset)))
     });
+    let summary_pass_started = start_summary_pass();
     node_context.add_parameter_return_sources(
         path,
         &root,
@@ -1312,6 +1757,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_parameter_return_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.add_parameter_sink_observations(
         path,
         &root,
@@ -1321,6 +1771,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_parameter_sink_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.add_xxe_parser_sinks(
         path,
         &root,
@@ -1330,6 +1785,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass("node_context.add_xxe_parser_sinks", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     node_context.add_angular_rxjs_sources(
         path,
         &root,
@@ -1339,6 +1796,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_angular_rxjs_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.add_async_continuation_sources(
         path,
         &root,
@@ -1348,6 +1810,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_async_continuation_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.add_mongo_callback_result_sources(
         path,
         &root,
@@ -1357,7 +1824,12 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_mongo_callback_result_sources",
+        summary_pass_started,
+    );
     add_embedded_vm_deserialization_sinks(path, language, &symbol_environment, &mut evidence);
+    let summary_pass_started = start_summary_pass();
     super::node_context::add_duplicate_key_object_mutation(
         path,
         &root,
@@ -1367,6 +1839,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_context::add_duplicate_key_object_mutation",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.add_dynamic_response_field_exposure(
         path,
         &root,
@@ -1376,6 +1853,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_dynamic_response_field_exposure",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_nest::add_nest_observations(
         path,
         &root,
@@ -1385,6 +1867,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_nest::add_nest_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_fastify::add_fastify_observations(
         path,
         &root,
@@ -1394,6 +1881,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_fastify::add_fastify_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_browser::add_browser_observations(
         path,
         &root,
@@ -1404,6 +1896,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_browser::add_browser_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_serverless::add_serverless_observations(
         path,
         &root,
@@ -1413,6 +1910,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_serverless::add_serverless_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_next_policy::add_next_policy_observations(
         path,
         source,
@@ -1423,6 +1925,10 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::node_next_policy::add_next_policy_observations",
+        summary_pass_started,
+    );
     node_context.add_js2_server_observations(
         path,
         &root,
@@ -1432,6 +1938,7 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    let summary_pass_started = start_summary_pass();
     super::rust_context::add_rust_sql_sources(
         path,
         &root,
@@ -1441,6 +1948,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::rust_context::add_rust_sql_sources",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::rust_context::add_rust_security_policy_observations(
         path,
         &root,
@@ -1450,7 +1962,41 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "super::rust_context::add_rust_security_policy_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
+    super::filesystem_open::add(
+        path,
+        &root,
+        language,
+        &symbol_environment,
+        &native_api,
+        php_context.as_ref(),
+        kotlin_imports.as_ref(),
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::rust_open_options::add(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    finish_summary_pass("super::rust_open_options::add", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::rust_context::annotate_rust_build_script(path, language, &mut evidence);
+    finish_summary_pass(
+        "super::rust_context::annotate_rust_build_script",
+        summary_pass_started,
+    );
+    let mut native_started = Instant::now();
     let mut native_arithmetic_paths = super::native_arithmetic::add_native_arithmetic_observations(
         path,
         &root,
@@ -1460,6 +2006,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[1] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_domain_bound_paths =
         super::native_domain_bounds::add_native_domain_bound_observations(
             path,
@@ -1468,8 +2016,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[2] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_region_bound_paths =
         super::native_region_bounds::add_native_region_bound_observations(
             path,
@@ -1480,6 +2031,8 @@ pub(crate) fn scan_source(
             &literals,
             &mut evidence,
         );
+    native_pass_microseconds[3] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_multiplication_paths =
         super::native_multiplication::add_native_multiplication_observations(
             path,
@@ -1488,8 +2041,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[4] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_signedness_paths = super::native_signedness::add_native_signedness_observations(
         path,
         &root,
@@ -1497,8 +2053,11 @@ pub(crate) fn scan_source(
         &comments,
         &conditional,
         &literals,
+        &native_api,
         &mut evidence,
     );
+    native_pass_microseconds[5] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_heap_lifetime_paths =
         super::native_heap_lifetime::add_native_heap_lifetime_observations(
             path,
@@ -1507,8 +2066,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[6] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_cpp_ownership_paths =
         super::native_cpp_ownership::add_native_cpp_ownership_observations(
             path,
@@ -1519,6 +2081,30 @@ pub(crate) fn scan_source(
             &literals,
             &mut evidence,
         );
+    native_pass_microseconds[7] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    super::cpp_vector_borrows::add_observations(
+        path,
+        &root,
+        language,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[22] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    super::cpp_exception_cleanup::add_observations(
+        path,
+        &root,
+        language,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[23] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_libxml2_paths = super::native_libxml2::add_native_libxml2_observations(
         path,
         &root,
@@ -1528,6 +2114,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[8] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_libarchive_paths = super::native_libarchive::add_native_libarchive_observations(
         path,
         &root,
@@ -1537,6 +2125,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[9] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_toctou_paths = super::native_toctou::add_native_toctou_observations(
         path,
         &root,
@@ -1546,6 +2136,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[10] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_drogon_paths = drogon_project_context.add_observations(
         path,
         &root,
@@ -1555,6 +2147,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[11] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_invalidation_paths = native_invalidation_context.add_observations(
         path,
         &root,
@@ -1564,6 +2158,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[12] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_serialized_blob_paths =
         super::native_serialized_blob::add_native_serialized_blob_observations(
             path,
@@ -1572,8 +2168,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[13] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_loaded_extent_paths =
         super::native_loaded_extent::add_native_loaded_extent_observations(
             path,
@@ -1582,8 +2181,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[14] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_remaining_input_paths =
         super::native_remaining_input::add_native_remaining_input_observations(
             path,
@@ -1592,8 +2194,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[15] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_allocation::add_native_allocation_observations(
         path,
         &root,
@@ -1604,6 +2209,8 @@ pub(crate) fn scan_source(
         build_symbols,
         &mut evidence,
     );
+    native_pass_microseconds[16] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_lifetime::add_native_lifetime_observations(
         path,
         &root,
@@ -1613,6 +2220,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[17] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_state::add_native_state_observations(
         path,
         &root,
@@ -1622,6 +2231,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[18] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_ownership::add_native_ownership_observations(
         path,
         &root,
@@ -1632,13 +2243,30 @@ pub(crate) fn scan_source(
         build_symbols,
         &mut evidence,
     );
+    native_pass_microseconds[19] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_buffer::annotate_native_buffer_capacity(
         path,
         &root,
         language,
         &conditional,
+        &native_api,
         &mut evidence,
     );
+    native_pass_microseconds[20] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    let mut native_copy_paths = native_copy_context.add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[21] = native_started.elapsed().as_micros();
+    let summary_pass_started = start_summary_pass();
     node_context.add_request_boundary_observations(
         path,
         &root,
@@ -1648,8 +2276,16 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_request_boundary_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     node_context.annotate(path, &root, language, &mut evidence);
+    finish_summary_pass("node_context.annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     go_project_context.annotate(path, language, &mut evidence);
+    finish_summary_pass("go_project_context.annotate", summary_pass_started);
     if !parse_issue_ranges.is_empty() {
         evidence.retain(|item| {
             item.kind == EvidenceKind::Secret
@@ -1669,6 +2305,7 @@ pub(crate) fn scan_source(
                             | "tree-sitter c-family serialized-blob extent relationship"
                             | "tree-sitter c-family loaded-memory-extent relationship"
                             | "tree-sitter c-family remaining-input relationship"
+                            | "tree-sitter c-family defined-copy subtraction relationship"
                             | "tree-sitter c++ allocation-ownership relationship"
                             | "tree-sitter c-family libxml2 parser-options relationship"
                             | "tree-sitter c-family libarchive extraction-options relationship"
@@ -1694,6 +2331,7 @@ pub(crate) fn scan_source(
     if let Some(context) = &php_context {
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
+    let summary_pass_started = start_summary_pass();
     super::node_http_clients::add(
         path,
         &root,
@@ -1704,7 +2342,11 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass("super::node_http_clients::add", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::node_identity::correct(language, &root, &symbol_environment, &mut evidence);
+    finish_summary_pass("super::node_identity::correct", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     node_context.add_http_effect_observations(
         path,
         &root,
@@ -1714,23 +2356,63 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    finish_summary_pass(
+        "node_context.add_http_effect_observations",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_operands::annotate(language, source, &root, &mut evidence);
+    finish_summary_pass("super::node_operands::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
+    finish_summary_pass("super::filesystem_operands::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
+    super::rust_filesystem::annotate(language, &root, &mut evidence);
+    finish_summary_pass("super::rust_filesystem::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::python_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("super::python_operands::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
+    finish_summary_pass("super::process_cleanup::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::outbound_cleanup::annotate(language, &root, &literals, &mut evidence);
+    finish_summary_pass("super::outbound_cleanup::annotate", summary_pass_started);
     super::native_curl::annotate(language, &root, &mut evidence);
+    let summary_pass_started = start_summary_pass();
     super::reactive_cleanup::annotate(language, &root, &mut evidence);
+    finish_summary_pass("super::reactive_cleanup::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::issuance_cleanup::annotate(language, &root, &symbol_environment, &mut evidence);
+    finish_summary_pass("super::issuance_cleanup::annotate", summary_pass_started);
     if language == Language::Kotlin {
         super::kotlin::annotate_outbound(&root, &literals, &mut evidence);
     }
     super::native_query::annotate(language, &root, &literals, &mut evidence);
+    let summary_pass_started = start_summary_pass();
     super::database_cleanup::annotate(language, &root, &mut evidence);
+    finish_summary_pass("super::database_cleanup::annotate", summary_pass_started);
+    let summary_pass_started = start_summary_pass();
     super::extended_database::attach_query_construction(&root, &mut evidence);
+    finish_summary_pass(
+        "super::extended_database::attach_query_construction",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::database_cleanup::close_equalities(language, &root, &mut evidence);
+    finish_summary_pass(
+        "super::database_cleanup::close_equalities",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::route_context_cleanup::annotate(language, &root, &mut evidence);
+    finish_summary_pass(
+        "super::route_context_cleanup::annotate",
+        summary_pass_started,
+    );
+    let summary_pass_started = start_summary_pass();
     super::node_cfg::emit_if_enabled(path, language, &root, &literals, &evidence);
+    finish_summary_pass("super::node_cfg::emit_if_enabled", summary_pass_started);
     if matches!(
         language,
         Language::Javascript | Language::Typescript | Language::Tsx
@@ -1795,8 +2477,25 @@ pub(crate) fn scan_source(
             });
         }
     }
+    let summary_pass_started = start_summary_pass();
     super::url_shape::annotate(&root, language, &mut evidence);
-    let summaries_microseconds = summaries_started.elapsed().as_micros();
+    finish_summary_pass("super::url_shape::annotate", summary_pass_started);
+    let mut rust_raw_slice_paths = super::rust_raw_slice::add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let summaries_microseconds =
+        summaries_started.elapsed().as_micros() + native_pass_microseconds[0];
+    if language == Language::Rust {
+        // File inclusion constrains applicability, not a same-file guard's
+        // implication. Keep local invariant analysis independent of that gate.
+        rust_project_context.modules.annotate(path, &mut evidence);
+    }
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
         path,
@@ -1941,6 +2640,16 @@ pub(crate) fn scan_source(
                 .iter()
                 .all(|id| retained_evidence_ids.contains(id.as_str()))
     });
+    native_copy_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    security_paths.append(&mut rust_raw_slice_paths);
+    security_paths.append(&mut native_copy_paths);
     security_paths.append(&mut native_arithmetic_paths);
     security_paths.append(&mut native_domain_bound_paths);
     security_paths.append(&mut native_region_bound_paths);
@@ -1958,13 +2667,26 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
+    let postprocessing_started = Instant::now();
+    let pass_started = start_summary_pass();
     super::go_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.go_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::decision_origins::annotate(language, source, &root, &mut evidence);
+    finish_summary_pass("post.decision_origins", pass_started);
+    let pass_started = start_summary_pass();
     super::csharp_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.csharp_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::native_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.native_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::java_prepared::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.java_prepared", pass_started);
     if let Some(imports) = kotlin_imports.as_ref() {
+        let pass_started = start_summary_pass();
         super::kotlin::annotate_prepared(&root, imports, &mut evidence);
+        finish_summary_pass("post.kotlin_prepared", pass_started);
     }
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {
@@ -1974,12 +2696,15 @@ pub(crate) fn scan_source(
             .cmp(&right.location.start.byte_offset)
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
+    let postprocessing_microseconds = postprocessing_started.elapsed().as_micros();
     let timing = FileScanTiming {
         parse_context_microseconds,
         declarative_rules_microseconds,
         symbol_rules_microseconds,
         summaries_microseconds,
+        native_pass_microseconds,
         security_paths_microseconds,
+        postprocessing_microseconds,
         declarative_patterns_considered,
         declarative_patterns_skipped,
     };
@@ -2746,6 +3471,7 @@ fn evidence_context<'tree>(
         http_routes: Vec::new(),
         resource_policy: None,
         runtime_environment: None,
+        configuration_dependencies: Vec::new(),
     }
 }
 
@@ -2753,6 +3479,31 @@ struct CallSite<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
     observed: String,
     arguments: Vec<Node<'tree, StrDoc<SupportLang>>>,
+}
+
+fn csharp_hash_constructor(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {
+    if node.kind().as_ref() != "object_creation_expression" {
+        return None;
+    }
+    let observed = node.field("type")?.text().into_owned();
+    let arguments = node
+        .field("arguments")?
+        .children()
+        .filter(|child| child.is_named())
+        .collect();
+    Some(CallSite {
+        node,
+        observed,
+        arguments,
+    })
+}
+
+fn call_site_for_rule<'a>(node: Node<'a, StrDoc<SupportLang>>, rule: &str) -> Option<CallSite<'a>> {
+    call_site(node.clone()).or_else(|| {
+        (rule == "csharp-hash-algorithm-selection")
+            .then(|| csharp_hash_constructor(node))
+            .flatten()
+    })
 }
 
 fn call_site(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {

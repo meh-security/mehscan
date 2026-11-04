@@ -3,14 +3,49 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+from urllib.parse import unquote, urlsplit
+
+
+def validate_document_links(package, files):
+    """Check inline file links against the extracted release's declared payload."""
+    package = package.resolve()
+    included = set(files)
+    for name in sorted(included):
+        if not name.endswith('.md'):
+            continue
+        document = package / name
+        lines, fence = [], None
+        for line in document.read_text(encoding='utf-8-sig').splitlines():
+            marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+            if fence:
+                if (marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence)
+                        and not marker[2].strip()):
+                    fence = None
+            elif marker:
+                fence = marker[1]
+            else:
+                lines.append(line)
+        text = re.sub(r'(`+).*?\1', '', '\n'.join(lines))
+        for match in re.finditer(r'\]\(\s*(<[^>]+>|[^\s)]+)', text):
+            link = match[1].strip('<>')
+            parsed = urlsplit(link)
+            if parsed.scheme or parsed.netloc or not parsed.path:
+                continue
+            target = (document.parent / unquote(parsed.path)).resolve()
+            if (not target.is_relative_to(package) or not target.is_file()
+                    or target.relative_to(package).as_posix() not in included):
+                raise ValueError(f'Packaged document {name} links outside its payload: {link}')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", required=True, type=Path)
     package = parser.parse_args().package.resolve()
+    manifest = json.loads((package / 'release-manifest.json').read_text(encoding='utf-8-sig'))
+    validate_document_links(package, manifest['files'])
     scanner = package / ("mehscan.exe" if os.name == "nt" else "mehscan")
     skill = package / "skills/mehscan-security"
     base = package / "_installed-review-smoke"
@@ -95,7 +130,7 @@ print(json.dumps(result))
     call(scanner, "state", "end", "--store", store, "--stream", "package-smoke", "--repository-key", "test:installed-package",
          "--generation", "1", "--owner", claim["result"]["owner"], "--status", "finished", "--operation-key", "end")
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,
-                      "installed_worker":True, "inference":False}))
+                      "installed_worker":True, "document_links":"passed", "inference":False}))
 
 
 if __name__ == "__main__":

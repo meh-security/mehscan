@@ -193,11 +193,24 @@ pub struct ReviewInventoryEntry {
     pub capability: Capability,
     pub cwe_candidates: Vec<String>,
     pub evidence_strength: String,
+    /// Source applicability for the initial question; never a security verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_configuration: Option<mehscan_core::Availability>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operand_facts: Vec<ReviewOperandSummary>,
     /// Review-effort heuristic, never a safety verdict or admission closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_hint: Option<ValueReviewHint>,
+}
+
+fn question_source_configuration(
+    rule: &str,
+    context: &EvidenceContext,
+) -> Option<mehscan_core::Availability> {
+    (rule.starts_with("rust-") || !context.configuration_dependencies.is_empty())
+        .then(|| context.availability.clone())
+        .flatten()
+        .filter(|availability| availability.state != mehscan_core::AvailabilityState::Always)
 }
 
 fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
@@ -389,6 +402,12 @@ pub struct ReviewInventory {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_catalog: Option<mehscan_core::ReviewIdentityCatalog>,
     pub schema_version: String,
+    /// Invalidates cached Rust facts without expiring unrelated language work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_configuration_revision: Option<String>,
+    /// Invalidates cached C++ effects without expiring unrelated languages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpp_effect_revision: Option<String>,
     pub source_fingerprint: String,
     pub include_review_material: bool,
     pub entries: Vec<ReviewInventoryEntry>,
@@ -411,7 +430,9 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "29";
+const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
+const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -437,6 +458,17 @@ fn validate_inventory_source_binding(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
+    if inventory
+        .scan
+        .coverage
+        .languages
+        .contains_key(&Language::Cpp)
+        && inventory.cpp_effect_revision.as_deref() != Some(CPP_EFFECT_REVISION)
+    {
+        return Err(EngineError(
+            "review inventory is stale: C++ container effects changed; regenerate it".into(),
+        ));
+    }
     if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
@@ -455,6 +487,18 @@ fn validate_review_inventory_sources(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
+    if inventory
+        .scan
+        .coverage
+        .languages
+        .contains_key(&Language::Rust)
+        && inventory.rust_configuration_revision.as_deref() != Some(RUST_CONFIGURATION_REVISION)
+    {
+        return Err(EngineError(
+            "review inventory is stale: Rust source configuration analysis changed; regenerate it"
+                .into(),
+        ));
+    }
     if let Some(scope) = &inventory.scan.impact_scope {
         crate::impact::validate_scope(root, scope)?;
     }
@@ -490,6 +534,7 @@ impl<'a> ReviewHistoryValidator<'a> {
             inventory.scan.impact_scope.as_ref(),
             inventory.marker_admission.page,
             inventory.include_review_material,
+            &inventory.scan.coverage.source_configurations,
         )
         .0
         .into_iter()
@@ -734,6 +779,16 @@ pub fn build_review_inventory_scoped_with_native_backends(
     Ok(ReviewInventory {
         identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
+        cpp_effect_revision: scan
+            .coverage
+            .languages
+            .contains_key(&Language::Cpp)
+            .then(|| CPP_EFFECT_REVISION.to_string()),
+        rust_configuration_revision: scan
+            .coverage
+            .languages
+            .contains_key(&Language::Rust)
+            .then(|| RUST_CONFIGURATION_REVISION.to_string()),
         source_fingerprint,
         include_review_material,
         entries,
@@ -1693,6 +1748,7 @@ fn build_path_review_jobs_internal(
                 || frontend::unverified_sanitizer_binding(file)
         });
     let constant_operand_exclusions = node_constant_admission::exclusions(&scan.evidence, &sources);
+    let duplicate_html_sinks = superseded_go_html_sinks(&all_candidates);
     let practical_exclusions = scan
         .evidence
         .iter()
@@ -1714,12 +1770,17 @@ fn build_path_review_jobs_internal(
                 )
         })
         .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
+        .chain(
+            duplicate_html_sinks
+                .into_iter()
+                .map(|id| (id, ReviewAdmissionDisposition::DuplicateSuperseded)),
+        )
         .collect::<BTreeMap<_, _>>();
     let mut candidates = all_candidates
         .iter()
         .filter(|candidate| {
             !practical_exclusions.contains_key(&candidate.sink.id)
-                && !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+                && !is_closed_native_invariant(candidate.capability, candidate.state)
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
@@ -1749,6 +1810,7 @@ fn build_path_review_jobs_internal(
         scan.impact_scope.as_ref(),
         marker_page,
         include_review_material,
+        &scan.coverage.source_configurations,
     );
     observation_groups.extend(markers);
     observation_groups.sort_by(|left, right| {
@@ -1855,15 +1917,7 @@ fn build_path_review_jobs_internal(
     // review counts only to this continuation's selected marker questions.
     if marker_page > 0 {
         candidates.clear();
-        observation_groups.retain(|group| {
-            group.evidence.first().is_some_and(|fact| {
-                matches!(
-                    fact.rule_id.as_str(),
-                    "framework-authorization-review-marker"
-                        | "framework-credential-lifecycle-review-marker"
-                )
-            })
-        });
+        observation_groups.retain(|group| group.evidence.iter().any(review_admission::is_marker));
     }
     let mut identity_catalog =
         identity::build_catalog(root, &sources, &candidates, &observation_groups)?;
@@ -1883,6 +1937,10 @@ fn build_path_review_jobs_internal(
                 capability: candidate.capability,
                 cwe_candidates: candidate.cwe_candidates.clone(),
                 evidence_strength: format!("{:?}", candidate.state).to_ascii_lowercase(),
+                source_configuration: question_source_configuration(
+                    &candidate.sink.rule_id,
+                    &candidate.sink.context,
+                ),
                 operand_facts: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .map_or_else(Vec::new, |sink| operand_summaries(sink)),
@@ -1925,6 +1983,10 @@ fn build_path_review_jobs_internal(
                     "sink"
                 }
                 .to_string(),
+                source_configuration: question_source_configuration(
+                    &anchor.rule_id,
+                    &anchor.context,
+                ),
                 operand_facts: operand_summaries(anchor),
                 value_hint: (group.priority == 2)
                     .then(|| practical_admission::frontend_research_hint(anchor, &scan.evidence))
@@ -2575,15 +2637,17 @@ fn build_path_review_jobs_internal(
 /// Exact native ownership-family matches and standard RAII owners are useful
 /// audit evidence, but have no unresolved invariant for an AI verdict. Keep
 /// them in scan/candidate output while excluding them from review jobs. Their
-/// unknown counterparts (leaks and allocation-family mismatches) remain
-/// reviewable.
-fn is_closed_native_ownership_proof(capability: Capability, state: SecurityPathState) -> bool {
+/// unknown counterparts remain reviewable. A lower-bound proof closes only
+/// the subtraction claim; it does not certify other copy or buffer invariants.
+fn is_closed_native_invariant(capability: Capability, state: SecurityPathState) -> bool {
     state == SecurityPathState::Protected
         && matches!(
             capability,
             Capability::LocalHeapDeallocation
                 | Capability::CppHeapDeallocation
                 | Capability::CppRaiiOwner
+                | Capability::SubtractedMemoryExtent
+                | Capability::RustRawSliceConstruction
         )
 }
 
@@ -4349,6 +4413,8 @@ fn report_remediation(
             | Capability::SignedSizeMemoryOperation
             | Capability::LocalHeapDeallocation
             | Capability::RemainingInputRead
+            | Capability::SubtractedMemoryExtent
+            | Capability::RustRawSliceConstruction
     ) || (capability == Capability::FilesystemWrite && cwes.iter().any(|cwe| cwe == "CWE-367"))
         || (capability == Capability::FileUpload && cwes.iter().any(|cwe| cwe == "CWE-434"))
     {
@@ -4390,6 +4456,12 @@ fn human_finding_title(rule_id: &str, fallback: &str) -> String {
         }
         "c-family-local-heap-deallocation" => {
             "Allocated memory leaks on an early return".to_string()
+        }
+        "c-family-subtracted-copy-extent" => {
+            "Subtraction can produce an invalid copy count".to_string()
+        }
+        "rust-nullable-field-raw-slice" => {
+            "Safe wrapper can construct a slice from a null pointer".to_string()
         }
         "c-family-remaining-input-read" => {
             "Decoded length can exceed the remaining parser input".to_string()
@@ -4544,6 +4616,15 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         }
         Capability::LocalHeapDeallocation => {
             "Route every post-allocation failure through the shared cleanup path, or free the exact allocation before returning."
+        }
+        Capability::SubtractedMemoryExtent => {
+            "Validate the original count against the subtracted offset before arithmetic and preserve its effective type through the copy helper or constructor; confirm source and destination extents separately."
+        }
+        Capability::RustRawSliceConstruction => {
+            "Handle the null field before constructing a raw slice, including zero-length input; return an empty slice or use a suitable non-null sentinel, and verify alignment, initialized extent, lifetime and aliasing separately."
+        }
+        Capability::BufferLengthPublication => {
+            "Initialize the full newly exposed prefix before publishing the vector length or output position. A capacity bound does not initialize memory; preserve the same buffer, range and branch through any helper or FFI handoff."
         }
         Capability::RemainingInputRead => {
             "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
@@ -5440,6 +5521,10 @@ fn project_investigation_facts(
         }
     });
     let mut retained_bytes = 0usize;
+    let rust_dependencies = facts
+        .iter()
+        .any(|f| f.role == "rust_dependency_definition_context");
+    let mut rust_bytes = 0usize;
     let angular_packet = facts.iter().any(|fact| {
         matches!(
             fact.role.as_str(),
@@ -5488,6 +5573,27 @@ fn project_investigation_facts(
     }
     for index in order {
         let fact = &mut facts[index];
+        // Prepared Rust relationships already bound the dependency closure.
+        // Keep up to 8 KiB beside the small anchor card; a per-fact limit keeps
+        // large implementations as explicit locators rather than app context.
+        if rust_dependencies
+            && matches!(
+                fact.role.as_str(),
+                "rust_dependency_definition_context" | "captured_definition_context"
+            )
+        {
+            if fact.excerpt.len() <= 4096 && rust_bytes + fact.excerpt.len() <= 8192 {
+                rust_bytes += fact.excerpt.len();
+            } else {
+                fact.excerpt.clear();
+                if !fact.provenance.engine.contains("location-only") {
+                    fact.provenance
+                        .engine
+                        .push_str("; location-only review lead");
+                }
+            }
+            continue;
+        }
         if helper_inline.contains(&index) {
             continue;
         }
@@ -5575,6 +5681,16 @@ fn review_playbook_bucket(
 ) -> &'static str {
     let tags = tags.into_iter().collect::<BTreeSet<_>>();
     let has = |name: &str| tags.contains(name);
+    if matches!(
+        capability,
+        Capability::BufferLengthPublication
+            | Capability::RustRawSliceConstruction
+            | Capability::ContainerBorrowLifetime
+            | Capability::ExceptionalOwnershipCleanup
+            | Capability::RustRawMemoryReview
+    ) {
+        return "native_memory";
+    }
     if has("review-invariant:credential-lifecycle") {
         return "credential_state";
     }
@@ -5601,7 +5717,9 @@ fn review_playbook_bucket(
         && matches!(
             capability,
             Capability::BufferWrite
+                | Capability::RustRawSliceConstruction
                 | Capability::SignedSizeMemoryOperation
+                | Capability::SubtractedMemoryExtent
                 | Capability::LocalHeapAllocation
                 | Capability::CppHeapAllocation
                 | Capability::XmlParsing
@@ -9193,6 +9311,16 @@ fn review_evidence_basis(
         tags: evidence.tags.clone(),
         captures,
         rule_note: rule.map(|rule| rule.provenance.note.clone()),
+        configuration: evidence
+            .context
+            .availability
+            .as_ref()
+            .filter(|a| {
+                evidence.rule_id.starts_with("rust-")
+                    && a.state != mehscan_core::AvailabilityState::Always
+            })
+            .cloned(),
+        configuration_dependencies: evidence.context.configuration_dependencies.clone(),
     }
 }
 
@@ -9283,6 +9411,8 @@ fn observation_review_basis(
             contract.security_question.to_string()
         } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
+        } else if unresolved_filesystem_open(evidence) {
+            "What is this open's effective mode, and can its actual read, creation, truncation or write access violate the selected path's applicable authority or root constraint? Resolving it to write-only does not settle destination selection.".to_string()
         } else if evidence.iter().any(|item| {
             item.kind == EvidenceKind::Sink
                 && item.capability == Capability::ResourceAccess
@@ -9309,6 +9439,7 @@ fn captured_definition_facts<'a>(
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
     let mut facts = Vec::new();
+    let mut any_truncated = false;
     for item in evidence {
         for (name, capture) in &item.captures {
             if !name.ends_with("_definition")
@@ -9326,7 +9457,7 @@ fn captured_definition_facts<'a>(
             let Ok(file) = sources.file(&capture.location.path) else {
                 continue;
             };
-            let slice = if name == "helper_definition" {
+            let slice = if name == "helper_definition" || name.starts_with("rust_context_") {
                 let start = capture.location.start.byte_offset;
                 let end = capture.location.end.byte_offset;
                 let Some(text) = file.source.get(start..end).filter(|text| !text.is_empty()) else {
@@ -9357,21 +9488,34 @@ fn captured_definition_facts<'a>(
                 continue;
             };
             facts.push(ReviewNeighborhoodFact {
-                role: "captured_definition_context".to_string(),
-                symbol: capture.text.clone(),
+                role: if name.starts_with("rust_context_") {
+                    "rust_dependency_definition_context"
+                } else {
+                    "captured_definition_context"
+                }
+                .to_string(),
+                symbol: if file.language == Some(Language::Rust) {
+                    format!("Rust source definition ({name})")
+                } else {
+                    capture.text.clone()
+                },
                 location: slice.location,
-                excerpt: redact_helper_definition(&capture.text, &slice.text),
+                excerpt: redact_file_helper_definition(file, &capture.text, &slice.text),
                 evidence_id: Some(item.id.clone()),
                 provenance: textual_provenance(
                     "exact evidence-captured definition, bounded and non-flow 1",
                 ),
             });
             if truncated {
-                return (facts, true);
+                if file.language == Some(Language::Rust) {
+                    any_truncated = true;
+                } else {
+                    return (facts, true);
+                }
             }
         }
     }
-    (facts, false)
+    (facts, any_truncated)
 }
 
 fn python_source_file_consumer_facts(
@@ -9671,8 +9815,16 @@ fn build_observation_reviews(
             frontend_facts.extend(frontend_context.import_facts(&frontend_facts));
         }
         facts.append(&mut frontend_facts);
-        let (mut captured_definitions, captured_definitions_truncated) =
-            captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
+        let (mut captured_definitions, captured_definitions_truncated) = captured_definition_facts(
+            sources,
+            group.evidence.iter(),
+            &facts,
+            if file.language == Some(Language::Rust) {
+                8
+            } else {
+                3
+            },
+        );
         for item in &group.evidence {
             facts.extend(prepared_statement_facts(&group.path, &file.source, item));
         }
@@ -10550,7 +10702,7 @@ fn imported_member_definition_facts(
             continue;
         };
         let clipped = truncated || end_line < last_line;
-        let excerpt = redact_helper_definition(&symbol.name, &slice.text);
+        let excerpt = redact_file_helper_definition(file, &symbol.name, &slice.text);
         let complete = !clipped && excerpt == slice.text;
         facts.push(ReviewNeighborhoodFact {
             role: if complete { "imported_member_definition_context" } else { "imported_member_prefix_context" }.into(), symbol: symbol.name.clone(),
@@ -10635,7 +10787,7 @@ fn observation_helper_definition_facts(
                 role: "helper_definition_context".to_string(),
                 symbol: name.clone(),
                 location: slice.location,
-                excerpt: redact_helper_definition(name, &slice.text),
+                excerpt: redact_file_helper_definition(file, name, &slice.text),
                 evidence_id: None,
                 provenance: textual_provenance(
                     "bounded exact helper referenced by observation, lexical non-flow 1",
@@ -12754,7 +12906,9 @@ fn observation_groups(
                 .iter()
                 .find(|item| item.id == anchor_id)
                 .expect("observation anchor must remain in its evidence group");
-            let has_source = items.iter().any(|item| item.kind == EvidenceKind::Source);
+            let has_source = items.iter().any(|item| {
+                observation_source_contributes_priority(anchor_evidence, item, sources)
+            });
             let has_sink = anchor_evidence.kind == EvidenceKind::Sink;
             let has_review_operation = matches!(
                 anchor_evidence.kind,
@@ -12798,6 +12952,36 @@ fn observation_groups(
     (groups, exclusions)
 }
 
+fn observation_source_contributes_priority(
+    anchor: &Evidence,
+    source: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if source.kind != EvidenceKind::Source {
+        return false;
+    }
+    // The cache analysis revision invalidates Rust inventories only. Preserve
+    // other languages' priority contracts until their own admission/cache gate.
+    if !anchor.rule_id.starts_with("rust-")
+        || !matches!(
+            anchor.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+    {
+        return true;
+    }
+    if !is_local_observation_context(anchor, source, Some(sources)) {
+        return false;
+    }
+    // Returned file contents do not establish control of the input path. Keep
+    // them as context; content-to-path candidates and explicit links retain their
+    // own source relationship independently of observation co-occurrence.
+    source.rule_id != "rust-file-content-input"
+        || (source.location != anchor.location
+            && (anchor.related_evidence.contains(&source.id)
+                || source.related_evidence.contains(&anchor.id)))
+}
+
 fn observation_exclusion_disposition(
     item: &Evidence,
     group: &[Evidence],
@@ -12827,6 +13011,7 @@ fn observation_exclusion_disposition(
     // Node file effects need a bounded source relationship, independently of
     // import spelling. Unlinked effects stay inventory, not AI verdict work.
     if is_source_free_generic_java_log(item, group)
+        || practical_admission::is_non_content_filesystem_effect(item)
         || item
             .tags
             .iter()
@@ -13263,6 +13448,50 @@ fn is_local_observation_context(
     item_start <= anchor_end.saturating_add(8) && anchor_start <= item_end.saturating_add(8)
 }
 
+/// The local Go formatter summary and ordinary flow can describe the same
+/// request-to-cast operation. Prefer the summary's explicit format context only
+/// when it covers every source path attached to that raw sink. Different casts
+/// or uncovered inputs are independent review work, regardless of proximity.
+fn superseded_go_html_sinks(candidates: &[mehscan_core::Candidate]) -> BTreeSet<String> {
+    let summaries = candidates
+        .iter()
+        .filter(|c| {
+            c.sink.rule_id == "go-request-fmt-to-trusted-html"
+                && c.capability == Capability::HtmlOutput
+                && c.cwe_candidates == ["CWE-79"]
+        })
+        .map(|c| {
+            (
+                c.source.id.as_str(),
+                c.sink.location.path.as_str(),
+                c.sink.location.start.byte_offset,
+                c.sink.location.end.byte_offset,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut covered = BTreeMap::new();
+    for c in candidates.iter().filter(|c| {
+        c.sink.rule_id == "go-html-output"
+            && c.capability == Capability::HtmlOutput
+            && c.cwe_candidates == ["CWE-79"]
+    }) {
+        let equivalent = summaries.contains(&(
+            c.source.id.as_str(),
+            c.sink.location.path.as_str(),
+            c.sink.location.start.byte_offset,
+            c.sink.location.end.byte_offset,
+        ));
+        covered
+            .entry(c.sink.id.as_str())
+            .and_modify(|all| *all &= equivalent)
+            .or_insert(equivalent);
+    }
+    covered
+        .into_iter()
+        .filter_map(|(id, all)| all.then(|| id.to_string()))
+        .collect()
+}
+
 fn observation_sink_covered_by_candidate(
     item: &Evidence,
     candidates: &[mehscan_core::Candidate],
@@ -13281,7 +13510,11 @@ fn observation_sink_covered_by_candidate(
             let overlaps = candidate.sink.location.start.byte_offset
                 < item.location.end.byte_offset
                 && item.location.start.byte_offset < candidate.sink.location.end.byte_offset;
-            let same_local_invariant = item.enclosing_symbol.is_some()
+            // Adjacent HTML calls can fill different rendered fields, branches
+            // or interpretation contexts. Cover the actual operation, not its
+            // function/capability neighborhood. Raw/summary overlap still folds.
+            let same_local_invariant = item.capability != Capability::HtmlOutput
+                && item.enclosing_symbol.is_some()
                 && item.enclosing_symbol == candidate.sink.enclosing_symbol
                 && item.capability == candidate.capability
                 && item
@@ -15377,6 +15610,9 @@ fn observation_review_title(evidence: &[Evidence]) -> String {
     if let Some(origin) = decision_critical_origin(evidence) {
         return origin.title().to_string();
     }
+    if unresolved_filesystem_open(evidence) {
+        return "Review filesystem access with unresolved open mode".to_string();
+    }
     let mut anchors = evidence
         .iter()
         .filter(|item| {
@@ -15408,6 +15644,24 @@ fn observation_review_title(evidence: &[Evidence]) -> String {
         },
         capabilities.into_iter().collect::<Vec<_>>().join(", ")
     )
+}
+
+fn unresolved_filesystem_open(evidence: &[Evidence]) -> bool {
+    evidence.iter().any(|item| {
+        item.kind == EvidenceKind::Sink
+            && matches!(
+                item.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+            && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-22")
+            && (item
+                .tags
+                .iter()
+                .any(|tag| tag == "filesystem-mode:unresolved")
+                || item.context.operand_facts.iter().any(|fact| {
+                    fact.role == "filesystem_mode" && !fact.remaining_checks.is_empty()
+                }))
+    })
 }
 
 fn observation_review_questions(
@@ -16219,6 +16473,12 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         }
         Capability::SerializedBlobCopy => {
             "Does the loader-reported blob length exactly match the fixed-layout copy extent before this copy, independently of the separate multiplication-overflow invariant?"
+        }
+        Capability::SubtractedMemoryExtent => {
+            "Can subtracting this offset produce an invalid copy count through underflow or a negative-to-size conversion, using the actual helper/constructor mapping and rejecting lower bound? This settles subtraction only; confirm copy execution, initializer effects, source accessibility and other conversions separately."
+        }
+        Capability::RustRawSliceConstruction => {
+            "Can the concrete null field state produced by this safe constructor reach this safe accessor's raw slice? Non-null is required even for zero length. Confirm the actual field transfer and runtime applicability; alignment, allocation extent, initialization and aliasing remain separate invariants."
         }
         Capability::LoadedMemoryExtent => {
             "Can the shown serialized scalar and other operands overflow this exact allocation-and-memory-operation extent under their effective C/C++ types, and do the rejecting checks safely cover zero and SIZE_MAX before computation?"
@@ -17569,7 +17829,7 @@ impl ReviewContextIndex {
                     continue;
                 };
                 truncated |= slice_truncated || end_line < location_end_line;
-                let excerpt = redact_helper_definition(name, &slice.text);
+                let excerpt = redact_file_helper_definition(file, name, &slice.text);
                 facts.push(ReviewNeighborhoodFact {
                     role: "helper_definition_context".to_string(),
                     symbol: name.clone(),
@@ -19744,6 +20004,69 @@ fn facts_cover_location(facts: &[ReviewNeighborhoodFact], location: &Location) -
     })
 }
 
+fn redact_file_helper_definition(file: &SourceFile, name: &str, excerpt: &str) -> String {
+    if file.language != Some(Language::Rust) {
+        return redact_helper_definition(name, excerpt);
+    }
+    if !is_sensitive_reference_name(name) {
+        return excerpt.into();
+    }
+    fn opaque(source: &str) -> String {
+        String::from_utf8(
+            source
+                .bytes()
+                .map(|b| if matches!(b, b'\r' | b'\n') { b } else { b'*' })
+                .collect(),
+        )
+        .expect("masked bytes are ASCII")
+    }
+    // Rust lifetimes and labels are not quoted strings. Parse literal nodes
+    // rather than consuming the remainder of a definition after an apostrophe.
+    // Keep physical bytes/line extents so the addressed display stays valid.
+    let Ok(doc) = StrDoc::try_new(excerpt, SupportLang::Rust) else {
+        return opaque(excerpt);
+    };
+    let tree = AstGrep::doc(doc);
+    if tree.root().dfs().any(|n| n.is_error() || n.is_missing())
+        || excerpt.to_ascii_lowercase().contains("begin private key")
+        || excerpt
+            .to_ascii_lowercase()
+            .contains("begin rsa private key")
+    {
+        return opaque(excerpt);
+    }
+    let mut bytes = excerpt.as_bytes().to_vec();
+    for node in tree.root().dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "string_literal" | "raw_string_literal" | "char_literal"
+        )
+    }) {
+        let range = node.range();
+        let text = &excerpt[range.clone()];
+        let quote = if node.kind().as_ref() == "char_literal" {
+            b'\''
+        } else {
+            b'"'
+        };
+        let Some(first) = text.as_bytes().iter().position(|b| *b == quote) else {
+            continue;
+        };
+        let Some(last) = text.as_bytes().iter().rposition(|b| *b == quote) else {
+            continue;
+        };
+        if last <= first {
+            return opaque(excerpt);
+        }
+        for byte in &mut bytes[range.start + first + 1..range.start + last] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b'*';
+            }
+        }
+    }
+    String::from_utf8(bytes).expect("masked literal bytes retain UTF-8")
+}
+
 fn redact_helper_definition(name: &str, excerpt: &str) -> String {
     if !is_sensitive_reference_name(name) {
         return excerpt.to_string();
@@ -21369,12 +21692,29 @@ pub fn find_symbol(
     path: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
+    find_symbol_scoped(root, name, path, None, limit)
+}
+
+pub fn find_symbol_scoped(
+    root: &Path,
+    name: &str,
+    path: Option<&str>,
+    path_prefix: Option<&str>,
+    limit: Option<usize>,
+) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
     if name.is_empty() {
         return Err(EngineError("symbol name must not be empty".to_string()));
+    }
+    if path.is_some() && path_prefix.is_some() {
+        return Err(EngineError(
+            "choose either --path or --path-prefix".to_string(),
+        ));
     }
     let limit = bounded_limit(limit)?;
     let sources = if let Some(path) = path {
         RepositorySources::load_selected(root, path)?
+    } else if let Some(prefix) = path_prefix {
+        RepositorySources::load_directory(root, prefix)?
     } else {
         RepositorySources::load(root)?
     };
@@ -23269,7 +23609,7 @@ mod tests {
             SourceFile {
                 path: "AccountController.cs".to_string(),
                 language: Some(Language::Csharp),
-                source: "[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n"
+                source: "class AccountController {\n[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n}\n"
                     .to_string(),
             },
         );
@@ -23530,16 +23870,16 @@ mod tests {
             Capability::CppHeapDeallocation,
             Capability::CppRaiiOwner,
         ] {
-            assert!(is_closed_native_ownership_proof(
+            assert!(is_closed_native_invariant(
                 capability,
                 SecurityPathState::Protected
             ));
-            assert!(!is_closed_native_ownership_proof(
+            assert!(!is_closed_native_invariant(
                 capability,
                 SecurityPathState::Unknown
             ));
         }
-        assert!(!is_closed_native_ownership_proof(
+        assert!(!is_closed_native_invariant(
             Capability::SignedSizeMemoryOperation,
             SecurityPathState::Protected
         ));
@@ -23907,6 +24247,36 @@ mod tests {
         );
         assert!(facts[4].excerpt.is_empty());
         assert!(facts[5].excerpt.is_empty());
+    }
+
+    #[test]
+    fn rust_dependency_projection_preserves_bodies_with_a_separate_hard_budget() {
+        let location = location_from_offsets("src/lib.rs", "effect();", 0, 9);
+        let mut facts = [
+            "source_context",
+            "captured_definition_context",
+            "rust_dependency_definition_context",
+            "rust_dependency_definition_context",
+        ]
+        .into_iter()
+        .map(|role| ReviewNeighborhoodFact {
+            role: role.into(),
+            symbol: "helper".into(),
+            location: location.clone(),
+            excerpt: if role == "source_context" {
+                "effect();".into()
+            } else {
+                "x".repeat(4096)
+            },
+            evidence_id: Some("ev-selected".into()),
+            provenance: textual_provenance("bounded Rust dependency"),
+        })
+        .collect::<Vec<_>>();
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &location);
+        assert_eq!(facts[0].excerpt, "effect();");
+        assert_eq!(facts[1].excerpt.len() + facts[2].excerpt.len(), 8192);
+        assert!(facts[3].excerpt.is_empty());
+        assert!(facts[3].provenance.engine.contains("location-only"));
     }
 
     #[test]
@@ -24336,6 +24706,45 @@ mod tests {
                 && fact.symbol == "notevil"
                 && fact.excerpt.contains("^1.3.3")
         }));
+    }
+
+    #[test]
+    fn rust_sensitive_definition_redaction_preserves_lifetimes_labels_and_physical_lines() {
+        let text = "pub fn token<'a>(value:&'a str, n:Notify<'_>) {\r\n 'again:loop{let secret=r##\"first\r\nsecond\"##;let ch='é';let byte=b'\\n';break 'again;}\r\n issue(value);\r\n}\r\n";
+        let file = SourceFile {
+            path: "src/lib.rs".into(),
+            language: Some(Language::Rust),
+            source: text.into(),
+        };
+        let redacted = redact_file_helper_definition(&file, "password_token", text);
+        assert!(redacted.contains("token<'a>"));
+        assert!(redacted.contains("Notify<'_>"));
+        assert!(redacted.contains("'again:loop"));
+        assert!(redacted.contains("break 'again"));
+        assert!(redacted.contains("issue(value)"));
+        assert!(!redacted.contains("first"));
+        assert!(!redacted.contains("second"));
+        assert!(!redacted.contains('é'));
+        assert_eq!(redacted.len(), text.len());
+        let partial = "fn password<'a>(){let value=\"secret-unterminated\n";
+        let masked = redact_file_helper_definition(&file, "password_value", partial);
+        assert!(!masked.contains("secret"));
+        assert_eq!(masked.len(), partial.len());
+        assert_eq!(masked.lines().count(), partial.lines().count());
+        assert_eq!(
+            redacted
+                .match_indices('\n')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>(),
+            text.match_indices('\n').map(|(i, _)| i).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            redacted
+                .match_indices('\r')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>(),
+            text.match_indices('\r').map(|(i, _)| i).collect::<Vec<_>>()
+        );
     }
 
     #[test]

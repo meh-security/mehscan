@@ -12,7 +12,7 @@ It runs locally without building or executing your application. Use the CLI on i
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
 - Export JSON, SARIF and Markdown reports.
 
-Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. Coverage varies by language and framework.
+Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
 
 ## Installation
 
@@ -88,6 +88,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 ## Documentation
 
 - [Installation](docs/installation.md)
+- [Language coverage and source scope](docs/coverage.md)
 - [Review and report formats](docs/output-contract.md)
 - [Local AI worker](docs/review-worker.md)
 - [Codex reviewer setup](docs/codex-reviewer.md)
@@ -96,7 +97,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
 - [Release notes](docs/release-notes-v0.9.0.md)
 
-Optional experimental backends provide additional compiler context for [C# through Roslyn](backends/roslyn/README.md) and [JavaScript/TypeScript](backends/typescript/README.md). Standard scanning requires neither backend.
+Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
 
 ## License
 

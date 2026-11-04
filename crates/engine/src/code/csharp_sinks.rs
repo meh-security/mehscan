@@ -22,7 +22,9 @@ const WEBCLIENT_RULE_ID: &str = "csharp-webclient-outbound-http";
 const HTTPCLIENT_RULE_ID: &str = "csharp-httpclient-outbound-http";
 const CALL_ENGINE: &str = "mehscan csharp-call-summary 1";
 
+mod index;
 mod legacy_requests;
+use index::SinkIndex;
 
 pub(super) fn declared_receiver_type<'a>(
     root: &Node<'a, StrDoc<SupportLang>>,
@@ -52,6 +54,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
     }
 
     legacy_requests::add(path, root, comments, conditional, literals, evidence);
+    let index = SinkIndex::new(root);
 
     for assignment in root
         .dfs()
@@ -70,7 +73,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                     continue;
                 }
                 let Some(receiver_kind) =
-                    database_command_receiver_kind(root, &assignment, receiver.as_str())
+                    database_command_receiver_kind(root, &index, &assignment, receiver.as_str())
                 else {
                     continue;
                 };
@@ -148,7 +151,15 @@ pub(crate) fn add_typed_property_sinks<'tree>(
         });
     }
 
-    add_http_request_uri_properties(path, root, comments, conditional, literals, evidence);
+    add_http_request_uri_properties(
+        path,
+        root,
+        &index,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
 
     let dapper_imported = has_dapper_import(root);
     for invocation in root
@@ -183,7 +194,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                     | "QueryMultiple"
                     | "QueryMultipleAsync"
             )
-            && receiver_is_database_connection(root, &invocation, &receiver)
+            && receiver_is_database_connection(root, &index, &invocation, &receiver)
         {
             push_call_sink(
                 path,
@@ -209,7 +220,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 | "PutAsync"
                 | "PatchAsync"
                 | "DeleteAsync"
-        ) && receiver_is_http_client(root, &invocation, &receiver)
+        ) && receiver_is_http_client(root, &index, &invocation, &receiver)
         {
             push_call_sink(
                 path,
@@ -233,7 +244,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 | "DownloadDataTaskAsync"
                 | "OpenRead"
                 | "OpenReadTaskAsync"
-        ) && receiver_has_type(root, &invocation, &receiver, is_webclient_type)
+        ) && receiver_has_type(root, &index, &invocation, &receiver, is_webclient_type)
         {
             push_call_sink(
                 path,
@@ -257,6 +268,7 @@ pub(crate) fn add_typed_property_sinks<'tree>(
 fn add_http_request_uri_properties<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
+    index: &SinkIndex<'tree>,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
@@ -282,6 +294,7 @@ fn add_http_request_uri_properties<'tree>(
             if member != "RequestUri"
                 || !receiver_has_type(
                     root,
+                    index,
                     &assignment,
                     receiver.as_str(),
                     is_http_request_message_type,
@@ -379,7 +392,7 @@ fn add_http_request_uri_properties<'tree>(
             continue;
         };
         if !matches!(method.as_str(), "Send" | "SendAsync")
-            || !receiver_is_http_client(root, &invocation, &receiver)
+            || !receiver_is_http_client(root, index, &invocation, &receiver)
         {
             continue;
         }
@@ -482,6 +495,7 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
     if language != Language::Csharp {
         return;
     }
+    let index = SinkIndex::new(root);
     for item in evidence.iter_mut().filter(|item| {
         item.location.path == path
             && item.kind == EvidenceKind::Sink
@@ -490,14 +504,10 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
         let Some(query_capture) = item.captures.get("query").cloned() else {
             continue;
         };
-        let Some(query) = root
-            .dfs()
-            .filter(|node| {
-                node.range().start == query_capture.location.start.byte_offset
-                    && node.range().end == query_capture.location.end.byte_offset
-            })
-            .last()
-        else {
+        let Some(query) = super::node_lookup::last_exact(
+            root,
+            query_capture.location.start.byte_offset..query_capture.location.end.byte_offset,
+        ) else {
             continue;
         };
         if query
@@ -512,7 +522,7 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
         {
             push_unique_tag(&mut item.tags, "query-role:stored-procedure-name");
         }
-        let Some(composition) = query_composition(root, &query, literals, 0) else {
+        let Some(composition) = query_composition(root, &index, &query, literals, 0) else {
             continue;
         };
         push_unique_tag(&mut item.tags, "dynamic-query-composition");
@@ -720,6 +730,7 @@ fn is_quoted_literal(value: &str) -> bool {
 
 fn query_composition<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
+    index: &SinkIndex<'tree>,
     query: &Node<'tree, StrDoc<SupportLang>>,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     depth: usize,
@@ -740,8 +751,8 @@ fn query_composition<'tree>(
     }
     let query_text = query.text();
     let name = simple_identifier(query_text.trim())?;
-    let value = latest_local_value(root, query, name)?;
-    query_composition(root, &value, literals, depth + 1)
+    let value = latest_local_value(root, index, query, name)?;
+    query_composition(root, index, &value, literals, depth + 1)
 }
 
 fn formatted_string_composition<'tree>(
@@ -785,40 +796,12 @@ fn formatted_string_composition<'tree>(
 
 fn latest_local_value<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
+    index: &SinkIndex<'tree>,
     use_site: &Node<'tree, StrDoc<SupportLang>>,
     name: &str,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     let scope = scope_range(use_site, root);
-    let mut values = root
-        .dfs()
-        .filter(|node| {
-            scope.start <= node.range().start
-                && node.range().end <= scope.end
-                && node.range().start < use_site.range().start
-        })
-        .filter_map(|node| match node.kind().as_ref() {
-            "variable_declarator"
-                if node
-                    .field("name")
-                    .is_some_and(|field| field.text().trim() == name) =>
-            {
-                node.field("value")
-                    .or_else(|| node.children().filter(|child| child.is_named()).last())
-                    .map(|value| (node.range().start, value))
-            }
-            "assignment_expression"
-                if assignment_operator(&node) == "="
-                    && node
-                        .field("left")
-                        .is_some_and(|left| left.text().trim() == name) =>
-            {
-                node.field("right").map(|value| (node.range().start, value))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    values.sort_by_key(|(offset, _)| *offset);
-    values.pop().map(|(_, value)| value)
+    index.latest_value(name, &scope, use_site.range().start)
 }
 
 fn invocation_arguments<'tree>(
@@ -1126,13 +1109,21 @@ fn command_type_is_stored_procedure(
 
 fn database_command_receiver_kind(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     assignment: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> Option<&'static str> {
-    if receiver_has_type_inner(root, assignment, receiver, is_database_command_type, 0) {
+    if receiver_has_type_inner(
+        root,
+        index,
+        assignment,
+        receiver,
+        is_database_command_type,
+        0,
+    ) {
         return Some("typed-receiver");
     }
-    (database_command_factory_initialized_receiver(root, assignment, receiver)
+    (database_command_factory_initialized_receiver(root, index, assignment, receiver)
         && database_command_is_executed(root, assignment, receiver))
     .then_some("factory-created-receiver")
 }
@@ -1178,100 +1169,86 @@ fn database_command_is_executed(
 
 fn database_command_factory_initialized_receiver(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> bool {
     let scope = scope_range(use_site, root);
-    root.dfs().any(|node| {
-        if node.kind().as_ref() != "variable_declarator"
-            || scope.start > node.range().start
-            || node.range().end > scope.end
-            || node.range().start >= use_site.range().start
-            || node
-                .field("name")
-                .is_none_or(|name| name.text().trim() != receiver)
-        {
-            return false;
-        }
-        let Some(initializer) = node.field("value").or_else(|| {
-            node.children()
-                .filter(|child| child.is_named())
+    index
+        .declarations_before(receiver, scope, use_site.range().start)
+        .any(|node| {
+            let Some(initializer) = node.field("value").or_else(|| {
+                node.children()
+                    .filter(|child| child.is_named())
+                    .find(|child| child.kind().as_ref() == "invocation_expression")
+            }) else {
+                return false;
+            };
+            let text = compact(initializer.text().as_ref());
+            if text.contains(".Database.GetDbConnection().CreateCommand(") {
+                return true;
+            }
+            let Some(invocation) = initializer
+                .dfs()
                 .find(|child| child.kind().as_ref() == "invocation_expression")
-        }) else {
-            return false;
-        };
-        let text = compact(initializer.text().as_ref());
-        if text.contains(".Database.GetDbConnection().CreateCommand(") {
-            return true;
-        }
-        let Some(invocation) = initializer
-            .dfs()
-            .find(|child| child.kind().as_ref() == "invocation_expression")
-        else {
-            return false;
-        };
-        let Some(function) = invocation.field("function") else {
-            return false;
-        };
-        if function.kind().as_ref() != "member_access_expression"
-            || function
-                .field("name")
-                .is_none_or(|name| name.text().trim() != "CreateCommand")
-        {
-            return false;
-        }
-        let Some(factory_receiver) = function.field("expression") else {
-            return false;
-        };
-        let factory_receiver_text = factory_receiver.text();
-        let Some(connection) = simple_identifier(factory_receiver_text.trim()) else {
-            return false;
-        };
-        receiver_is_database_connection(root, &node, connection)
-    })
+            else {
+                return false;
+            };
+            let Some(function) = invocation.field("function") else {
+                return false;
+            };
+            if function.kind().as_ref() != "member_access_expression"
+                || function
+                    .field("name")
+                    .is_none_or(|name| name.text().trim() != "CreateCommand")
+            {
+                return false;
+            }
+            let Some(factory_receiver) = function.field("expression") else {
+                return false;
+            };
+            let factory_receiver_text = factory_receiver.text();
+            let Some(connection) = simple_identifier(factory_receiver_text.trim()) else {
+                return false;
+            };
+            receiver_is_database_connection(root, index, node, connection)
+        })
 }
 
 fn receiver_has_type(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
     predicate: fn(&str) -> bool,
 ) -> bool {
-    receiver_has_type_inner(root, use_site, receiver, predicate, 0)
+    receiver_has_type_inner(root, index, use_site, receiver, predicate, 0)
 }
 
 fn receiver_has_type_inner(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
     predicate: fn(&str) -> bool,
     depth: usize,
 ) -> bool {
-    let field_has_type = root.dfs().any(|node| {
-        node.kind().as_ref() == "field_declaration"
-            && node
-                .dfs()
-                .find(|child| child.kind().as_ref() == "variable_declaration")
-                .and_then(|declaration| declaration.field("type"))
-                .is_some_and(|kind| predicate(kind.text().as_ref()))
-            && node.dfs().any(|child| {
-                child.kind().as_ref() == "variable_declarator"
-                    && child
-                        .field("name")
-                        .is_some_and(|name| name.text().trim() == receiver)
-            })
-    });
+    let field_has_type = index.field_has_type(use_site, receiver, predicate);
     let scope = scope_range(use_site, root);
     let before = use_site.range().start;
-    let mut events = root
-        .dfs()
+    let events = index.events(&scope, receiver);
+    let end = events.partition_point(|node| node.range().start < before);
+    let event = events[..end]
+        .iter()
+        .rev()
         .filter(|node| {
             scope.start <= node.range().start
                 && node.range().end <= scope.end
                 && node.range().start < before
-                && scope_range(node, root) == scope
+                && (node.kind().as_ref() != "variable_declarator"
+                    || super::context::lexical_declaration_visible_at(node, use_site))
         })
-        .filter_map(|node| {
+        .find_map(|node| {
             let event = receiver_type_event(node.clone(), receiver, predicate)?;
             if event.1 || depth == 4 || node.kind().as_ref() != "variable_declarator" {
                 return Some(event);
@@ -1299,13 +1276,11 @@ fn receiver_has_type_inner(
             }
             Some((
                 event.0,
-                receiver_has_type_inner(root, &node, alias, predicate, depth + 1),
+                receiver_has_type_inner(root, index, &node, alias, predicate, depth + 1),
             ))
-        })
-        .collect::<Vec<_>>();
-    events.sort_by_key(|(offset, _)| *offset);
-    if let Some((_, proven)) = events.last() {
-        return *proven;
+        });
+    if let Some((_, proven)) = event {
+        return proven;
     }
     primary_constructor_parameter_has_type(use_site, receiver, predicate) || field_has_type
 }
@@ -1343,51 +1318,56 @@ fn primary_constructor_parameter_has_type(
 
 fn receiver_is_database_connection(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> bool {
-    receiver_has_type_inner(root, use_site, receiver, is_database_connection_type, 0)
-        || factory_initialized_receiver(
-            root,
-            use_site,
-            receiver,
-            &[
-                "CreateConnection",
-                "CreateConnectionAsync",
-                "OpenConnection",
-                "OpenConnectionAsync",
-            ],
-        )
+    receiver_has_type_inner(
+        root,
+        index,
+        use_site,
+        receiver,
+        is_database_connection_type,
+        0,
+    ) || factory_initialized_receiver(
+        root,
+        index,
+        use_site,
+        receiver,
+        &[
+            "CreateConnection",
+            "CreateConnectionAsync",
+            "OpenConnection",
+            "OpenConnectionAsync",
+        ],
+    )
 }
 
 fn receiver_is_http_client(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> bool {
-    receiver_has_type(root, use_site, receiver, is_http_client_type)
-        || factory_initialized_receiver(root, use_site, receiver, &["CreateClient"])
+    receiver_has_type(root, index, use_site, receiver, is_http_client_type)
+        || factory_initialized_receiver(root, index, use_site, receiver, &["CreateClient"])
 }
 
 fn factory_initialized_receiver(
     root: &Node<'_, StrDoc<SupportLang>>,
+    index: &SinkIndex<'_>,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
     factories: &[&str],
 ) -> bool {
     let scope = scope_range(use_site, root);
-    root.dfs().any(|node| {
-        node.kind().as_ref() == "variable_declarator"
-            && scope.start <= node.range().start
-            && node.range().end <= scope.end
-            && node.range().start < use_site.range().start
-            && node
-                .field("name")
-                .is_some_and(|name| name.text().trim() == receiver)
-            && factories
+    index
+        .declarations_before(receiver, scope, use_site.range().start)
+        .any(|node| {
+            factories
                 .iter()
                 .any(|factory| compact(node.text().as_ref()).contains(&format!(".{factory}(")))
-    })
+        })
 }
 
 fn receiver_type_event(

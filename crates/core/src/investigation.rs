@@ -500,6 +500,10 @@ pub struct PathReviewEvidenceBasis {
     pub captures: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<crate::Availability>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_dependencies: Vec<crate::ConfigurationDependency>,
 }
 
 /// A bounded non-path neighborhood for observations that merit AI review but

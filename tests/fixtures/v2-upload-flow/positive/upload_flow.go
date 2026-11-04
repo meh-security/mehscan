@@ -1,5 +1,10 @@
 package uploadflow
 
+import (
+	"os"
+	"path/filepath"
+)
+
 func direct(r *Request, content []byte) {
 	_ = os.WriteFile(r.MultipartForm.File["upload"][0].Filename, content, 0600)
 }

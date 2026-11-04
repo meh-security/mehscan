@@ -3,6 +3,9 @@ use std::ops::Range;
 
 use mehscan_core::{Availability, AvailabilityState, Language};
 
+mod index;
+use index::RegionIndex;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ConditionalRegion {
     range: Range<usize>,
@@ -12,6 +15,22 @@ struct ConditionalRegion {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ConditionalRegions {
     regions: Vec<ConditionalRegion>,
+    index: RegionIndex,
+}
+
+/// Whether any excluded region completely contains a source range. Prefix
+/// maximum ends permit one binary lookup even for overlapping/nested regions.
+pub(crate) struct ExclusionIndex {
+    ranges: Vec<Range<usize>>,
+}
+
+impl ExclusionIndex {
+    pub(crate) fn contains(&self, range: Range<usize>) -> bool {
+        let end = self
+            .ranges
+            .partition_point(|region| region.start <= range.start);
+        end > 0 && self.ranges[end - 1].end >= range.end
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +49,74 @@ enum Truth {
 }
 
 impl ConditionalRegions {
+    pub(crate) fn exclusion_index(&self) -> ExclusionIndex {
+        let mut ranges = self
+            .regions
+            .iter()
+            .filter(|region| region.availability.state == AvailabilityState::Excluded)
+            .map(|region| region.range.clone())
+            .collect::<Vec<_>>();
+        ranges.sort_by_key(|range| range.start);
+        let mut furthest = 0;
+        for range in &mut ranges {
+            furthest = furthest.max(range.end);
+            range.end = furthest;
+        }
+        ExclusionIndex { ranges }
+    }
+
+    pub(crate) fn with_rust_cfg(
+        mut self,
+        language: Language,
+        root: &ast_grep_core::Node<
+            '_,
+            ast_grep_core::tree_sitter::StrDoc<ast_grep_language::SupportLang>,
+        >,
+    ) -> Self {
+        if language != Language::Rust {
+            return self;
+        }
+        let conditions = super::rust_cfg::conditions(root);
+        let mut positions = BTreeMap::new();
+        let mut ranges = self
+            .regions
+            .iter()
+            .map(|region| region.range.clone())
+            .collect::<Vec<_>>();
+        for (order, range) in ranges.iter().enumerate() {
+            positions.entry((range.start, range.end)).or_insert(order);
+        }
+        for (range, _, _) in &conditions {
+            if range.start < range.end && !positions.contains_key(&(range.start, range.end)) {
+                positions.insert((range.start, range.end), ranges.len());
+                ranges.push(range.clone());
+            }
+        }
+        self.index = RegionIndex::new(ranges, self.regions.len());
+        for (range, condition, value) in conditions {
+            if range.start >= range.end {
+                continue;
+            }
+            let truth = match value {
+                Some(true) => Truth::True,
+                Some(false) => Truth::False,
+                None => Truth::Unknown,
+            };
+            let availability = combine(&self.availability_for(range.clone()), truth, &condition);
+            // Multiple attributes on one item and nested module attributes all
+            // constrain it. Unknown features never inherit this scanner's host.
+            let order = positions[&(range.start, range.end)];
+            if let Some(region) = self.regions.get_mut(order) {
+                region.availability = availability;
+            } else {
+                debug_assert_eq!(order, self.regions.len());
+                push_region(&mut self.regions, range, availability);
+                self.index.activate(order);
+            }
+        }
+        self
+    }
+
     pub(crate) fn from_source(
         language: Language,
         source: &str,
@@ -96,15 +183,17 @@ impl ConditionalRegions {
             push_region(&mut regions, frame.branch_start..source.len(), availability);
         }
         regions.sort_by_key(|region| (region.range.start, region.range.end));
-        Self { regions }
+        let index = RegionIndex::new(
+            regions.iter().map(|region| region.range.clone()).collect(),
+            regions.len(),
+        );
+        Self { regions, index }
     }
 
     pub(crate) fn availability_for(&self, range: Range<usize>) -> Availability {
-        self.regions
-            .iter()
-            .filter(|region| contains(&region.range, &range))
-            .min_by_key(|region| region.range.end - region.range.start)
-            .map(|region| region.availability.clone())
+        self.index
+            .containing(range)
+            .map(|order| self.regions[order].availability.clone())
             .unwrap_or_else(always)
     }
 }
@@ -232,10 +321,6 @@ fn join_conditions(left: Option<&str>, right: Option<&str>) -> Option<String> {
     }
 }
 
-fn contains(outer: &Range<usize>, inner: &Range<usize>) -> bool {
-    outer.start <= inner.start && outer.end >= inner.end
-}
-
 fn split_directive(directive: &str) -> (&str, &str) {
     directive
         .split_once(char::is_whitespace)
@@ -337,5 +422,107 @@ mod tests {
                 .state,
             AvailabilityState::Always
         );
+    }
+
+    #[test]
+    fn rust_features_targets_and_nested_attributes_keep_all_conditions() {
+        use ast_grep_core::tree_sitter::LanguageExt;
+        let source = r##"
+            #![cfg(feature = "package")]
+            #[cfg(feature = "server")]
+            mod nested {
+                #[cfg(unix)]
+                #[cfg(not(target_os = "macos"))]
+                fn run() { consume(); }
+                #[cfg(any())] fn absent() { never(); }
+            }
+            #[cfg_attr(feature = "optional", cfg(target_arch = "arm"))]
+            fn selected() { maybe(); }
+            #[cfg_attr(feature = "optional", allow(dead_code))]
+            fn ordinary() { ordinary_call(); }
+            const DOC: &str = "#[cfg(any())]";
+        "##;
+        let ast = ast_grep_language::SupportLang::Rust.ast_grep(source);
+        assert!(!ast.root().dfs().any(|n| n.kind().as_ref() == "ERROR"));
+        let regions = ConditionalRegions::default().with_rust_cfg(Language::Rust, &ast.root());
+        let nested = regions.availability_for(range_of(source, "consume()"));
+        assert_eq!(nested.state, AvailabilityState::Conditional);
+        let condition = nested.condition.unwrap();
+        for predicate in ["package", "server", "unix", "macos"] {
+            assert!(condition.contains(predicate), "{condition}");
+        }
+        assert_eq!(
+            regions.availability_for(range_of(source, "never()")).state,
+            AvailabilityState::Excluded
+        );
+        assert!(
+            regions
+                .availability_for(range_of(source, "maybe()"))
+                .condition
+                .unwrap()
+                .contains("cfg_attr")
+        );
+        let ordinary = regions.availability_for(range_of(source, "ordinary_call()"));
+        assert!(ordinary.condition.unwrap().contains("package"));
+    }
+
+    #[test]
+    fn indexed_rust_construction_preserves_sequential_merges_and_every_node_availability() {
+        use ast_grep_core::tree_sitter::LanguageExt;
+        let source = r##"
+            #![cfg(feature="package")]
+            #[cfg(feature="server")]
+            mod nested {
+                #![cfg(unix)]
+                #[cfg(all())] #[cfg(feature="one")] #[cfg(target_os="linux")]
+                fn first() { consume(); }
+                #[cfg(any())] mod absent { #[cfg(feature="two")] fn second() { hidden(); } }
+            }
+            #[cfg_attr(feature="conditional",cfg(target_arch="arm"))]
+            fn last() { maybe(); }
+        "##;
+        let ast = ast_grep_language::SupportLang::Rust.ast_grep(source);
+        let root = ast.root();
+        let mut actual = ConditionalRegions::default();
+        let mut expected: Vec<ConditionalRegion> = Vec::new();
+        // Reapplying attributes also exercises existing-range updates, not just
+        // inserting into an empty index. The reference retains former ordering.
+        for _ in 0..2 {
+            for (range, condition, value) in super::super::rust_cfg::conditions(&root) {
+                let parent = expected
+                    .iter()
+                    .filter(|region| {
+                        region.range.start <= range.start && region.range.end >= range.end
+                    })
+                    .min_by_key(|region| region.range.len())
+                    .map(|region| region.availability.clone())
+                    .unwrap_or_else(always);
+                let truth = match value {
+                    Some(true) => Truth::True,
+                    Some(false) => Truth::False,
+                    None => Truth::Unknown,
+                };
+                let availability = combine(&parent, truth, &condition);
+                if let Some(region) = expected.iter_mut().find(|region| region.range == range) {
+                    region.availability = availability;
+                } else {
+                    push_region(&mut expected, range, availability);
+                }
+            }
+            actual = actual.with_rust_cfg(Language::Rust, &root);
+            assert_eq!(actual.regions, expected);
+            for node in root.dfs() {
+                let range = node.range();
+                let reference = expected
+                    .iter()
+                    .filter(|region| {
+                        region.range.start <= range.start && region.range.end >= range.end
+                    })
+                    .min_by_key(|region| region.range.len())
+                    .map(|region| region.availability.clone())
+                    .unwrap_or_else(always);
+                assert_eq!(actual.availability_for(range), reference, "{}", node.text());
+            }
+        }
     }
 }

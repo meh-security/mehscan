@@ -2012,6 +2012,23 @@ fn push_file_local_parameter_sink_summaries<'tree>(
             }
             counts
         });
+    let mut sinks_by_start = BTreeMap::<usize, Vec<&Evidence>>::new();
+    for item in evidence.iter().filter(|item| {
+        item.location.path == path
+            && item.kind == EvidenceKind::Sink
+            && matches!(
+                item.capability,
+                Capability::ProcessExecution
+                    | Capability::FilesystemRead
+                    | Capability::FilesystemWrite
+                    | Capability::OutboundNetworkRequest
+            )
+    }) {
+        sinks_by_start
+            .entry(item.location.start.byte_offset)
+            .or_default()
+            .push(item);
+    }
     let mut summaries = Vec::new();
     for function in &functions {
         let Some(name) = function.field("name").map(|node| node.text().into_owned()) else {
@@ -2028,8 +2045,9 @@ fn push_file_local_parameter_sink_summaries<'tree>(
             .filter_map(parameter_name_node)
             .map(|parameter| parameter.text().into_owned())
             .collect::<Vec<_>>();
-        let candidates = evidence
-            .iter()
+        let candidates = sinks_by_start
+            .range(function.range().start..=function.range().end)
+            .flat_map(|(_, items)| items.iter().copied())
             .filter(|item| {
                 item.location.path == path
                     && item.kind == EvidenceKind::Sink
@@ -2082,15 +2100,27 @@ fn push_file_local_parameter_sink_summaries<'tree>(
         });
     }
 
+    let mut calls_by_name = BTreeMap::<String, Vec<Node<'tree, StrDoc<SupportLang>>>>::new();
+    if !summaries.is_empty() {
+        for call in root.dfs().filter(|node| node.kind().as_ref() == "call") {
+            if let Some(function) = call.field("function") {
+                calls_by_name
+                    .entry(function.text().trim().to_string())
+                    .or_default()
+                    .push(call);
+            }
+        }
+    }
     for summary in summaries {
-        for call in root.dfs().filter(|node| {
-            node.kind().as_ref() == "call"
-                && node
-                    .field("function")
-                    .is_some_and(|function| function.text().trim() == summary.name)
-                && !(summary.helper_start <= node.range().start
+        for call in calls_by_name
+            .get(&summary.name)
+            .into_iter()
+            .flatten()
+            .filter(|node| {
+                !(summary.helper_start <= node.range().start
                     && node.range().end <= summary.helper_end)
-        }) {
+            })
+        {
             let arguments = python_call_arguments(&call);
             let Some(command) = arguments.get(summary.parameter_index) else {
                 continue;

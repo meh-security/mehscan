@@ -14,7 +14,7 @@ struct Binding<'a> {
     parameter: bool,
 }
 
-fn function(kind: &str) -> bool {
+pub(super) fn function(kind: &str) -> bool {
     matches!(
         kind,
         "function_declaration"
@@ -27,18 +27,21 @@ fn function(kind: &str) -> bool {
 }
 
 fn scope(node: &N<'_>, function_only: bool) -> Range<usize> {
-    node.ancestors()
-        .find(|n| {
-            n.kind().as_ref() == "program"
-                || function(n.kind().as_ref())
-                || !function_only
-                    && matches!(
-                        n.kind().as_ref(),
-                        "statement_block" | "for_statement" | "for_in_statement" | "catch_clause"
-                    )
-        })
+    scope_node(node, function_only)
         .map(|n| n.range())
         .unwrap_or(0..usize::MAX)
+}
+
+pub(super) fn scope_node<'a>(node: &N<'a>, function_only: bool) -> Option<N<'a>> {
+    node.ancestors().find(|n| {
+        n.kind().as_ref() == "program"
+            || function(n.kind().as_ref())
+            || !function_only
+                && matches!(
+                    n.kind().as_ref(),
+                    "statement_block" | "for_statement" | "for_in_statement" | "catch_clause"
+                )
+    })
 }
 
 pub(super) fn module_declaration(node: &N<'_>) -> bool {

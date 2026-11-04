@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -48,6 +49,7 @@ pub(crate) fn add_rust_security_policy_observations<'tree>(
     if language != Language::Rust {
         return;
     }
+    let file_context = RustFileContext::new(root);
     for assignment in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "assignment_expression")
@@ -63,7 +65,7 @@ pub(crate) fn add_rust_security_policy_observations<'tree>(
             continue;
         };
         if !matches!(setting, "validate_exp" | "validate_aud")
-            || !is_jsonwebtoken_validation_receiver(root, &assignment, receiver)
+            || !file_context.is_jsonwebtoken_validation_receiver(&assignment, receiver)
         {
             continue;
         }
@@ -95,292 +97,6 @@ pub(crate) fn add_rust_security_policy_observations<'tree>(
     }
 }
 
-fn is_jsonwebtoken_validation_receiver(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
-    receiver: &str,
-) -> bool {
-    if !is_identifier(receiver) {
-        return false;
-    }
-    let scope = use_site
-        .ancestors()
-        .find(|node| matches!(node.kind().as_ref(), "function_item" | "closure_expression"))
-        .map(|node| node.range())
-        .unwrap_or_else(|| root.range());
-    root.dfs()
-        .filter(|node| {
-            node.kind().as_ref() == "let_declaration"
-                && node.range().start >= scope.start
-                && node.range().end <= scope.end
-                && node.range().start < use_site.range().start
-                && node
-                    .field("pattern")
-                    .is_some_and(|pattern| pattern.text().trim() == receiver)
-        })
-        .max_by_key(|node| node.range().start)
-        .and_then(|declaration| declaration.field("value"))
-        .is_some_and(|value| {
-            canonical_path(root, &compact(value.text().as_ref()))
-                .starts_with("jsonwebtoken::Validation::")
-        })
-}
-
-pub(crate) fn is_exact_axum_extractor(root: &Node<'_, StrDoc<SupportLang>>, visible: &str) -> bool {
-    rust_imports(root).get(visible).is_some_and(|canonical| {
-        matches!(
-            canonical.as_str(),
-            "axum::extract::Path"
-                | "axum::extract::Query"
-                | "axum::extract::Json"
-                | "axum::extract::Form"
-                | "axum::Json"
-                | "axum::Form"
-        )
-    })
-}
-
-pub(crate) fn is_exact_database_query(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(call) = enclosing_call(matched) else {
-        return false;
-    };
-    let Some(function) = call.field("function") else {
-        return false;
-    };
-    let function_text = compact(function.text().as_ref());
-    let canonical = canonical_path(root, &function_text);
-    if matches!(
-        canonical.as_str(),
-        "sqlx::query"
-            | "sqlx::query_with"
-            | "sqlx::query_as_with"
-            | "sqlx::query_scalar_with"
-            | "sqlx::query_as"
-            | "sqlx::query_scalar"
-            | "diesel::sql_query"
-            | "diesel::dsl::sql_query"
-    ) {
-        return true;
-    }
-
-    let Some((receiver, method)) = function_text.rsplit_once('.') else {
-        return false;
-    };
-    matches!(
-        method,
-        "query" | "query_one" | "query_opt" | "execute" | "simple_query" | "batch_execute"
-    ) && is_postgres_client(root, receiver)
-}
-
-pub(crate) fn is_exact_file_input(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    enclosing_call(matched)
-        .and_then(|call| call.field("function"))
-        .map(|function| canonical_path(root, &compact(function.text().as_ref())))
-        .is_some_and(|canonical| {
-            matches!(
-                canonical.as_str(),
-                "std::fs::read_to_string" | "std::fs::read"
-            )
-        })
-}
-
-pub(crate) fn is_exact_reqwest_request(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(call) = enclosing_call(matched) else {
-        return false;
-    };
-    let Some(function) = call.field("function") else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    let canonical = canonical_path(root, &observed);
-    if matches!(
-        canonical.as_str(),
-        "reqwest::get" | "reqwest::blocking::get"
-    ) {
-        return true;
-    }
-    let Some((receiver, method)) = observed.rsplit_once('.') else {
-        return false;
-    };
-    if !matches!(
-        method,
-        "get" | "post" | "put" | "patch" | "delete" | "head" | "request" | "execute"
-    ) {
-        return false;
-    }
-    matches!(
-        canonical_path(root, receiver).as_str(),
-        "reqwest::Client::new()"
-            | "reqwest::blocking::Client::new()"
-            | "reqwest::Client::builder().build().unwrap()"
-            | "reqwest::blocking::Client::builder().build().unwrap()"
-    ) || is_reqwest_client(root, receiver)
-}
-
-pub(crate) fn is_exact_iron_request_access(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    let Some((request, accessor)) = observed.split_once(".url.") else {
-        return false;
-    };
-    matches!(accessor, "to_string" | "to_owned" | "path" | "query")
-        && is_identifier(request)
-        && is_iron_request_parameter(root, matched, request)
-}
-
-pub(crate) fn is_exact_iron_response(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
-        return false;
-    };
-    let canonical = canonical_path(root, &compact(function.text().as_ref()));
-    canonical == "iron::Response::with"
-        || (function.text().as_ref() == "Response::with"
-            && has_iron_prelude_glob(root)
-            && enclosing_request_scope(matched).is_some())
-}
-
-pub(crate) fn is_exact_ammonia_clean(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    enclosing_call(matched)
-        .and_then(|call| call.field("function"))
-        .map(|function| canonical_path(root, &compact(function.text().as_ref())))
-        .is_some_and(|canonical| canonical == "ammonia::clean")
-}
-
-pub(crate) fn is_exact_permissive_cors(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(call) = enclosing_call(matched) else {
-        return false;
-    };
-    let Some(function) = call.field("function") else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    let canonical = canonical_path(root, &observed);
-    if matches!(
-        canonical.as_str(),
-        "tower_http::cors::CorsLayer::permissive" | "tower_http::cors::CorsLayer::very_permissive"
-    ) {
-        return true;
-    }
-    if observed.ends_with(".allow_any_origin") {
-        let receiver = observed.trim_end_matches(".allow_any_origin");
-        return canonical_path(root, receiver).starts_with("warp::cors()");
-    }
-    if observed.ends_with(".set")
-        && compact(call.text().as_ref()).contains("AccessControlAllowOrigin::Any")
-    {
-        return rust_imports(root)
-            .get("AccessControlAllowOrigin")
-            .is_some_and(|path| path == "iron::headers::AccessControlAllowOrigin");
-    }
-    if observed.ends_with(".allow_origin") {
-        let receiver = observed.trim_end_matches(".allow_origin");
-        let receiver = canonical_path(root, receiver);
-        let text = compact(call.text().as_ref());
-        return receiver.starts_with("tower_http::cors::CorsLayer::new()")
-            && (text.contains("allow_origin(Any)")
-                || text.contains("allow_origin(\"*\"")
-                || text.contains("allow_origin('*'"));
-    }
-    false
-}
-
-pub(crate) fn is_exact_actix_html_response(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(call) = enclosing_call(matched) else {
-        return false;
-    };
-    let text = compact(call.text().as_ref());
-    if !text.contains(".content_type(\"text/html\").body(") {
-        return false;
-    }
-    let Some(response) = text.split(".content_type(").next() else {
-        return false;
-    };
-    let Some((builder, status)) = response.rsplit_once("::") else {
-        return false;
-    };
-    matches!(
-        status.trim_end_matches("()"),
-        "Ok" | "Created"
-            | "BadRequest"
-            | "Unauthorized"
-            | "Forbidden"
-            | "NotFound"
-            | "InternalServerError"
-    ) && canonical_path(root, builder) == "actix_web::HttpResponse"
-}
-
-pub(crate) fn is_exact_review_control(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-    rule_id: &str,
-) -> bool {
-    let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    let canonical = canonical_path(root, &observed);
-    match rule_id {
-        "rust-process-argument-separation" => {
-            canonical.starts_with("std::process::Command::new(")
-                && (canonical.ends_with(".arg") || canonical.ends_with(".args"))
-        }
-        "rust-url-parsing" => canonical == "url::Url::parse",
-        "rust-reqwest-tls-verification" => {
-            matches!(
-                observed.rsplit_once('.').map(|(_, method)| method),
-                Some("danger_accept_invalid_certs" | "danger_accept_invalid_hostnames")
-            ) && (canonical.starts_with("reqwest::Client::builder()")
-                || canonical.starts_with("reqwest::blocking::Client::builder()"))
-        }
-        _ => false,
-    }
-}
-
-pub(crate) fn is_exact_process_execution<'a>(
-    root: &Node<'a, StrDoc<SupportLang>>,
-    matched: &Node<'a, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    if observed.ends_with(".arg") || observed.ends_with(".args") {
-        return function.field("value").is_some_and(|receiver| {
-            super::process_cleanup::owned_rust_receiver(root, &receiver, 8)
-        });
-    }
-    matches!(
-        canonical_path(root, &observed).as_str(),
-        "std::process::Command::new" | "tokio::process::Command::new"
-    )
-}
-
 pub(crate) fn annotate_rust_build_script(
     path: &str,
     language: Language,
@@ -407,118 +123,12 @@ pub(crate) fn annotate_rust_build_script(
     }
 }
 
-pub(crate) fn is_effective_sql_parameterization(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-    query_text: &str,
-) -> bool {
-    let query = query_text.trim();
-    if !is_string_literal(query) || !has_sql_placeholder(query) {
-        return false;
-    }
-    matched
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "call_expression")
-        .any(|call| is_exact_database_query(root, &call))
-}
-
 fn enclosing_call<'tree>(
     node: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     std::iter::once(node.clone())
         .chain(node.ancestors())
         .find(|candidate| candidate.kind().as_ref() == "call_expression")
-}
-
-pub(crate) fn canonical_path(root: &Node<'_, StrDoc<SupportLang>>, path: &str) -> String {
-    let first_end = path
-        .find("::")
-        .or_else(|| path.find('.'))
-        .unwrap_or(path.len());
-    let first = &path[..first_end];
-    rust_imports(root).get(first).map_or_else(
-        || path.to_string(),
-        |canonical| format!("{}{}", canonical, &path[first_end..]),
-    )
-}
-
-fn is_postgres_client(root: &Node<'_, StrDoc<SupportLang>>, receiver: &str) -> bool {
-    if !is_identifier(receiver) {
-        return false;
-    }
-    root.dfs()
-        .filter(|node| node.kind().as_ref() == "let_declaration")
-        .any(|declaration| {
-            let text = compact(declaration.text().as_ref());
-            let Some((left, right)) = text
-                .strip_prefix("let")
-                .and_then(|text| text.split_once('='))
-            else {
-                return false;
-            };
-            let left = left.strip_prefix("mut").unwrap_or(left);
-            let declared = left.split(':').next().unwrap_or(left);
-            if declared != receiver {
-                return false;
-            }
-            let initializer = right.trim_end_matches(';');
-            let Some(connect_path) = initializer.split('(').next() else {
-                return false;
-            };
-            matches!(
-                canonical_path(root, connect_path).as_str(),
-                "postgres::Client::connect"
-            )
-        })
-}
-
-fn is_reqwest_client(root: &Node<'_, StrDoc<SupportLang>>, receiver: &str) -> bool {
-    if !is_identifier(receiver) {
-        return false;
-    }
-    root.dfs()
-        .filter(|node| node.kind().as_ref() == "let_declaration")
-        .any(|declaration| {
-            let text = compact(declaration.text().as_ref());
-            let Some((left, right)) = text
-                .strip_prefix("let")
-                .and_then(|text| text.split_once('='))
-            else {
-                return false;
-            };
-            let left = left.strip_prefix("mut").unwrap_or(left);
-            if left.split(':').next().unwrap_or(left) != receiver {
-                return false;
-            }
-            let initializer = right.trim_end_matches(';');
-            let canonical = canonical_path(root, initializer);
-            canonical.starts_with("reqwest::Client::new()")
-                || canonical.starts_with("reqwest::blocking::Client::new()")
-                || canonical.starts_with("reqwest::Client::builder().build()")
-                || canonical.starts_with("reqwest::blocking::Client::builder().build()")
-        })
-}
-
-fn is_iron_request_parameter(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    node: &Node<'_, StrDoc<SupportLang>>,
-    request: &str,
-) -> bool {
-    let Some(scope) = enclosing_request_scope(node) else {
-        return false;
-    };
-    let parameters = scope
-        .field("parameters")
-        .map(|parameters| compact(parameters.text().as_ref()))
-        .unwrap_or_else(|| compact(scope.text().as_ref()));
-    let typed = parameters.contains(&format!("{request}:&mutRequest"))
-        || parameters.contains(&format!("{request}:&mutiron::Request"));
-    typed
-        && (rust_imports(root)
-            .get("Request")
-            .is_some_and(|canonical| canonical == "iron::Request")
-            || has_iron_prelude_glob(root)
-            || parameters.contains("&mutiron::Request"))
 }
 
 fn enclosing_request_scope<'tree>(
@@ -529,13 +139,6 @@ fn enclosing_request_scope<'tree>(
             ancestor.kind().as_ref(),
             "function_item" | "closure_expression"
         ) && compact(ancestor.text().as_ref()).contains(":&mutRequest")
-    })
-}
-
-fn has_iron_prelude_glob(root: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    root.dfs().any(|node| {
-        node.kind().as_ref() == "use_declaration"
-            && compact(node.text().as_ref()) == "useiron::prelude::*;"
     })
 }
 
@@ -999,7 +602,11 @@ pub(crate) fn rust_imports(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<Str
     imports
 }
 
-fn expand_use(prefix: &str, specification: &str, imports: &mut BTreeMap<String, String>) {
+pub(super) fn expand_use(
+    prefix: &str,
+    specification: &str,
+    imports: &mut BTreeMap<String, String>,
+) {
     let specification = specification.trim();
     if let Some(open) = specification.find('{') {
         let Some(close) = matching_brace(specification, open) else {
@@ -1088,6 +695,437 @@ pub(crate) fn is_identifier(text: &str) -> bool {
         && characters.all(|character| character == '_' || character.is_alphanumeric())
 }
 
+pub(crate) struct RustFileContext<'tree> {
+    root: Node<'tree, StrDoc<SupportLang>>,
+    imports: BTreeMap<String, String>,
+    clients: OnceCell<(BTreeSet<String>, BTreeSet<String>)>,
+    iron_prelude: OnceCell<bool>,
+    declarations: OnceCell<BTreeMap<String, Vec<Node<'tree, StrDoc<SupportLang>>>>>,
+}
+
+impl<'tree> RustFileContext<'tree> {
+    pub(crate) fn new(root: &Node<'tree, StrDoc<SupportLang>>) -> Self {
+        Self {
+            root: root.clone(),
+            imports: rust_imports(root),
+            clients: OnceCell::new(),
+            iron_prelude: OnceCell::new(),
+            declarations: OnceCell::new(),
+        }
+    }
+    fn is_jsonwebtoken_validation_receiver(
+        &self,
+        use_site: &Node<'_, StrDoc<SupportLang>>,
+        receiver: &str,
+    ) -> bool {
+        let root = &self.root;
+
+        if !is_identifier(receiver) {
+            return false;
+        }
+        let scope = use_site
+            .ancestors()
+            .find(|node| matches!(node.kind().as_ref(), "function_item" | "closure_expression"))
+            .map(|node| node.range())
+            .unwrap_or_else(|| root.range());
+        self.declarations
+            .get_or_init(|| {
+                let mut declarations = BTreeMap::<_, Vec<_>>::new();
+                for node in root
+                    .dfs()
+                    .filter(|node| node.kind().as_ref() == "let_declaration")
+                {
+                    if let Some(pattern) = node.field("pattern") {
+                        declarations
+                            .entry(pattern.text().trim().to_string())
+                            .or_default()
+                            .push(node);
+                    }
+                }
+                declarations
+            })
+            .get(receiver)
+            .into_iter()
+            .flatten()
+            .filter(|node| {
+                node.kind().as_ref() == "let_declaration"
+                    && node.range().start >= scope.start
+                    && node.range().end <= scope.end
+                    && node.range().start < use_site.range().start
+                    && node
+                        .field("pattern")
+                        .is_some_and(|pattern| pattern.text().trim() == receiver)
+            })
+            .max_by_key(|node| node.range().start)
+            .and_then(|declaration| declaration.field("value"))
+            .is_some_and(|value| {
+                self.canonical_path(&compact(value.text().as_ref()))
+                    .starts_with("jsonwebtoken::Validation::")
+            })
+    }
+
+    pub(crate) fn is_exact_axum_extractor(&self, visible: &str) -> bool {
+        self.imports.get(visible).is_some_and(|canonical| {
+            matches!(
+                canonical.as_str(),
+                "axum::extract::Path"
+                    | "axum::extract::Query"
+                    | "axum::extract::Json"
+                    | "axum::extract::Form"
+                    | "axum::Json"
+                    | "axum::Form"
+            )
+        })
+    }
+
+    pub(crate) fn is_exact_database_query(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        let Some(call) = enclosing_call(matched) else {
+            return false;
+        };
+        let Some(function) = call.field("function") else {
+            return false;
+        };
+        let function_text = compact(function.text().as_ref());
+        let canonical = self.canonical_path(&function_text);
+        if matches!(
+            canonical.as_str(),
+            "sqlx::query"
+                | "sqlx::query_with"
+                | "sqlx::query_as_with"
+                | "sqlx::query_scalar_with"
+                | "sqlx::query_as"
+                | "sqlx::query_scalar"
+                | "diesel::sql_query"
+                | "diesel::dsl::sql_query"
+        ) {
+            return true;
+        }
+
+        let Some((receiver, method)) = function_text.rsplit_once('.') else {
+            return false;
+        };
+        matches!(
+            method,
+            "query" | "query_one" | "query_opt" | "execute" | "simple_query" | "batch_execute"
+        ) && self.is_postgres_client(receiver)
+    }
+
+    pub(crate) fn is_exact_file_input(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        enclosing_call(matched)
+            .and_then(|call| call.field("function"))
+            .map(|function| self.canonical_path(&compact(function.text().as_ref())))
+            .is_some_and(|canonical| {
+                matches!(
+                    canonical.as_str(),
+                    "std::fs::read_to_string" | "std::fs::read"
+                )
+            })
+    }
+
+    pub(crate) fn is_exact_reqwest_request(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        let Some(call) = enclosing_call(matched) else {
+            return false;
+        };
+        let Some(function) = call.field("function") else {
+            return false;
+        };
+        let observed = compact(function.text().as_ref());
+        let canonical = self.canonical_path(&observed);
+        if matches!(
+            canonical.as_str(),
+            "reqwest::get" | "reqwest::blocking::get"
+        ) {
+            return true;
+        }
+        let Some((receiver, method)) = observed.rsplit_once('.') else {
+            return false;
+        };
+        if !matches!(
+            method,
+            "get" | "post" | "put" | "patch" | "delete" | "head" | "request" | "execute"
+        ) {
+            return false;
+        }
+        matches!(
+            self.canonical_path(receiver).as_str(),
+            "reqwest::Client::new()"
+                | "reqwest::blocking::Client::new()"
+                | "reqwest::Client::builder().build().unwrap()"
+                | "reqwest::blocking::Client::builder().build().unwrap()"
+        ) || self.is_reqwest_client(receiver)
+    }
+
+    pub(crate) fn is_exact_iron_request_access(
+        &self,
+        matched: &Node<'_, StrDoc<SupportLang>>,
+    ) -> bool {
+        let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
+            return false;
+        };
+        let observed = compact(function.text().as_ref());
+        let Some((request, accessor)) = observed.split_once(".url.") else {
+            return false;
+        };
+        matches!(accessor, "to_string" | "to_owned" | "path" | "query")
+            && is_identifier(request)
+            && self.is_iron_request_parameter(matched, request)
+    }
+
+    pub(crate) fn is_exact_iron_response(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
+            return false;
+        };
+        let canonical = self.canonical_path(&compact(function.text().as_ref()));
+        canonical == "iron::Response::with"
+            || (function.text().as_ref() == "Response::with"
+                && self.has_iron_prelude_glob()
+                && enclosing_request_scope(matched).is_some())
+    }
+
+    pub(crate) fn is_exact_ammonia_clean(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        enclosing_call(matched)
+            .and_then(|call| call.field("function"))
+            .map(|function| self.canonical_path(&compact(function.text().as_ref())))
+            .is_some_and(|canonical| canonical == "ammonia::clean")
+    }
+
+    pub(crate) fn is_exact_permissive_cors(&self, matched: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        let Some(call) = enclosing_call(matched) else {
+            return false;
+        };
+        let Some(function) = call.field("function") else {
+            return false;
+        };
+        let observed = compact(function.text().as_ref());
+        let canonical = self.canonical_path(&observed);
+        if matches!(
+            canonical.as_str(),
+            "tower_http::cors::CorsLayer::permissive"
+                | "tower_http::cors::CorsLayer::very_permissive"
+        ) {
+            return true;
+        }
+        if observed.ends_with(".allow_any_origin") {
+            let receiver = observed.trim_end_matches(".allow_any_origin");
+            return self.canonical_path(receiver).starts_with("warp::cors()");
+        }
+        if observed.ends_with(".set")
+            && compact(call.text().as_ref()).contains("AccessControlAllowOrigin::Any")
+        {
+            return self
+                .imports
+                .get("AccessControlAllowOrigin")
+                .is_some_and(|path| path == "iron::headers::AccessControlAllowOrigin");
+        }
+        if observed.ends_with(".allow_origin") {
+            let receiver = observed.trim_end_matches(".allow_origin");
+            let receiver = self.canonical_path(receiver);
+            let text = compact(call.text().as_ref());
+            return receiver.starts_with("tower_http::cors::CorsLayer::new()")
+                && (text.contains("allow_origin(Any)")
+                    || text.contains("allow_origin(\"*\"")
+                    || text.contains("allow_origin('*'"));
+        }
+        false
+    }
+
+    pub(crate) fn is_exact_actix_html_response(
+        &self,
+        matched: &Node<'_, StrDoc<SupportLang>>,
+    ) -> bool {
+        let Some(call) = enclosing_call(matched) else {
+            return false;
+        };
+        let text = compact(call.text().as_ref());
+        if !text.contains(".content_type(\"text/html\").body(") {
+            return false;
+        }
+        let Some(response) = text.split(".content_type(").next() else {
+            return false;
+        };
+        let Some((builder, status)) = response.rsplit_once("::") else {
+            return false;
+        };
+        matches!(
+            status.trim_end_matches("()"),
+            "Ok" | "Created"
+                | "BadRequest"
+                | "Unauthorized"
+                | "Forbidden"
+                | "NotFound"
+                | "InternalServerError"
+        ) && self.canonical_path(builder) == "actix_web::HttpResponse"
+    }
+
+    pub(crate) fn is_exact_review_control(
+        &self,
+        matched: &Node<'_, StrDoc<SupportLang>>,
+        rule_id: &str,
+    ) -> bool {
+        let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
+            return false;
+        };
+        let observed = compact(function.text().as_ref());
+        let canonical = self.canonical_path(&observed);
+        match rule_id {
+            "rust-process-argument-separation" => {
+                canonical.starts_with("std::process::Command::new(")
+                    && (canonical.ends_with(".arg") || canonical.ends_with(".args"))
+            }
+            "rust-url-parsing" => canonical == "url::Url::parse",
+            "rust-reqwest-tls-verification" => {
+                matches!(
+                    observed.rsplit_once('.').map(|(_, method)| method),
+                    Some("danger_accept_invalid_certs" | "danger_accept_invalid_hostnames")
+                ) && (canonical.starts_with("reqwest::Client::builder()")
+                    || canonical.starts_with("reqwest::blocking::Client::builder()"))
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_exact_process_execution(
+        &self,
+        matched: &Node<'tree, StrDoc<SupportLang>>,
+    ) -> bool {
+        let root = &self.root;
+
+        let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
+            return false;
+        };
+        let observed = compact(function.text().as_ref());
+        if observed.ends_with(".arg") || observed.ends_with(".args") {
+            return function.field("value").is_some_and(|receiver| {
+                super::process_cleanup::owned_rust_receiver(root, &receiver, 8)
+            });
+        }
+        matches!(
+            self.canonical_path(&observed).as_str(),
+            "std::process::Command::new" | "tokio::process::Command::new"
+        )
+    }
+
+    pub(crate) fn is_effective_sql_parameterization(
+        &self,
+        matched: &Node<'_, StrDoc<SupportLang>>,
+        query_text: &str,
+    ) -> bool {
+        let query = query_text.trim();
+        if !is_string_literal(query) || !has_sql_placeholder(query) {
+            return false;
+        }
+        matched
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "call_expression")
+            .any(|call| self.is_exact_database_query(&call))
+    }
+
+    pub(crate) fn canonical_path(&self, path: &str) -> String {
+        let first_end = path
+            .find("::")
+            .or_else(|| path.find('.'))
+            .unwrap_or(path.len());
+        let first = &path[..first_end];
+        self.imports.get(first).map_or_else(
+            || path.to_string(),
+            |canonical| format!("{}{}", canonical, &path[first_end..]),
+        )
+    }
+
+    fn is_postgres_client(&self, receiver: &str) -> bool {
+        is_identifier(receiver) && self.client_bindings().0.contains(receiver)
+    }
+
+    fn is_reqwest_client(&self, receiver: &str) -> bool {
+        is_identifier(receiver) && self.client_bindings().1.contains(receiver)
+    }
+
+    fn client_bindings(&self) -> &(BTreeSet<String>, BTreeSet<String>) {
+        self.clients.get_or_init(|| {
+            let mut postgres = BTreeSet::new();
+            let mut reqwest = BTreeSet::new();
+            for declaration in self
+                .root
+                .dfs()
+                .filter(|node| node.kind().as_ref() == "let_declaration")
+            {
+                let text = compact(declaration.text().as_ref());
+                let Some((left, right)) = text
+                    .strip_prefix("let")
+                    .and_then(|text| text.split_once('='))
+                else {
+                    continue;
+                };
+                let left = left.strip_prefix("mut").unwrap_or(left);
+                let declared = left.split(':').next().unwrap_or(left);
+                let initializer = right.trim_end_matches(';');
+                let Some(connect_path) = initializer.split('(').next() else {
+                    continue;
+                };
+                if matches!(
+                    self.canonical_path(connect_path).as_str(),
+                    "postgres::Client::connect"
+                ) {
+                    postgres.insert(declared.to_string());
+                }
+                let canonical = self.canonical_path(initializer);
+                if canonical.starts_with("reqwest::Client::new()")
+                    || canonical.starts_with("reqwest::blocking::Client::new()")
+                    || canonical.starts_with("reqwest::Client::builder().build()")
+                    || canonical.starts_with("reqwest::blocking::Client::builder().build()")
+                {
+                    reqwest.insert(declared.to_string());
+                }
+            }
+            (postgres, reqwest)
+        })
+    }
+
+    fn is_iron_request_parameter(
+        &self,
+        node: &Node<'_, StrDoc<SupportLang>>,
+        request: &str,
+    ) -> bool {
+        let Some(scope) = enclosing_request_scope(node) else {
+            return false;
+        };
+        let parameters = scope
+            .field("parameters")
+            .map(|parameters| compact(parameters.text().as_ref()))
+            .unwrap_or_else(|| compact(scope.text().as_ref()));
+        let typed = parameters.contains(&format!("{request}:&mutRequest"))
+            || parameters.contains(&format!("{request}:&mutiron::Request"));
+        typed
+            && (self
+                .imports
+                .get("Request")
+                .is_some_and(|canonical| canonical == "iron::Request")
+                || self.has_iron_prelude_glob()
+                || parameters.contains("&mutiron::Request"))
+    }
+
+    fn has_iron_prelude_glob(&self) -> bool {
+        let root = &self.root;
+
+        *self.iron_prelude.get_or_init(|| {
+            root.dfs().any(|node| {
+                node.kind().as_ref() == "use_declaration"
+                    && compact(node.text().as_ref()) == "useiron::prelude::*;"
+            })
+        })
+    }
+}
+
+pub(crate) fn canonical_path(root: &Node<'_, StrDoc<SupportLang>>, path: &str) -> String {
+    RustFileContext::new(root).canonical_path(path)
+}
+pub(crate) fn is_exact_reqwest_request(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    site: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    RustFileContext::new(root).is_exact_reqwest_request(site)
+}
+
 #[cfg(test)]
 mod tests {
     use ast_grep_core::AstGrep;
@@ -1104,10 +1142,10 @@ mod tests {
         let document = StrDoc::try_new(source, SupportLang::Rust).expect("valid Rust");
         let ast = AstGrep::doc(document);
         let root = ast.root();
-        assert!(is_exact_axum_extractor(&root, "RoutePath"));
-        assert!(is_exact_axum_extractor(&root, "Query"));
-        assert!(is_exact_axum_extractor(&root, "Json"));
-        assert!(!is_exact_axum_extractor(&root, "Path"));
+        assert!(RustFileContext::new(&root).is_exact_axum_extractor("RoutePath"));
+        assert!(RustFileContext::new(&root).is_exact_axum_extractor("Query"));
+        assert!(RustFileContext::new(&root).is_exact_axum_extractor("Json"));
+        assert!(!RustFileContext::new(&root).is_exact_axum_extractor("Path"));
     }
 
     #[test]
@@ -1143,7 +1181,7 @@ mod tests {
             .map(|call| {
                 (
                     call.field("function").unwrap().text().into_owned(),
-                    is_exact_database_query(&root, &call),
+                    RustFileContext::new(&root).is_exact_database_query(&call),
                 )
             })
             .collect::<BTreeMap<_, _>>();
@@ -1225,7 +1263,10 @@ mod tests {
                 } else {
                     return None;
                 };
-                Some((text, is_exact_review_control(&root, &call, rule)))
+                Some((
+                    text,
+                    RustFileContext::new(&root).is_exact_review_control(&call, rule),
+                ))
             })
             .collect::<BTreeMap<_, _>>();
         assert!(outcomes["Command::new(\"tool\").arg(input)"]);
@@ -1267,8 +1308,12 @@ mod tests {
             .filter(|node| node.kind().as_ref() == "call_expression")
             .filter_map(|call| {
                 let text = compact(call.text().as_ref());
-                (text.contains("allow_any_origin") || text.contains("allow_origin("))
-                    .then(|| (text, is_exact_permissive_cors(&root, &call)))
+                (text.contains("allow_any_origin") || text.contains("allow_origin(")).then(|| {
+                    (
+                        text,
+                        RustFileContext::new(&root).is_exact_permissive_cors(&call),
+                    )
+                })
             })
             .collect::<BTreeMap<_, _>>();
         assert!(resolved["warp::cors().allow_any_origin()"]);

@@ -4,11 +4,96 @@
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use mehscan_core::Language;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 type DbNode<'a> = Node<'a, StrDoc<SupportLang>>;
 
-pub(super) fn accepts(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Language) -> bool {
+/// Candidate navigation only. Ownership, visibility, mutations and unique
+/// producers are still checked at each use; no verdict is cached by name.
+pub(super) struct ReceiverIndex<'a> {
+    imports: Vec<DbNode<'a>>,
+    bindings: BTreeMap<String, Vec<DbNode<'a>>>,
+    shadows: BTreeMap<String, Vec<DbNode<'a>>>,
+}
+
+impl<'a> ReceiverIndex<'a> {
+    pub(super) fn new(root: &DbNode<'a>) -> Self {
+        let mut index = Self {
+            imports: Vec::new(),
+            bindings: BTreeMap::new(),
+            shadows: BTreeMap::new(),
+        };
+        for node in root.dfs() {
+            let kind = node.kind();
+            if matches!(kind.as_ref(), "import_statement" | "import_from_statement")
+                || kind.as_ref() == "variable_declarator"
+                    && node
+                        .field("value")
+                        .is_some_and(|value| compact(value.text().as_ref()).starts_with("require("))
+            {
+                index.imports.push(node.clone());
+            }
+            if matches!(
+                kind.as_ref(),
+                "variable_declarator"
+                    | "assignment"
+                    | "assignment_expression"
+                    | "augmented_assignment"
+            ) && let Some(left) = node
+                .field("name")
+                .filter(|_| kind.as_ref() == "variable_declarator")
+                .or_else(|| node.field("left"))
+            {
+                index
+                    .bindings
+                    .entry(compact(left.text().as_ref()))
+                    .or_default()
+                    .push(node.clone());
+            }
+            let bare = kind.as_ref() == "identifier"
+                && node.parent().is_some_and(|p| {
+                    matches!(p.kind().as_ref(), "parameters" | "formal_parameters")
+                });
+            if bare
+                || matches!(
+                    kind.as_ref(),
+                    "variable_declarator"
+                        | "assignment"
+                        | "assignment_expression"
+                        | "function_declaration"
+                        | "function_definition"
+                        | "required_parameter"
+                        | "optional_parameter"
+                        | "typed_parameter"
+                        | "default_parameter"
+                )
+            {
+                let name = if bare {
+                    Some(node.clone())
+                } else {
+                    node.field("name")
+                        .or_else(|| node.field("left"))
+                        .or_else(|| node.field("pattern"))
+                };
+                if let Some(name) = name {
+                    index
+                        .shadows
+                        .entry(compact(name.text().as_ref()))
+                        .or_default()
+                        .push(node);
+                }
+            }
+        }
+        index
+    }
+}
+
+pub(super) fn accepts(
+    root: &DbNode<'_>,
+    receiver: &DbNode<'_>,
+    language: Language,
+    index: &ReceiverIndex<'_>,
+) -> bool {
     let text = compact(receiver.text().as_ref());
     // Compatibility with the original syntax-only rules and their fixtures.
     let conventional = if language == Language::Python {
@@ -22,15 +107,32 @@ pub(super) fn accepts(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Langua
     if conventional {
         return true;
     }
-    proven(root, receiver, language)
+    proven_with_index(root, receiver, language, false, index)
 }
 
 pub(super) fn proven(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Language) -> bool {
-    proven_family(root, receiver, language, false, None)
+    proven_with_index(root, receiver, language, false, &ReceiverIndex::new(root))
+}
+
+pub(super) fn proven_with_index(
+    root: &DbNode<'_>,
+    receiver: &DbNode<'_>,
+    language: Language,
+    document: bool,
+    index: &ReceiverIndex<'_>,
+) -> bool {
+    proven_family(root, receiver, language, document, None, index)
 }
 
 pub(super) fn knex_receiver(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Language) -> bool {
-    proven_family(root, receiver, language, false, Some("knex"))
+    proven_family(
+        root,
+        receiver,
+        language,
+        false,
+        Some("knex"),
+        &ReceiverIndex::new(root),
+    )
 }
 
 pub(super) fn document_receiver(
@@ -38,7 +140,7 @@ pub(super) fn document_receiver(
     receiver: &DbNode<'_>,
     language: Language,
 ) -> bool {
-    proven_family(root, receiver, language, true, None)
+    proven_with_index(root, receiver, language, true, &ReceiverIndex::new(root))
 }
 
 fn proven_family(
@@ -47,10 +149,11 @@ fn proven_family(
     language: Language,
     document: bool,
     only_module: Option<&str>,
+    index: &ReceiverIndex<'_>,
 ) -> bool {
     let mut modules = BTreeSet::new();
     let mut factories = BTreeSet::new();
-    for import in root.dfs().filter(|n| {
+    for import in index.imports.iter().filter(|n| {
         matches!(
             n.kind().as_ref(),
             "import_statement" | "import_from_statement" | "variable_declarator"
@@ -227,13 +330,18 @@ fn proven_family(
             }
         }
     }
-    (language == Language::Python && !document && python_typed_cursor(root, receiver))
-        || known(root, receiver, &modules, &factories, 8)
+    (language == Language::Python && !document && python_typed_cursor(root, index, receiver))
+        || (!modules.is_empty() || !factories.is_empty())
+            && known(root, index, receiver, &modules, &factories, 8)
 }
 
 // A declared driver connection and its lexical context-manager cursor establish
 // an API observation, not attacker influence or interprocedural value transfer.
-fn python_typed_cursor(root: &DbNode<'_>, receiver: &DbNode<'_>) -> bool {
+fn python_typed_cursor(
+    root: &DbNode<'_>,
+    index: &ReceiverIndex<'_>,
+    receiver: &DbNode<'_>,
+) -> bool {
     if receiver.kind().as_ref() != "identifier" {
         return false;
     }
@@ -371,7 +479,7 @@ fn python_typed_cursor(root: &DbNode<'_>, receiver: &DbNode<'_>) -> bool {
                             if original != class
                                 || alias != annotation
                                 || python_import_count(root, receiver, alias) != 1
-                                || !producer_unshadowed(root, receiver, alias)
+                                || !producer_unshadowed(index, receiver, alias)
                             {
                                 continue;
                             }
@@ -429,6 +537,7 @@ fn python_import_count(root: &DbNode<'_>, site: &DbNode<'_>, symbol: &str) -> us
 
 fn known(
     root: &DbNode<'_>,
+    index: &ReceiverIndex<'_>,
     expression: &DbNode<'_>,
     modules: &BTreeSet<String>,
     factories: &BTreeSet<String>,
@@ -444,12 +553,12 @@ fn known(
         return expression
             .children()
             .find(|n| n.is_named())
-            .is_some_and(|n| known(root, &n, modules, factories, depth - 1));
+            .is_some_and(|n| known(root, index, &n, modules, factories, depth - 1));
     }
     if expression.kind().as_ref() == "subscript" {
         return expression
             .field("value")
-            .is_some_and(|n| known(root, &n, modules, factories, depth - 1));
+            .is_some_and(|n| known(root, index, &n, modules, factories, depth - 1));
     }
     let text = compact(expression.text().as_ref());
     let text = if expression.kind().as_ref() == "new_expression" {
@@ -459,13 +568,13 @@ fn known(
     };
     if let Some((callee, _)) = text.split_once('(') {
         if factories.contains(callee) {
-            return producer_unshadowed(root, expression, callee);
+            return producer_unshadowed(index, expression, callee);
         }
         if matches!(expression.kind().as_ref(), "call_expression" | "call") && !callee.contains('.')
         {
             return expression
                 .field("function")
-                .is_some_and(|f| known(root, &f, modules, factories, depth - 1));
+                .is_some_and(|f| known(root, index, &f, modules, factories, depth - 1));
         }
         if let Some((base, method)) = callee.rsplit_once('.') {
             if (modules.contains(base)
@@ -497,7 +606,7 @@ fn known(
                 )
             {
                 return producer_unshadowed(
-                    root,
+                    index,
                     expression,
                     base.split('.').next().unwrap_or(base),
                 );
@@ -526,14 +635,17 @@ fn known(
                 return expression
                     .dfs()
                     .find(|n| compact(n.text().as_ref()) == base)
-                    .is_some_and(|base| known(root, &base, modules, factories, depth - 1));
+                    .is_some_and(|base| known(root, index, &base, modules, factories, depth - 1));
             }
         }
         return false;
     }
     let owner = class_owner(expression);
-    let bindings: Vec<_> = root
-        .dfs()
+    let bindings: Vec<_> = index
+        .bindings
+        .get(text)
+        .into_iter()
+        .flatten()
         .filter_map(|node| {
             let (left, right) = match node.kind().as_ref() {
                 "variable_declarator" => (node.field("name"), node.field("value")),
@@ -563,15 +675,15 @@ fn known(
     let [Some(value)] = bindings.as_slice() else {
         return false;
     };
-    known(root, value, modules, factories, depth - 1)
+    known(root, index, value, modules, factories, depth - 1)
 }
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn producer_unshadowed(root: &DbNode<'_>, use_site: &DbNode<'_>, symbol: &str) -> bool {
-    !root.dfs().any(|n| {
+fn producer_unshadowed(index: &ReceiverIndex<'_>, use_site: &DbNode<'_>, symbol: &str) -> bool {
+    !index.shadows.get(symbol).into_iter().flatten().any(|n| {
         let bare_parameter = n.kind().as_ref() == "identifier"
             && n.parent()
                 .is_some_and(|p| matches!(p.kind().as_ref(), "parameters" | "formal_parameters"));

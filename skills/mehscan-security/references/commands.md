@@ -57,7 +57,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Enclosing code at known location | `mehscan investigate enclosing-at ROOT --path FILE --line N` |
 | Enclosing code from ID only | `mehscan investigate enclosing ROOT --evidence-id ID` |
 | Identifier or markup uses | `mehscan investigate references ROOT --symbol NAME --path-prefix DIR --limit 20 --summary true` (per-file locations/previews; `--path FILE` scopes one file; omit summary for full matches) |
-| Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
+| Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (use `--path-prefix DIR` for a known declaration directory; omit both only when its location is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
 | JS/TS import module targets | `mehscan investigate import-targets ROOT --path CALLER_FILE` (module navigation only; missing build outputs remain unresolved) |
 | One JS/TS exported implementation | `mehscan investigate export-target ROOT --path MODULE_FILE --name EXPORT` (bounded aliases/barrels; read the candidate body separately and preserve caller/build applicability gaps) |

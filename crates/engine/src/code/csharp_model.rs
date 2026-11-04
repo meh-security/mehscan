@@ -60,8 +60,23 @@ impl CsharpModelProjectContext {
             if root.dfs().any(|node| node.is_error() || node.is_missing()) {
                 continue;
             }
+            let trace = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
+            let started = trace.then(std::time::Instant::now);
             merge_catalog(&mut context.catalog, build_catalog(&root));
+            if let Some(started) = started {
+                eprintln!(
+                    "mehscan_pass {}",
+                    serde_json::json!({"path": path, "language": language, "pass": "csharp_model.build_catalog", "microseconds": started.elapsed().as_micros()})
+                );
+            }
+            let started = trace.then(std::time::Instant::now);
             handoff.add_file(path, &root);
+            if let Some(started) = started {
+                eprintln!(
+                    "mehscan_pass {}",
+                    serde_json::json!({"path": path, "language": language, "pass": "csharp_model.handoff_add_file", "microseconds": started.elapsed().as_micros()})
+                );
+            }
         }
         context.handoff = handoff.finish();
         context

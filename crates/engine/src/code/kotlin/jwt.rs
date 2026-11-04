@@ -4,6 +4,15 @@ use ast_grep_language::SupportLang;
 use mehscan_core::{Evidence, QueryProvenance, Resolution, ReviewNeighborhoodFact};
 
 pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> bool {
+    accepts_with_imports(root, &Imports::build(root), rule, node)
+}
+
+pub(super) fn accepts_with_imports<'a>(
+    root: &KNode<'a>,
+    imports: &Imports,
+    rule: &str,
+    node: &KNode<'a>,
+) -> bool {
     let Some(call) = identity::call(node) else {
         return false;
     };
@@ -24,7 +33,7 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
             return false;
         }
         if value.kind().as_ref() == "simple_identifier"
-            && let Some(ty) = identity::binding_type(root, value, &value.text())
+            && let Some(ty) = imports.binding_type(root, value, &value.text())
             && [
                 "kotlin.Int",
                 "kotlin.Long",
@@ -38,7 +47,7 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
                 "kotlin.ByteArray",
             ]
             .iter()
-            .any(|canonical| Imports::build(root).exact(root, value, &ty, canonical))
+            .any(|canonical| imports.exact(root, value, &ty, canonical))
         {
             return false;
         }
@@ -48,24 +57,28 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         return false;
     };
     if rule == "kotlin-auth0-jwt-decode" && method == "decode" {
-        return Imports::build(root).exact(root, node, head, "com.auth0.jwt.JWT");
+        return imports.exact(root, node, head, "com.auth0.jwt.JWT");
     }
     let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
         return false;
     };
     match (rule, method) {
         ("kotlin-auth0-jwt-decode", "decodeJwt") => {
-            super::jvm::owned(root, &receiver, "com.auth0.jwt.JWT", 12)
+            super::jvm::owned_with_imports(root, imports, &receiver, "com.auth0.jwt.JWT", 12)
         }
-        ("kotlin-auth0-jwt-token-generation", "sign") => {
-            super::jvm::owned(root, &receiver, "com.auth0.jwt.JWTCreator.Builder", 12)
-        }
+        ("kotlin-auth0-jwt-token-generation", "sign") => super::jvm::owned_with_imports(
+            root,
+            imports,
+            &receiver,
+            "com.auth0.jwt.JWTCreator.Builder",
+            12,
+        ),
         ("kotlin-auth0-jwt-verify", "verify") => [
             "com.auth0.jwt.JWTVerifier",
             "com.auth0.jwt.interfaces.JWTVerifier",
         ]
         .iter()
-        .any(|ty| super::jvm::owned(root, &receiver, ty, 12)),
+        .any(|ty| super::jvm::owned_with_imports(root, imports, &receiver, ty, 12)),
         _ => false,
     }
 }

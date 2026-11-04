@@ -138,6 +138,10 @@ fn suitable_integrity_digests_do_not_hide_weak_or_fast_password_hashes() {
         "digests",
         &[
             (
+                "App.cs",
+                "using System.Security.Cryptography;class C{object integrity(){return SHA256.Create();}byte[] passwordHash(byte[] password){return SHA256.HashData(password);}object weakSignature(){return MD5.Create();}object tokenHash(string algorithm){return HashAlgorithm.Create(algorithm);}}",
+            ),
+            (
                 "app.js",
                 "const crypto=require('crypto');function integrity(){return crypto.createHash('sha256');}function passwordHash(){return crypto.createHash('sha256');}function weakSignature(){return crypto.createHash('md5');}function tokenHash(algorithm){return crypto.createHash(algorithm);}",
             ),
@@ -160,7 +164,7 @@ fn suitable_integrity_digests_do_not_hide_weak_or_fast_password_hashes() {
         "{:#?}",
         inventory.entries
     );
-    for file in ["app.js", "app.py", "App.kt"] {
+    for file in ["app.js", "app.py", "App.kt", "App.cs"] {
         for method in ["passwordHash", "weakSignature", "tokenHash"] {
             assert!(
                 inventory.entries.iter().any(|e| e.path == file

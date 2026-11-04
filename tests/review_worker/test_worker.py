@@ -19,6 +19,47 @@ spec.loader.exec_module(worker)
 
 
 class ArtifactCopy(unittest.TestCase):
+    def test_checkpoint_replacement_retries_windows_locks_atomically(self):
+        for code in (5, 32, 33):
+            with self.subTest(winerror=code), tempfile.TemporaryDirectory() as name:
+                target = Path(name) / "checkpoint.json"
+                target.write_text("old", encoding="utf-8")
+                replace = os.replace
+                failures = 2
+                def locked_then_replace(source, destination):
+                    nonlocal failures
+                    self.assertEqual(target.read_text(encoding="utf-8"), "old")
+                    if failures:
+                        failures -= 1
+                        error = PermissionError("temporarily held by a reader")
+                        error.winerror = code
+                        raise error
+                    replace(source, destination)
+                with patch.object(worker.os, "replace", side_effect=locked_then_replace) as operation, \
+                        patch.object(worker.time, "sleep") as sleep:
+                    worker.write_text(target, "new")
+                self.assertEqual(operation.call_count, 3)
+                self.assertEqual(sleep.call_count, 2)
+                self.assertEqual(target.read_text(encoding="utf-8"), "new")
+                self.assertEqual(list(Path(name).glob("*.tmp")), [])
+
+    def test_checkpoint_persistent_denial_preserves_old_state_and_fails(self):
+        for code, attempts in ((5, 6), (None, 1)):
+            with self.subTest(winerror=code), tempfile.TemporaryDirectory() as name:
+                target = Path(name) / "checkpoint.json"
+                target.write_text("old", encoding="utf-8")
+                error = PermissionError("replacement denied")
+                if code is not None:
+                    error.winerror = code
+                with patch.object(worker.os, "replace", side_effect=error) as operation, \
+                        patch.object(worker.time, "sleep") as sleep:
+                    with self.assertRaises(PermissionError):
+                        worker.write_text(target, "new")
+                self.assertEqual(operation.call_count, attempts)
+                self.assertEqual(sleep.call_count, attempts - 1)
+                self.assertEqual(target.read_text(encoding="utf-8"), "old")
+                self.assertEqual(list(Path(name).glob("*.tmp")), [])
+
     def test_late_usage_survives_multiple_recovery_attempts_and_keeps_deadline(self):
         with tempfile.TemporaryDirectory(prefix='mehscan-recovery-') as name:
             root=Path(name)
@@ -77,17 +118,57 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_missing_symbol_prefix_is_navigation_feedback_not_absence_proof(self):
+        for tool in ("symbol", "definition", "references"):
+            query = {"tool":tool,"arguments":{"path_prefix":"src/missing"}}
+            missing = worker.CommandFailure(2,'error: cannot access query directory "src/missing": missing (os error 2)')
+            result = worker.missing_source_result(query,missing)
+            self.assertEqual(result["error"]["code"],"scope_not_found")
+            self.assertIn("not evidence",result["error"]["message"])
+            for diagnostic in ('error: cannot access query directory "src/missing": denied (os error 5)',
+                               missing.stderr + '\nadditional error'):
+                self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,diagnostic)))
+
+    def test_symbol_and_definition_keep_the_requested_directory_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "src/policy").mkdir(parents=True)
+            (root / "src/policy/guard.ts").write_text("export function guard() {}")
+            for tool in ("symbol", "definition"):
+                original = {"tool":tool, "review_id":"id", "arguments":{"name":"guard", "path":"src/policy"}}
+                compiled = worker.research_arguments(original,root,["id"],root / "journals")
+                self.assertNotIn("--path",compiled)
+                self.assertEqual(compiled[compiled.index("--path-prefix")+1],"src/policy")
+                self.assertEqual(original["arguments"]["path"],"src/policy")
+                self.assertEqual(compiled.filter_normalization["original_arguments"],original["arguments"])
+                canonical = {**original,"arguments":{"name":"guard","path_prefix":"src/policy"}}
+                self.assertEqual(compiled,worker.research_arguments(canonical,root,["id"],root / "journals"))
+                for arguments in ({"name":"guard","path":"src/policy/guard.ts","path_prefix":"src/policy"},
+                                  {"name":"guard","path_prefix":"src/policy/guard.ts"}):
+                    with self.assertRaises(worker.ResearchFilterError):
+                        worker.research_arguments({**original,"arguments":arguments},root,["id"],root / "journals")
+                with self.assertRaisesRegex(ValueError,"authorized source"):
+                    worker.research_arguments({**original,"arguments":{"name":"guard","path_prefix":"../outside"}},
+                                              root,["id"],root / "journals")
+                missing = worker.research_arguments({**original,"arguments":{"name":"guard","path":"missing"}},
+                                                    root,["id"],root / "journals")
+                self.assertIsNone(missing.filter_normalization)
+                self.assertIn("--path",missing)
+            self.assertEqual(worker.research_cost([
+                {"tool":"symbol"},{"tool":"definition"}]),3)
+            self.assertFalse((root / "journals").exists())
+
     def test_batch_feedback_collects_window_directory_limit_and_total_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             (root / "module").mkdir()
             queries = [
                 {"tool":"source","review_id":"id","arguments":{"path":"app.js","start_line":1,"end_line":500}},
-                {"tool":"definition","review_id":"id","arguments":{"name":"guard","path":"module"}},
+                {"tool":"outline","review_id":"id","arguments":{"path":"module"}},
                 {"tool":"references","review_id":"id","arguments":{"symbol":"guard","limit":101}}]
             original = json.dumps(queries)
             with self.assertRaises(worker.ResearchBatchError) as caught:
-                worker.research_batch_arguments(queries,root,["id"],root / "journals",query_units_remaining=3)
+                worker.research_batch_arguments(queries,root,["id"],root / "journals",query_units_remaining=2)
             error = caught.exception
             self.assertEqual(error.error_count,4)
             self.assertEqual([e["query_index"] for e in error.errors],[0,1,2,None])
@@ -121,6 +202,14 @@ class LookupFailures(unittest.TestCase):
         for code,text in ((1,message),(2,message+"\nsource changed"),(2,"error: source changed"),
                           (2,"error: invalid reviewer work: diagnosis severity is invalid")):
             self.assertIsNone(worker.finalization_feedback(worker.CommandFailure(code,text),["id"]))
+
+    def test_check_format_feedback_requires_exact_diagnostic_and_selected_id(self):
+        message='error: invalid reviewer work: review triage checks must be one non-empty line of at most 300 characters for "id"'
+        self.assertIn('checks must be', worker.finalization_feedback(worker.CommandFailure(2,message),['id']))
+        for code,text,ids in ((1,message,['id']), (2,message,['other']),
+                              (2,message+'\nsource changed',['id']),
+                              (2,'error: invalid reviewer work: needs_review requires at least one decisive check for "id"',['id'])):
+            self.assertIsNone(worker.finalization_feedback(worker.CommandFailure(code,text),ids))
 
     def test_guidance_is_an_allowlisted_skill_read_not_a_source_command(self):
         import review_context as context
@@ -627,7 +716,7 @@ else:
         self.assertEqual(calls,["routine","routine","routine"])
         self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],3)
 
-    def run_cwe_repair_case(self, *, interrupt=False, repeat_invalid=False):
+    def run_cwe_repair_case(self, *, interrupt=False, repeat_invalid=False, invalid_checks=False):
         from argparse import Namespace
         plan=self.native("state","plan-template","--inventory",str(self.inventory),"--source-root",str(self.root),
             "--policy","comprehensive","--skill-root",str(ROOT/"skills/mehscan-security"),
@@ -650,16 +739,27 @@ else:
                 if len(calls)>1:
                     self.assertEqual(task["research"]["queries_remaining"],0)
                     self.assertEqual(task["research"]["rounds_remaining"],0)
-                    self.assertIn("distinct CWE-N",task["research"]["feedback"]["reason"])
-                    self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["diagnosis"]["cwes"],
-                                     ["CWE- mass-assignment","CWE-94"])
+                    if invalid_checks:
+                        self.assertIn("checks must be",task["research"]["feedback"]["reason"])
+                        self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["checks"],
+                                         ["Establish the deployed entrypoint for this handler."," "])
+                    else:
+                        self.assertIn("distinct CWE-N",task["research"]["feedback"]["reason"])
+                        self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["diagnosis"]["cwes"],
+                                         ["CWE- mass-assignment","CWE-94"])
                 cwes=["CWE- mass-assignment","CWE-94"] if len(calls)==1 or repeat_invalid else ["CWE-94"]
-                return {"draft":{"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
+                reply = {"draft":{"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
                     "summary":"Request data reaches eval.","reason":"The supplied handler evaluates request.query.code.",
                     "checks":[],"blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}],
                     "diagnosis":{"title":"Request data is evaluated","cwes":cwes,"severity":"high",
                                  "impact":"A caller can supply evaluated code.","remediation":"Remove evaluation of caller-supplied code."}}
                     for rid in task["review_ids"]]},"working_chain":"","progress":[],"routing":[]}
+                if invalid_checks:
+                    for row in reply["draft"]["results"]:
+                        row.update(decision="needs_review",diagnosis=None,
+                                   checks=["Establish the deployed entrypoint for this handler."]
+                                   + ([" "] if len(calls)==1 or repeat_invalid else []))
+                return reply
             if interrupt and not interrupted and command[1:3]==["investigate","review-bundle-finalize"]:
                 interrupted.append(True)
                 raise worker.CommandFailure(1,"injected interruption after saving the candidate")
@@ -688,6 +788,22 @@ else:
 
     def test_second_invalid_cwe_reply_stops_without_extra_calls_or_admission(self):
         result,_=self.run_cwe_repair_case(repeat_invalid=True)
+        self.assertEqual(result["status"],"incomplete",result)
+
+    def test_blank_check_repairs_once_preserving_uncertainty_and_real_validation(self):
+        result,args=self.run_cwe_repair_case(invalid_checks=True)
+        self.assertEqual(result["status"],"admitted",result)
+        jobs=[json.loads(p.read_text())for p in(Path(args.output)/"jobs").glob("*.json")]
+        row=jobs[0]["draft"]["results"][0]
+        self.assertEqual(row["decision"],"needs_review")
+        self.assertEqual(row["checks"],["Establish the deployed entrypoint for this handler."])
+
+    def test_recovered_blank_check_uses_only_remaining_format_repair_turn(self):
+        result,_=self.run_cwe_repair_case(invalid_checks=True,interrupt=True)
+        self.assertEqual(result["status"],"admitted",result)
+
+    def test_repeated_blank_check_stops_without_extra_calls_or_admission(self):
+        result,_=self.run_cwe_repair_case(invalid_checks=True,repeat_invalid=True)
         self.assertEqual(result["status"],"incomplete",result)
 
     def run_revalidation_case(self, reopening=False, interrupt=False):
@@ -1624,7 +1740,7 @@ else:
             ' id=task["review_ids"][0]\n'
             ' print(json.dumps({"research":[{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
             '{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":401}},'
-            '{"tool":"definition","review_id":id,"arguments":{"name":"handle","path":"module"}}]}))\n'
+            '{"tool":"outline","review_id":id,"arguments":{"path":"module"}}]}))\n'
             'else:\n'
             ' feedback=task["research"]["feedback"]\n'
             ' assert [e["query_index"] for e in feedback["query_errors"]] == [1,2]\n'
@@ -1640,7 +1756,7 @@ else:
         self.assertEqual((job["calls"],job["queries"]),(2,0))
         self.assertFalse((directory / "research.jsonl").exists())
 
-    def test_oversized_definition_batch_gets_one_charged_repair_before_any_lookup(self):
+    def test_oversized_definition_batch_defers_whole_lookups_without_a_repair_call(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())
         self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
@@ -1648,18 +1764,25 @@ else:
             ' q={"tool":"definition","review_id":task["review_ids"][0],"arguments":{"name":"handle"}}\n'
             ' print(json.dumps({"research":[q]*(task["research"]["queries_remaining"]//2+1)}))\n'
             'else:\n'
-            ' assert task["research"]["feedback"]["reason"] == "research batch exceeds remaining query units"\n'
-            ' assert not task["research"]["results"]\n'
+            ' feedback=task["research"]["feedback"]\n'
+            ' assert feedback["reason"] == "research_query_budget_deferral"\n'
+            ' assert len(feedback["deferred_queries"]) == 1\n'
+            ' assert feedback["deferred_queries"][0]["executed"] is False\n'
+            ' assert len(task["research"]["results"]) == 12\n'
+            ' assert task["research"]["queries_remaining"] == 0\n'
             ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
         result = self.invoke(extra=["--phase", "native"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         directory = self.base / "worker"
         record = json.loads((directory / "worker.json").read_text())
-        self.assertEqual(record["protocol_corrections"], 1)
-        self.assertFalse((directory / "research.jsonl").exists())
+        self.assertEqual(record.get("protocol_corrections", 0), 0)
+        self.assertEqual(record["research_budget_deferrals"], 1)
+        rows = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 12)
+        self.assertTrue(all(row["reserved_query_units"] == 2 for row in rows))
         job = json.loads(next((directory / "jobs").glob("*.json")).read_text())
         self.assertEqual(job["calls"], 2)
-        self.assertEqual(job["queries"], 0)
+        self.assertEqual(job["queries"], 24)
         self.assertEqual(record["status"], "admitted")
 
     def test_conflicting_path_filters_repair_before_any_batch_query_executes(self):
@@ -1723,7 +1846,33 @@ else:
         self.assertEqual(record.get("protocol_corrections",0),0)
         self.assertEqual(record["status"],"admitted")
 
-    def test_directory_definition_feedback_is_bounded_and_preserves_batch_atomicity(self):
+    def test_directory_definition_reads_only_its_unique_scoped_source_without_repair(self):
+        self.extra_source_files = {"module/helper.js":"export function handle(value) { return value; }\n"}
+        self.setUp()  # Bind the helper before inventory/source freshness is frozen.
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(),encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' print(json.dumps({"research":[{"tool":"definition","review_id":task["review_ids"][0],'
+            '"arguments":{"name":"handle","path":"module"}}]}))\n'
+            'else:\n'
+            ' assert not task["research"].get("feedback")\n'
+            ' result=task["research"]["results"][0]["result"]\n'
+            ' assert result["source_complete"]\n'
+            ' body=result["source"]["results"]\n'
+            ' assert body.get("path",body.get("location",{}).get("path")) == "module/helper.js"\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
+        result = self.invoke(extra=["--phase","native"])
+        self.assertEqual(result.returncode,0,result.stdout + result.stderr)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(record.get("protocol_corrections",0),0)
+        rows = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
+        self.assertEqual(rows[0]["query"]["arguments"]["path"],"module")
+        self.assertEqual(rows[0]["filter_normalization"]["effective_arguments"]["path_prefix"],"module")
+        self.assertEqual(rows[0]["reserved_query_units"],2)
+
+    def test_file_only_directory_feedback_is_bounded_and_preserves_batch_atomicity(self):
         (self.root / "module").mkdir()
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text(), encoding="utf-8")
@@ -1733,12 +1882,12 @@ else:
                 'if not ' + repr(repair) + ' or round == 0:\n'
                 ' print(json.dumps({"research":[{"tool":"source","review_id":id,'
                 '"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
-                '{"tool":"definition","review_id":id,'
-                '"arguments":{"name":"handle","path":"module"}}]}))\n'
+                '{"tool":"outline","review_id":id,'
+                '"arguments":{"path":"module"}}]}))\n'
                 'elif round == 1:\n'
                 ' feedback=task["research"]["feedback"]["lookup_feedback"]\n'
                 ' assert feedback["code"] == "file_filter_is_directory"\n'
-                ' assert feedback["tool"] == "definition"\n'
+                ' assert feedback["tool"] == "outline"\n'
                 ' assert "path_prefix" not in feedback["allowed_arguments"]["optional"]\n'
                 ' assert feedback["native_query_executed"] is False\n'
                 ' assert "not source evidence" in feedback["authority"]\n'

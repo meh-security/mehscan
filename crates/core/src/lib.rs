@@ -30,7 +30,7 @@ pub use candidate::{
 };
 pub use coverage::{
     Coverage, CoverageTotals, CweCoverage, CweSupportLevel, FileCoverage, FileStatus,
-    LanguageCoverage, ProducerCoverage,
+    LanguageCoverage, ProducerCoverage, SourceConfiguration,
 };
 pub use evaluation::{
     ControlLayer, EVALUATION_PACK_SCHEMA_VERSION, EVALUATION_RESPONSE_SCHEMA_VERSION,
@@ -44,12 +44,12 @@ pub use evaluation::{
     ReviewabilityClass,
 };
 pub use evidence::{
-    Availability, AvailabilityState, Capability, Confidence, Evidence, EvidenceContext,
-    EvidenceKind, FixedOutputFormat, HttpRouteAccess, HttpRouteContext, LiteralEvaluation,
-    LiteralState, LiteralValue, OperandFact, OperandFactKind, Provenance, Reachability,
-    ReachabilityReason, ReachabilityState, Resolution, ResourcePolicyContext, ResourcePolicyState,
-    RuntimeEnvironment, SecretDetector, SecretMetadata, SymbolConfidence, SymbolResolution,
-    SymbolResolutionMethod, ValueTransform,
+    Availability, AvailabilityState, Capability, Confidence, ConfigurationDependency, Evidence,
+    EvidenceContext, EvidenceKind, FixedOutputFormat, HttpRouteAccess, HttpRouteContext,
+    LiteralEvaluation, LiteralState, LiteralValue, OperandFact, OperandFactKind, Provenance,
+    Reachability, ReachabilityReason, ReachabilityState, Resolution, ResourcePolicyContext,
+    ResourcePolicyState, RuntimeEnvironment, SecretDetector, SecretMetadata, SymbolConfidence,
+    SymbolResolution, SymbolResolutionMethod, ValueTransform,
 };
 pub use finding::{Finding, Severity};
 pub use finding_sarif::{

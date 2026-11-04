@@ -217,6 +217,7 @@ try {
             review_flow = 'passed'
             exact_archive_membership = 'passed'
             installed_changed_review = $installedReview.status
+            installed_document_links = $installedReview.document_links
         }
     }
 

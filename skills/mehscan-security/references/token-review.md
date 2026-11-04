@@ -42,6 +42,14 @@ continued acceptance are supported. Do not infer missing global invalidation
 from one lookup; inspect logout, rotation or credential-change paths only when
 they decide the assigned revocation question.
 
+For renewal, distinguish the presented refresh proof from the newly issued
+access token. A current-state check on access tokens does not itself invalidate
+the stored proof accepted by an exchange. When the selected question concerns
+revocation, compare that proof's accepting record with the applicable state
+change, rotation or revocation effect and the resulting issuer. Preserve actual
+device/session controls and source-supported policy; do not invent a requirement
+that every password change must log out every device.
+
 ## Follow acceptance to the effect
 
 Identify the credential branch that actually supplies identity: bearer header,

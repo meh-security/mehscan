@@ -4,6 +4,26 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
+
+
+def unlink_product(product):
+    # Windows can briefly retain a handle after a test exits (including scanners).
+    # Cleanup is opportunistic: a locked product must not stop later test batches.
+    for delay in [0.05, 0.1, 0.2, 0.4, None]:
+        try:
+            size = product.stat().st_size
+            product.unlink()
+            return size
+        except FileNotFoundError:
+            return 0
+        except PermissionError as error:
+            if getattr(error, 'winerror', None) not in (32, 33):
+                raise
+            if delay is None:
+                print(f'Keeping locked test product: {product.name}', file=sys.stderr, flush=True)
+                return 0
+            time.sleep(delay)
 
 
 def commands(metadata, batch_size):
@@ -30,8 +50,7 @@ def remove_executables(executables, target):
             continue
         for product in [path, path.with_suffix('.pdb')]:
             if product.resolve().parent == deps and not product.is_symlink() and product.is_file():
-                removed += product.stat().st_size
-                product.unlink()
+                removed += unlink_product(product)
     return removed
 
 

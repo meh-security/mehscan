@@ -363,12 +363,10 @@ fn capture_node<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
     capture: &Capture,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
-    root.dfs()
-        .filter(|node| {
-            node.range().start == capture.location.start.byte_offset
-                && node.range().end == capture.location.end.byte_offset
-        })
-        .last()
+    super::node_lookup::last_exact(
+        root,
+        capture.location.start.byte_offset..capture.location.end.byte_offset,
+    )
 }
 
 fn capture_for_node(
@@ -676,13 +674,7 @@ fn bounded_statements(source: &str, language: Language) -> Vec<&str> {
 }
 
 fn callable_start(root: &Node<'_, StrDoc<SupportLang>>, capture: &Capture) -> Option<usize> {
-    let node = root
-        .dfs()
-        .filter(|node| {
-            node.range().start == capture.location.start.byte_offset
-                && node.range().end == capture.location.end.byte_offset
-        })
-        .last()?;
+    let node = capture_node(root, capture)?;
     node.ancestors()
         .find(|ancestor| {
             matches!(

@@ -47,6 +47,8 @@ struct ForwardedBinding {
 pub(crate) struct RustProjectContext {
     direct: Vec<DirectBinding>,
     forwarded: Vec<ForwardedBinding>,
+    http: super::rust_http::RustHttpProjectContext,
+    pub(crate) modules: super::rust_modules::RustModules,
 }
 
 impl RustProjectContext {
@@ -58,9 +60,11 @@ impl RustProjectContext {
             .map(|(path, _, source)| (normalize(path), source.to_string()))
             .collect::<Vec<_>>();
         let mut registered = BTreeMap::<String, Vec<RouteFact>>::new();
-        for (_, source) in &sources {
+        let mut http = super::rust_http::RustHttpProjectContext::default();
+        for (path, source) in &sources {
             with_root(source, |root| {
-                collect_registered_handlers(root, &mut registered)
+                collect_registered_handlers(root, &mut registered);
+                http.collect(path, root);
             });
         }
 
@@ -159,7 +163,26 @@ impl RustProjectContext {
                 counts.get(&(proposal.target_path.clone(), proposal.function.clone())) == Some(&1)
             })
             .collect();
-        Self { direct, forwarded }
+        Self {
+            direct,
+            forwarded,
+            http,
+            modules: super::rust_modules::RustModules::default(),
+        }
+    }
+
+    pub(crate) fn with_modules(mut self, modules: super::rust_modules::RustModules) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    pub(crate) fn http_support<'a>(
+        &self,
+        path: &str,
+        root: &Node<'a, StrDoc<SupportLang>>,
+        matched: &Node<'a, StrDoc<SupportLang>>,
+    ) -> Option<BTreeMap<String, Capture>> {
+        self.http.request_support(path, root, matched)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -542,7 +542,7 @@ fn relate_identity_evidence(path: &str, evidence: &mut [Evidence]) {
     }
 }
 
-fn go_import_qualifiers(
+pub(super) fn go_import_qualifiers(
     root: &Node<'_, StrDoc<SupportLang>>,
     expected_path: &str,
     default: &str,

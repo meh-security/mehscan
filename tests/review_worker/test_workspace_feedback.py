@@ -30,7 +30,7 @@ class LookupFeedbackTests(unittest.TestCase):
             "queries":queries}]}
 
     def test_mixed_feedback_and_valid_lookup_then_explicit_correction(self):
-        invalid = [self.query(),self.query("symbol",name="marker",path="nested",limit=20)]
+        invalid = [self.query(),self.query("outline",path="nested")]
         valid = self.query("source",path="helper.js",start_line=1,end_line=1)
         other = self.fx.decision(self.claims[1])
         self.fx.turn("mixed",lambda task,packet:self.reply([*invalid,valid],[other]))
@@ -46,7 +46,7 @@ class LookupFeedbackTests(unittest.TestCase):
         self.assertIn("path_prefix",lookups[0]["result"]["allowed_arguments"]["optional"])
         self.assertNotIn("path_prefix",lookups[1]["result"]["allowed_arguments"]["optional"])
         self.assertNotIn("path_prefix",lookups[1]["result"]["message"])
-        self.assertIn("omit path",lookups[1]["result"]["message"])
+        self.assertIn("known file path",lookups[1]["result"]["message"])
         self.assertEqual(lookups[2]["native_query_count"],1)
         self.assertTrue(lookups[2]["evidence"])
         self.assertEqual(state["used"]["queries"],3)

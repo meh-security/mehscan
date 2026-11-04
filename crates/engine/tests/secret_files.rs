@@ -1,6 +1,6 @@
+mod support;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, FileStatus};
 
@@ -158,15 +158,7 @@ struct TemporaryFixture {
 
 impl TemporaryFixture {
     fn new() -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "mehscan-secret-files-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).expect("temporary fixture directory");
+        let path = support::temp_dir("secret-files");
         Self { path }
     }
 }

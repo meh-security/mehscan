@@ -19,6 +19,7 @@ use crate::code::dotnet_project::DotnetProjectContext;
 use crate::code::go_context::GoProjectContext;
 use crate::code::java_context::JavaProjectContext;
 use crate::code::matcher::{ParseOutcome, ScanDependencies, scan_source};
+use crate::code::native_copy::NativeCopyProjectContext;
 use crate::code::native_drogon::DrogonProjectContext;
 use crate::code::native_invalidation::NativeInvalidationProjectContext;
 use crate::code::node_context::NodeProjectContext;
@@ -51,6 +52,16 @@ fn trace_scan_phase(name: &str, microseconds: u128) {
     }
 }
 
+fn trace_source_read(path: &Path, mode: &str, microseconds: u128, bytes: Option<usize>) {
+    eprintln!(
+        "mehscan_read {}",
+        serde_json::json!({
+            "path": path.to_string_lossy(), "mode": mode, "microseconds": microseconds, "bytes": bytes,
+            "success": bytes.is_some(),
+        })
+    );
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ScanProfile {
     pub total_microseconds: u128,
@@ -58,6 +69,9 @@ pub struct ScanProfile {
     pub discovery_microseconds: u128,
     pub rule_compilation_microseconds: u128,
     pub source_loading_and_secret_scan_microseconds: u128,
+    pub source_read_microseconds: u128,
+    pub rust_module_configuration_microseconds: u128,
+    pub loading_secret_scan_microseconds: u128,
     pub project_symbols_microseconds: u128,
     pub node_project_context_microseconds: u128,
     pub object_input_context_microseconds: u128,
@@ -67,6 +81,7 @@ pub struct ScanProfile {
     pub go_project_context_microseconds: u128,
     pub drogon_project_context_microseconds: u128,
     pub native_invalidation_context_microseconds: u128,
+    pub native_copy_context_microseconds: u128,
     pub python_project_context_microseconds: u128,
     pub worker_count: usize,
     pub file_analysis: FileAnalysisProfile,
@@ -81,7 +96,9 @@ pub struct FileAnalysisProfile {
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
+    pub native_pass_microseconds: BTreeMap<&'static str, u128>,
     pub security_paths_microseconds: u128,
+    pub postprocessing_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
     pub declarative_patterns_executed: usize,
@@ -115,6 +132,26 @@ pub(crate) fn scan_profiled(
         })
         .map(|file| file.relative.clone())
         .collect::<Vec<_>>();
+    let rust_manifest_paths = if !discovery.root.is_file()
+        && discovery
+            .files
+            .iter()
+            .any(|file| matches!(file.class, FileClass::Supported(Language::Rust)))
+    {
+        discovery
+            .files
+            .iter()
+            .filter(|file| {
+                file.absolute
+                    .file_name()
+                    .is_some_and(|name| name == "Cargo.toml")
+            })
+            .filter(|file| !matches!(file.class, FileClass::Ignored))
+            .map(|file| (file.relative.clone(), file.absolute.clone()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let dotnet_project_sources = discovery
         .files
         .iter()
@@ -220,6 +257,42 @@ pub(crate) fn scan_profiled(
     trace_scan_phase("rule_compilation", rule_compilation_microseconds);
 
     let source_started = Instant::now();
+    let mut source_read_microseconds = 0;
+    let mut secret_read_microseconds = 0;
+    let mut loading_secret_scan_microseconds = 0;
+    let trace_reads = std::env::var_os("MEHSCAN_TRACE_READS").is_some();
+    let mut read_source_text = |path: &Path| {
+        let started = Instant::now();
+        let result = fs::read_to_string(path);
+        let micros = started.elapsed().as_micros();
+        source_read_microseconds += micros;
+        if trace_reads {
+            trace_source_read(path, "utf8", micros, result.as_ref().ok().map(String::len));
+        }
+        result
+    };
+    let mut read_secret_source = |path: &Path| {
+        let started = Instant::now();
+        let result = read_secret_text(path);
+        let micros = started.elapsed().as_micros();
+        secret_read_microseconds += micros;
+        if trace_reads {
+            trace_source_read(
+                path,
+                "bounded_text",
+                micros,
+                result.as_ref().ok().map(String::len),
+            );
+        }
+        result
+    };
+    let mut scan_loading_secrets = |path: &str, source: &str| {
+        let started = Instant::now();
+        let result =
+            crate::secrets::scan_source(path, source, &CommentRanges::default(), &secret_allowlist);
+        loading_secret_scan_microseconds += started.elapsed().as_micros();
+        result
+    };
     let mut prepared = Vec::new();
     let mut specialized_files = 0usize;
     let single_file_scan = discovery.root.is_file();
@@ -304,14 +377,9 @@ pub(crate) fn scan_profiled(
                     });
                 }
             }
-            FileClass::SecretOnly => match read_secret_text(&file.absolute) {
+            FileClass::SecretOnly => match read_secret_source(&file.absolute) {
                 Ok(source) => {
-                    let mut secret_scan = crate::secrets::scan_source(
-                        &file.relative,
-                        &source,
-                        &CommentRanges::default(),
-                        &secret_allowlist,
-                    );
+                    let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                     coverage.totals.secret_scanned += 1;
                     coverage.totals.secret_suppressed += secret_scan.suppressed;
                     coverage.files.push(FileCoverage {
@@ -342,7 +410,7 @@ pub(crate) fn scan_profiled(
                 });
             }
             FileClass::Vue => {
-                let source = match read_secret_text(&file.absolute) {
+                let source = match read_secret_source(&file.absolute) {
                     Ok(source) => source,
                     Err(reason) => {
                         record_parse_failure(
@@ -357,12 +425,7 @@ pub(crate) fn scan_profiled(
                 };
                 let sfc = super::vue::parse(&file.relative, &source);
                 if options.scan_secrets {
-                    let mut secret_scan = crate::secrets::scan_source(
-                        &file.relative,
-                        &source,
-                        &CommentRanges::default(),
-                        &secret_allowlist,
-                    );
+                    let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                     coverage.totals.secret_scanned += 1;
                     coverage.totals.secret_suppressed += secret_scan.suppressed;
                     evidence.append(&mut secret_scan.evidence);
@@ -376,6 +439,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language: sfc.language,
                     source: sfc.script,
+                    rust_original: None,
                     build_symbols: BTreeMap::new(),
                     vue: Some(VueFile {
                         original: source,
@@ -386,7 +450,7 @@ pub(crate) fn scan_profiled(
                 });
             }
             FileClass::EmbeddedJavascriptTemplate => {
-                let source = match fs::read_to_string(&file.absolute) {
+                let source = match read_source_text(&file.absolute) {
                     Ok(source) => source,
                     Err(error) => {
                         coverage.totals.ignored += 1;
@@ -422,6 +486,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language: Language::Javascript,
                     source,
+                    rust_original: None,
                     build_symbols: BTreeMap::new(),
                     vue: None,
                 });
@@ -435,7 +500,7 @@ pub(crate) fn scan_profiled(
                     reason: Some("outside impact scan scope".to_string()),
                 });
             }
-            FileClass::Razor => match read_secret_text(&file.absolute) {
+            FileClass::Razor => match read_secret_source(&file.absolute) {
                 Ok(source) => {
                     let mut razor_evidence =
                         crate::code::razor::scan_escape_hatches(&file.relative, &source);
@@ -446,12 +511,7 @@ pub(crate) fn scan_profiled(
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {
-                        let mut secret_scan = crate::secrets::scan_source(
-                            &file.relative,
-                            &source,
-                            &CommentRanges::default(),
-                            &secret_allowlist,
-                        );
+                        let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                         coverage.totals.secret_scanned += 1;
                         coverage.totals.secret_suppressed += secret_scan.suppressed;
                         evidence.append(&mut secret_scan.evidence);
@@ -485,7 +545,7 @@ pub(crate) fn scan_profiled(
                     reason: Some("outside impact scan scope".to_string()),
                 });
             }
-            FileClass::WebForms => match read_secret_text(&file.absolute) {
+            FileClass::WebForms => match read_secret_source(&file.absolute) {
                 Ok(source) => {
                     let (mut webforms_evidence, mut webforms_paths) =
                         crate::code::webforms::scan_inline_output(&file.relative, &source);
@@ -496,12 +556,7 @@ pub(crate) fn scan_profiled(
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {
-                        let mut secret_scan = crate::secrets::scan_source(
-                            &file.relative,
-                            &source,
-                            &CommentRanges::default(),
-                            &secret_allowlist,
-                        );
+                        let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                         coverage.totals.secret_scanned += 1;
                         coverage.totals.secret_suppressed += secret_scan.suppressed;
                         evidence.append(&mut secret_scan.evidence);
@@ -539,7 +594,7 @@ pub(crate) fn scan_profiled(
                     });
                     continue;
                 }
-                let source = match fs::read_to_string(&file.absolute) {
+                let source = match read_source_text(&file.absolute) {
                     Ok(source) => source,
                     Err(error) => {
                         record_parse_failure(
@@ -557,14 +612,10 @@ pub(crate) fn scan_profiled(
                 {
                     let reason = "generated or bundled frontend source excluded from SAST; secret scan retained";
                     if options.scan_secrets {
-                        match read_secret_text(&file.absolute) {
+                        match read_secret_source(&file.absolute) {
                             Ok(secret_source) => {
-                                let mut secret_scan = crate::secrets::scan_source(
-                                    &file.relative,
-                                    &secret_source,
-                                    &CommentRanges::default(),
-                                    &secret_allowlist,
-                                );
+                                let mut secret_scan =
+                                    scan_loading_secrets(&file.relative, &secret_source);
                                 coverage.totals.secret_scanned += 1;
                                 coverage.totals.secret_suppressed += secret_scan.suppressed;
                                 coverage.files.push(FileCoverage {
@@ -597,10 +648,20 @@ pub(crate) fn scan_profiled(
                     continue;
                 }
                 coverage.languages.entry(language).or_default().discovered += 1;
+                let (source, rust_original) =
+                    if language == Language::Rust && !options.include_tests {
+                        match super::rust_tests::production_source(&source) {
+                            Some(masked) => (masked, Some(source)),
+                            None => (source, None),
+                        }
+                    } else {
+                        (source, None)
+                    };
                 prepared.push(PreparedFile {
                     relative: file.relative,
                     language,
                     source,
+                    rust_original,
                     build_symbols: file.build_symbols,
                     vue: None,
                 });
@@ -612,7 +673,71 @@ pub(crate) fn scan_profiled(
         "source_loading_and_secret_scan",
         source_loading_and_secret_scan_microseconds,
     );
+    trace_scan_phase(
+        "source_read",
+        source_read_microseconds + secret_read_microseconds,
+    );
+    trace_scan_phase("loading_secret_scan", loading_secret_scan_microseconds);
 
+    let rust_modules_started = Instant::now();
+    let rust_manifest_sources = rust_manifest_paths
+        .iter()
+        .filter_map(|(path, absolute)| {
+            fs::metadata(absolute)
+                .ok()
+                .filter(|m| m.len() <= 2 * 1024 * 1024)
+                .and_then(|_| fs::read_to_string(absolute).ok())
+                .map(|source| (path.clone(), source))
+        })
+        .collect::<Vec<_>>();
+    let rust_modules = if discovery.root.is_file() {
+        super::rust_modules::RustModules::default()
+    } else {
+        super::rust_modules::RustModules::build(
+            prepared.iter().map(|file| {
+                (
+                    file.relative.as_str(),
+                    file.language,
+                    file.rust_original.as_deref().unwrap_or(&file.source),
+                )
+            }),
+            &rust_manifest_sources,
+            options.include_tests,
+        )
+    };
+    coverage.source_configurations = rust_modules.configurations();
+    let mut included = Vec::with_capacity(prepared.len());
+    for file in prepared {
+        if file.language != Language::Rust || !rust_modules.excluded(&file.relative) {
+            included.push(file);
+            continue;
+        }
+        if options.scan_secrets {
+            let raw = file.rust_original.as_deref().unwrap_or(&file.source);
+            let secret = crate::secrets::scan_source(
+                &file.relative,
+                raw,
+                &CommentRanges::default(),
+                &secret_allowlist,
+            );
+            coverage.totals.secret_scanned += 1;
+            coverage.totals.secret_suppressed += secret.suppressed;
+            evidence.extend(secret.evidence);
+        }
+        coverage.totals.ignored += 1;
+        coverage.files.push(FileCoverage {
+            path: file.relative,
+            language: Some(Language::Rust),
+            status: FileStatus::Ignored,
+            reason: Some("Rust module excluded by established source configuration".into()),
+        });
+    }
+    let prepared = included;
+    let rust_module_configuration_microseconds = rust_modules_started.elapsed().as_micros();
+    trace_scan_phase(
+        "rust_module_configuration",
+        rust_module_configuration_microseconds,
+    );
     let project_symbols_started = Instant::now();
     let node_modules_started = Instant::now();
     let node_modules = std::sync::Arc::new(NodeModuleIndex::build(
@@ -711,6 +836,17 @@ pub(crate) fn scan_profiled(
         "native_invalidation_context",
         native_invalidation_context_microseconds,
     );
+    let native_copy_context_started = Instant::now();
+    let native_copy_context = NativeCopyProjectContext::from_sources(prepared.iter().map(|file| {
+        (
+            file.relative.as_str(),
+            file.language,
+            file.source.as_str(),
+            &file.build_symbols,
+        )
+    }));
+    let native_copy_context_microseconds = native_copy_context_started.elapsed().as_micros();
+    trace_scan_phase("native_copy_context", native_copy_context_microseconds);
     let python_project_context_started = Instant::now();
     let python_project_context = PythonProjectContext::from_sources(
         prepared
@@ -736,12 +872,24 @@ pub(crate) fn scan_profiled(
         prepared
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
-    );
+    )
+    .with_modules(rust_modules);
     let php_project_context = super::php::PhpProjectContext::from_sources(
         prepared
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
     );
+    let rust_originals: BTreeMap<_, _> = prepared
+        .iter()
+        .filter_map(|file| {
+            file.rust_original.as_ref().map(|source| {
+                (
+                    file.relative.clone(),
+                    super::rust_tests::OriginalSource::new(source.clone(), file.source.clone()),
+                )
+            })
+        })
+        .collect();
     let mut analysis_prepared = Vec::new();
     for file in prepared {
         if impact_plan.includes(&file.relative) {
@@ -779,6 +927,7 @@ pub(crate) fn scan_profiled(
         &go_project_context,
         &drogon_project_context,
         &native_invalidation_context,
+        &native_copy_context,
         &python_project_context,
         &rust_project_context,
         &php_project_context,
@@ -864,6 +1013,16 @@ pub(crate) fn scan_profiled(
     trace_scan_phase("file_analysis", file_analysis.total_microseconds);
 
     let finalization_started = Instant::now();
+    for item in &mut evidence {
+        super::rust_tests::restore_evidence(item, &rust_originals);
+    }
+    for path in &mut security_paths {
+        for step in &mut path.steps {
+            if let Some(original) = rust_originals.get(&step.location.path) {
+                original.restore_location(&mut step.location);
+            }
+        }
+    }
     security_paths.extend(super::native_allocation::link_native_allocation_paths(
         &mut evidence,
     ));
@@ -918,6 +1077,9 @@ pub(crate) fn scan_profiled(
         discovery_microseconds,
         rule_compilation_microseconds,
         source_loading_and_secret_scan_microseconds,
+        source_read_microseconds: source_read_microseconds + secret_read_microseconds,
+        rust_module_configuration_microseconds,
+        loading_secret_scan_microseconds,
         project_symbols_microseconds,
         node_project_context_microseconds,
         object_input_context_microseconds,
@@ -927,6 +1089,7 @@ pub(crate) fn scan_profiled(
         go_project_context_microseconds,
         drogon_project_context_microseconds,
         native_invalidation_context_microseconds,
+        native_copy_context_microseconds,
         python_project_context_microseconds,
         worker_count,
         file_analysis,
@@ -952,6 +1115,7 @@ fn analyze_prepared_files(
     go_project_context: &GoProjectContext,
     drogon_project_context: &DrogonProjectContext,
     native_invalidation_context: &NativeInvalidationProjectContext,
+    native_copy_context: &NativeCopyProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
@@ -981,6 +1145,7 @@ fn analyze_prepared_files(
                     go_project_context,
                     drogon_project_context,
                     native_invalidation_context,
+                    native_copy_context,
                     python_project_context,
                     rust_project_context,
                     php_project_context,
@@ -1021,6 +1186,7 @@ fn analyze_prepared_files(
                                 go_project_context,
                                 drogon_project_context,
                                 native_invalidation_context,
+                                native_copy_context,
                                 python_project_context,
                                 rust_project_context,
                                 php_project_context,
@@ -1060,6 +1226,7 @@ fn scan_prepared_file(
     go_project_context: &GoProjectContext,
     drogon_project_context: &DrogonProjectContext,
     native_invalidation_context: &NativeInvalidationProjectContext,
+    native_copy_context: &NativeCopyProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
@@ -1079,7 +1246,7 @@ fn scan_prepared_file(
         ScanDependencies {
             project_symbols,
             secret_allowlist,
-            scan_secrets: scan_secrets && file.vue.is_none(),
+            scan_secrets: scan_secrets && file.vue.is_none() && file.rust_original.is_none(),
             relations,
             node_context,
             vue_dom_refs: file.vue.as_ref().map(|vue| &vue.dom_refs),
@@ -1091,6 +1258,7 @@ fn scan_prepared_file(
             go_project_context,
             drogon_project_context,
             native_invalidation_context,
+            native_copy_context,
             python_project_context,
             rust_project_context,
             php_project_context,
@@ -1098,6 +1266,42 @@ fn scan_prepared_file(
             build_symbols: &file.build_symbols,
         },
     );
+    if scan_secrets {
+        if let Some(original) = &file.rust_original {
+            let comments = ast_grep_core::tree_sitter::StrDoc::try_new(
+                original,
+                ast_grep_language::SupportLang::Rust,
+            )
+            .ok()
+            .map(|doc| {
+                let ast = ast_grep_core::AstGrep::doc(doc);
+                CommentRanges::from_root(&ast.root())
+            })
+            .unwrap_or_default();
+            let raw =
+                crate::secrets::scan_source(&file.relative, original, &comments, secret_allowlist);
+            match &mut outcome {
+                ParseOutcome::Parsed {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                }
+                | ParseOutcome::Recovered {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                }
+                | ParseOutcome::Failed {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                } => {
+                    evidence.extend(raw.evidence);
+                    *secret_suppressed += raw.suppressed;
+                }
+            }
+        }
+    }
     if let Some(vue) = &file.vue {
         let (evidence, paths) = match &mut outcome {
             ParseOutcome::Parsed {
@@ -1191,7 +1395,9 @@ fn scan_prepared_file(
                 "declarative_rules_microseconds": timing.declarative_rules_microseconds,
                 "symbol_rules_microseconds": timing.symbol_rules_microseconds,
                 "summaries_microseconds": timing.summaries_microseconds,
+                "native_pass_microseconds": crate::code::matcher::NATIVE_PASS_NAMES.into_iter().zip(timing.native_pass_microseconds).collect::<BTreeMap<_, _>>(),
                 "security_paths_microseconds": timing.security_paths_microseconds,
+                "postprocessing_microseconds": timing.postprocessing_microseconds,
             })
         );
     }
@@ -1219,7 +1425,14 @@ fn add_file_timing(
     aggregate.declarative_rules_microseconds += timing.declarative_rules_microseconds;
     aggregate.symbol_rules_microseconds += timing.symbol_rules_microseconds;
     aggregate.summaries_microseconds += timing.summaries_microseconds;
+    for (name, micros) in crate::code::matcher::NATIVE_PASS_NAMES
+        .into_iter()
+        .zip(timing.native_pass_microseconds)
+    {
+        *aggregate.native_pass_microseconds.entry(name).or_default() += micros;
+    }
     aggregate.security_paths_microseconds += timing.security_paths_microseconds;
+    aggregate.postprocessing_microseconds += timing.postprocessing_microseconds;
     aggregate.declarative_patterns_considered += timing.declarative_patterns_considered;
     aggregate.declarative_patterns_skipped += timing.declarative_patterns_skipped;
     aggregate.declarative_patterns_executed = aggregate
@@ -1231,6 +1444,7 @@ struct PreparedFile {
     relative: String,
     language: Language,
     source: String,
+    rust_original: Option<String>,
     build_symbols: BTreeMap<String, bool>,
     vue: Option<VueFile>,
 }
@@ -1360,6 +1574,9 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::CppAllocationFamilyValidation => "cpp_allocation_family_validation",
         Capability::CppRaiiOwner => "cpp_raii_owner",
         Capability::CppOwnershipTransfer => "cpp_ownership_transfer",
+        Capability::ContainerBorrowLifetime => "container_borrow_lifetime",
+        Capability::ExceptionalOwnershipCleanup => "exceptional_ownership_cleanup",
+        Capability::RustRawMemoryReview => "rust_raw_memory_review",
         Capability::IntegerNarrowing => "integer_narrowing",
         Capability::ArithmeticDivision => "arithmetic_division",
         Capability::NonzeroValidation => "nonzero_validation",
@@ -1386,6 +1603,14 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::SerializedScalarLoad => "serialized_scalar_load",
         Capability::LoadedMemoryExtent => "loaded_memory_extent",
         Capability::MemoryExtentOverflowValidation => "memory_extent_overflow_validation",
+        Capability::IntegerExtentInput => "integer_extent_input",
+        Capability::MemoryCopyContract => "memory_copy_contract",
+        Capability::SubtractedMemoryExtent => "subtracted_memory_extent",
+        Capability::RawNullPointerState => "raw_null_pointer_state",
+        Capability::RustRawSliceConstruction => "rust_raw_slice_construction",
+        Capability::BufferLengthPublication => "buffer_length_publication",
+        Capability::RawSliceNonNullValidation => "raw_slice_non_null_validation",
+        Capability::MemoryExtentLowerBoundValidation => "memory_extent_lower_bound_validation",
         Capability::DecodedInputExtent => "decoded_input_extent",
         Capability::RemainingInputRead => "remaining_input_read",
         Capability::RemainingInputValidation => "remaining_input_validation",

@@ -31,8 +31,16 @@ pub(crate) fn add_go_filesystem_observations<'tree>(
     }
 
     let os_qualifiers = os_qualifiers(root);
+    let bindings = super::filesystem_open::Bindings::new(root);
     for call in root.dfs().filter_map(call_site) {
         if comments.is_in_comment(call.node.range()) {
+            continue;
+        }
+        if call
+            .callee
+            .split_once('.')
+            .is_some_and(|(owner, _)| bindings.shadowed(&call.node, owner))
+        {
             continue;
         }
         match os_function(&call.callee, &os_qualifiers) {

@@ -95,35 +95,56 @@ pub(crate) struct CsharpHandoffCatalogBuilder {
 
 impl CsharpHandoffCatalogBuilder {
     pub(crate) fn add_file(&mut self, path: &str, root: &Node<'_, StrDoc<SupportLang>>) {
+        let members = MemberTypes::new(root);
         catalog_types_and_methods(
             path,
             root,
             &mut self.types,
             &mut self.methods,
             &mut self.forwards,
+            &members,
         );
-        catalog_controller_calls(path, root, &mut self.calls);
+        catalog_controller_calls(path, root, &mut self.calls, &members);
     }
 
     pub(crate) fn finish(self) -> CsharpHandoffProjectContext {
+        if self.calls.is_empty() {
+            return CsharpHandoffProjectContext::default();
+        }
+        let index = MethodIndex::new(&self.types, &self.methods);
         let direct = self
             .calls
             .into_iter()
-            .filter_map(|call| resolve_call(call, &self.types, &self.methods))
+            .filter_map(|call| resolve_call(call, &index, &self.methods))
             .collect::<Vec<_>>();
+        let mut forwards = BTreeMap::<_, Vec<_>>::new();
+        if !direct.is_empty() {
+            for forward in &self.forwards {
+                forwards
+                    .entry((
+                        forward.source_owner.clone(),
+                        forward.source_method.clone(),
+                        forward.source_argument_count,
+                        forward.source_parameter_index,
+                    ))
+                    .or_default()
+                    .push(forward);
+            }
+        }
         let mut handoffs = direct.clone();
         for handoff in direct {
             handoffs.extend(
-                self.forwards
-                    .iter()
-                    .filter(|forward| {
-                        forward.source_owner == handoff.target_owner
-                            && forward.source_method == handoff.target_symbol
-                            && forward.source_argument_count == handoff.target_argument_count
-                            && forward.source_parameter_index == handoff.target_parameter_index
-                    })
+                forwards
+                    .get(&(
+                        handoff.target_owner.clone(),
+                        handoff.target_symbol.clone(),
+                        handoff.target_argument_count,
+                        handoff.target_parameter_index,
+                    ))
+                    .into_iter()
+                    .flatten()
                     .filter_map(|forward| {
-                        resolve_forward(&handoff, forward, &self.types, &self.methods)
+                        resolve_forward(&handoff, forward, &index, &self.methods)
                     }),
             );
         }
@@ -277,6 +298,7 @@ fn catalog_types_and_methods(
     types: &mut Vec<TypeRecord>,
     methods: &mut Vec<MethodRecord>,
     forwards: &mut Vec<PendingForwardCall>,
+    members: &MemberTypes,
 ) {
     for declaration in root.dfs().filter(|node| {
         matches!(
@@ -323,7 +345,7 @@ fn catalog_types_and_methods(
                 parameters: parameters.clone(),
                 path: path.to_string(),
             });
-            catalog_method_forwards(&name, &method, &parameters, path, forwards);
+            catalog_method_forwards(&name, &method, &parameters, path, forwards, members);
         }
     }
 }
@@ -334,6 +356,7 @@ fn catalog_method_forwards(
     parameters: &[ParameterRecord],
     path: &str,
     forwards: &mut Vec<PendingForwardCall>,
+    members: &MemberTypes,
 ) {
     let Some(source_method) = method
         .field("name")
@@ -341,7 +364,7 @@ fn catalog_method_forwards(
     else {
         return;
     };
-    let receiver_types = receiver_types(method);
+    let receiver_types = receiver_types(method, members);
     for invocation in method
         .dfs()
         .filter(|node| node.kind().as_ref() == "invocation_expression")
@@ -364,7 +387,7 @@ fn catalog_method_forwards(
         ) else {
             continue;
         };
-        let Some(receiver_type) = receiver_types.get(&receiver) else {
+        let Some(receiver_type) = receiver_types.get(&receiver, &invocation) else {
             continue;
         };
         if !looks_like_service_type(receiver_type) {
@@ -399,6 +422,7 @@ fn catalog_controller_calls(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
     calls: &mut Vec<PendingCall>,
+    members: &MemberTypes,
 ) {
     for method in root
         .dfs()
@@ -424,7 +448,7 @@ fn catalog_controller_calls(
         else {
             continue;
         };
-        let receiver_types = receiver_types(&method);
+        let receiver_types = receiver_types(&method, members);
         for invocation in method
             .dfs()
             .filter(|node| node.kind().as_ref() == "invocation_expression")
@@ -449,7 +473,7 @@ fn catalog_controller_calls(
             ) else {
                 continue;
             };
-            let Some(receiver_type) = receiver_types.get(&receiver) else {
+            let Some(receiver_type) = receiver_types.get(&receiver, &invocation) else {
                 continue;
             };
             if !looks_like_service_type(receiver_type) {
@@ -479,14 +503,14 @@ fn catalog_controller_calls(
 
 fn resolve_call(
     call: PendingCall,
-    types: &[TypeRecord],
+    index: &MethodIndex,
     methods: &[MethodRecord],
 ) -> Option<ParameterHandoff> {
     let target = resolve_method(
         &call.receiver_type,
         &call.method_name,
         call.argument_count,
-        types,
+        index,
         methods,
     )?;
     let parameter = target.parameters.get(call.parameter_index)?;
@@ -511,14 +535,14 @@ fn resolve_call(
 fn resolve_forward(
     source: &ParameterHandoff,
     forward: &PendingForwardCall,
-    types: &[TypeRecord],
+    index: &MethodIndex,
     methods: &[MethodRecord],
 ) -> Option<ParameterHandoff> {
     let target = resolve_method(
         &forward.receiver_type,
         &forward.method_name,
         forward.argument_count,
-        types,
+        index,
         methods,
     )?;
     if target.owner == source.target_owner
@@ -546,119 +570,242 @@ fn resolve_forward(
     })
 }
 
+struct MethodIndex {
+    owners: BTreeSet<String>,
+    implementors: BTreeMap<String, BTreeSet<String>>,
+    methods: BTreeMap<(String, String, usize), Vec<usize>>,
+}
+
+impl MethodIndex {
+    fn new(types: &[TypeRecord], methods: &[MethodRecord]) -> Self {
+        let mut result = Self {
+            owners: BTreeSet::new(),
+            implementors: BTreeMap::new(),
+            methods: BTreeMap::new(),
+        };
+        for kind in types {
+            for base in &kind.bases {
+                result
+                    .implementors
+                    .entry(base.clone())
+                    .or_default()
+                    .insert(kind.name.clone());
+            }
+        }
+        for (index, method) in methods.iter().enumerate() {
+            result.owners.insert(method.owner.clone());
+            result
+                .methods
+                .entry((
+                    method.owner.clone(),
+                    method.name.clone(),
+                    method.parameters.len(),
+                ))
+                .or_default()
+                .push(index);
+        }
+        result
+    }
+}
+
 fn resolve_method<'a>(
     receiver_type: &str,
     method_name: &str,
     argument_count: usize,
-    types: &[TypeRecord],
+    index: &MethodIndex,
     methods: &'a [MethodRecord],
 ) -> Option<&'a MethodRecord> {
-    let owners = if methods.iter().any(|method| method.owner == receiver_type) {
+    let owners = if index.owners.contains(receiver_type) {
         BTreeSet::from([receiver_type.to_string()])
     } else {
-        types
-            .iter()
-            .filter(|kind| kind.bases.contains(receiver_type))
-            .map(|kind| kind.name.clone())
-            .collect()
+        index
+            .implementors
+            .get(receiver_type)
+            .cloned()
+            .unwrap_or_default()
     };
     if owners.is_empty() {
         return None;
     }
-    let mut candidates = methods.iter().filter(|method| {
-        owners.contains(&method.owner)
-            && method.name == method_name
-            && method.parameters.len() == argument_count
+    let mut candidates = owners.iter().flat_map(|owner| {
+        index
+            .methods
+            .get(&(owner.clone(), method_name.to_string(), argument_count))
+            .into_iter()
+            .flatten()
+            .map(|position| &methods[*position])
     });
     let target = candidates.next()?;
     candidates.next().is_none().then_some(target)
 }
 
-fn receiver_types(method: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {
-    let mut result = BTreeMap::new();
-    if let Some(owner) = method.ancestors().find(|ancestor| {
-        matches!(
-            ancestor.kind().as_ref(),
-            "class_declaration" | "record_declaration"
-        )
-    }) {
-        for field in owner
-            .dfs()
-            .filter(|node| node.kind().as_ref() == "field_declaration")
-            .filter(|field| immediate_owner(field) == immediate_owner(method))
-        {
-            let Some(declaration) = field
-                .dfs()
-                .find(|node| node.kind().as_ref() == "variable_declaration")
-            else {
-                continue;
-            };
-            let Some(kind) = declaration
-                .field("type")
-                .and_then(|node| type_name(node.text().as_ref()))
-            else {
-                continue;
-            };
-            for variable in declaration
-                .children()
-                .filter(|node| node.kind().as_ref() == "variable_declarator")
-            {
-                if let Some(name) = variable
-                    .field("name")
-                    .and_then(|node| simple_identifier(node.text().as_ref()))
-                {
-                    result.insert(name, kind.clone());
+struct MemberTypes(BTreeMap<(usize, usize), BTreeMap<String, String>>);
+
+impl MemberTypes {
+    fn new(root: &Node<'_, StrDoc<SupportLang>>) -> Self {
+        let mut result = Self(BTreeMap::new());
+        // Properties override fields in the existing catalogue, irrespective of
+        // declaration order. Keep that precedence while indexing once per file.
+        for kind in ["field_declaration", "property_declaration"] {
+            for node in root.dfs().filter(|node| node.kind().as_ref() == kind) {
+                let values: Vec<_> = if kind == "field_declaration" {
+                    let Some(declaration) = node
+                        .dfs()
+                        .find(|n| n.kind().as_ref() == "variable_declaration")
+                    else {
+                        continue;
+                    };
+                    let Some(ty) = declaration
+                        .field("type")
+                        .and_then(|n| type_name(n.text().as_ref()))
+                    else {
+                        continue;
+                    };
+                    declaration
+                        .children()
+                        .filter(|n| n.kind().as_ref() == "variable_declarator")
+                        .filter_map(|n| {
+                            n.field("name")
+                                .and_then(|n| simple_identifier(n.text().as_ref()))
+                        })
+                        .map(|name| (name, ty.clone()))
+                        .collect()
+                } else {
+                    let (Some(name), Some(ty)) = (
+                        node.field("name")
+                            .and_then(|n| simple_identifier(n.text().as_ref())),
+                        node.field("type")
+                            .and_then(|n| type_name(n.text().as_ref())),
+                    ) else {
+                        continue;
+                    };
+                    vec![(name, ty)]
+                };
+                let declared_owner = immediate_owner(&node);
+                for owner in node.ancestors().filter(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "class_declaration" | "record_declaration"
+                    )
+                }) {
+                    let name = owner
+                        .field("name")
+                        .and_then(|n| type_name(n.text().as_ref()));
+                    if name == declared_owner {
+                        result
+                            .0
+                            .entry((owner.range().start, owner.range().end))
+                            .or_default()
+                            .extend(values.iter().cloned());
+                    }
                 }
             }
         }
-        for property in owner
-            .dfs()
-            .filter(|node| node.kind().as_ref() == "property_declaration")
-            .filter(|property| immediate_owner(property) == immediate_owner(method))
-        {
-            if let (Some(name), Some(kind)) = (
-                property
-                    .field("name")
-                    .and_then(|node| simple_identifier(node.text().as_ref())),
-                property
-                    .field("type")
-                    .and_then(|node| type_name(node.text().as_ref())),
-            ) {
-                result.insert(name, kind);
-            }
-        }
+        result
     }
+}
+
+struct ReceiverTypes<'a> {
+    members: Option<&'a BTreeMap<String, String>>,
+    locals: BTreeMap<String, Vec<LocalReceiverType>>,
+}
+
+struct LocalReceiverType {
+    scope: std::ops::Range<usize>,
+    declaration_end: usize,
+    kind: Option<String>,
+}
+
+impl ReceiverTypes<'_> {
+    fn get(&self, name: &str, site: &Node<'_, StrDoc<SupportLang>>) -> Option<&String> {
+        if let Some(local) = self
+            .locals
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|local| {
+                local.scope.start <= site.range().start && site.range().end <= local.scope.end
+            })
+            .min_by_key(|local| (local.scope.len(), usize::MAX - local.declaration_end))
+        {
+            // Unknown locals shadow members. A use before a local declaration
+            // cannot borrow a member type either, even in recovered syntax.
+            return (local.declaration_end <= site.range().start)
+                .then_some(local.kind.as_ref())
+                .flatten();
+        }
+        self.members.and_then(|members| members.get(name))
+    }
+}
+
+fn receiver_types<'a>(
+    method: &Node<'_, StrDoc<SupportLang>>,
+    members: &'a MemberTypes,
+) -> ReceiverTypes<'a> {
+    let inherited = method
+        .ancestors()
+        .find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "class_declaration" | "record_declaration"
+            )
+        })
+        .and_then(|owner| members.0.get(&(owner.range().start, owner.range().end)));
+    let mut result = BTreeMap::<String, Vec<LocalReceiverType>>::new();
     for parameter in method_parameters_nodes(method) {
-        if let (Some(name), Some(kind)) = (
-            parameter
-                .field("name")
-                .and_then(|node| simple_identifier(node.text().as_ref())),
-            parameter
+        if let Some(name) = parameter
+            .field("name")
+            .and_then(|node| simple_identifier(node.text().as_ref()))
+        {
+            let kind = parameter
                 .field("type")
-                .and_then(|node| type_name(node.text().as_ref())),
-        ) {
-            result.insert(name, kind);
+                .and_then(|node| type_name(node.text().as_ref()));
+            result.entry(name).or_default().push(LocalReceiverType {
+                scope: method.range(),
+                declaration_end: 0,
+                kind,
+            });
         }
     }
     for variable in method
         .dfs()
         .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| !nested_callable_between(node, method))
     {
-        if let (Some(name), Some(kind)) = (
-            variable
-                .field("name")
-                .and_then(|node| simple_identifier(node.text().as_ref())),
-            variable
+        if let Some(name) = variable
+            .field("name")
+            .and_then(|node| simple_identifier(node.text().as_ref()))
+        {
+            let kind = variable
                 .parent()
                 .filter(|parent| parent.kind().as_ref() == "variable_declaration")
                 .and_then(|declaration| declaration.field("type"))
                 .and_then(|node| type_name(node.text().as_ref()))
-                .filter(|kind| kind != "var"),
-        ) {
-            result.insert(name, kind);
+                .filter(|kind| kind != "var");
+            let scope = variable
+                .ancestors()
+                .find(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "block"
+                            | "for_statement"
+                            | "for_each_statement"
+                            | "using_statement"
+                            | "fixed_statement"
+                    )
+                })
+                .map_or_else(|| method.range(), |node| node.range());
+            result.entry(name).or_default().push(LocalReceiverType {
+                scope,
+                declaration_end: variable.range().end,
+                kind,
+            });
         }
     }
-    result
+    ReceiverTypes {
+        members: inherited,
+        locals: result,
+    }
 }
 
 fn method_parameters(path: &str, method: &Node<'_, StrDoc<SupportLang>>) -> Vec<ParameterRecord> {
@@ -831,4 +978,51 @@ fn evidence_id(handoff: &ParameterHandoff) -> String {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
     format!("ev-{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn receiver_catalogue_does_not_lend_member_types_to_unknown_locals() {
+        let ast = SupportLang::CSharp.ast_grep(
+            r#"
+class Controller {
+    Service service;
+    void Good(string x) { service.Call(x); }
+    void Unknown(string x) { var service = Factory(); service.Call(x); }
+    void Sibling(string x) {
+        { var service = Factory(); service.Call(x); }
+        service.Call(x);
+    }
+}
+"#,
+        );
+        let root = ast.root();
+        let members = MemberTypes::new(&root);
+        let mut types = Vec::new();
+        for method in root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "method_declaration")
+        {
+            let receivers = receiver_types(&method, &members);
+            for call in method.dfs().filter(|node| {
+                node.kind().as_ref() == "invocation_expression"
+                    && node.text().starts_with("service.Call")
+            }) {
+                types.push(receivers.get("service", &call).cloned());
+            }
+        }
+        assert_eq!(
+            types,
+            [
+                Some("Service".to_string()),
+                None,
+                None,
+                Some("Service".to_string())
+            ]
+        );
+    }
 }

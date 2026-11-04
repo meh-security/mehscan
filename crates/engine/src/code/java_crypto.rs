@@ -32,11 +32,13 @@ pub(crate) fn add_java_crypto_observations<'tree>(
     evidence.retain(|item| item.rule_id != "java-hash-algorithm-selection");
     let imports = imports(root);
     let declarations = declared_types(root);
+    let static_receivers = StaticReceivers::new(root);
     add_algorithm_selections(
         path,
         root,
         &imports,
         &declarations,
+        &static_receivers,
         comments,
         conditional,
         literals,
@@ -70,6 +72,7 @@ fn add_algorithm_selections<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
     imports: &BTreeSet<String>,
     declarations: &BTreeSet<String>,
+    static_receivers: &StaticReceivers,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
@@ -135,6 +138,9 @@ fn add_algorithm_selections<'tree>(
         else {
             continue;
         };
+        if !static_receivers.accepts(&object, canonical, imports, declarations) {
+            continue;
+        }
         let algorithm_text = literal_string(algorithm.text().as_ref());
         let classification = classify_algorithm(short, algorithm_text.as_deref());
         let mut tags = vec!["cryptography", "java-jca", classification];
@@ -165,6 +171,146 @@ fn add_algorithm_selections<'tree>(
             literals,
             evidence,
         );
+    }
+}
+
+/// Value bindings can hide an imported class or the first package component.
+/// Index once per file, then inspect only the invocation's ancestor scopes.
+struct StaticReceivers {
+    scopes: BTreeMap<usize, BTreeMap<String, ValueBinding>>,
+}
+
+struct ValueBinding {
+    start: usize,
+    declared_type: Option<String>,
+}
+
+impl StaticReceivers {
+    fn new(root: &Node<'_, StrDoc<SupportLang>>) -> Self {
+        let mut scopes: BTreeMap<usize, BTreeMap<String, ValueBinding>> = BTreeMap::new();
+        for declaration in root.dfs().filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "variable_declarator"
+                    | "lambda_expression"
+                    | "formal_parameter"
+                    | "spread_parameter"
+                    | "catch_formal_parameter"
+                    | "enhanced_for_statement"
+                    | "resource"
+                    | "type_pattern"
+            )
+        }) {
+            if declaration.kind() == "lambda_expression" {
+                if let Some(parameters) = declaration.field("parameters") {
+                    let names = if parameters.kind() == "identifier" {
+                        vec![parameters]
+                    } else {
+                        parameters
+                            .children()
+                            .filter(|n| n.kind() == "identifier")
+                            .collect()
+                    };
+                    for name in names {
+                        scopes.entry(declaration.node_id()).or_default().insert(
+                            name.text().into_owned(),
+                            ValueBinding {
+                                start: 0,
+                                declared_type: None,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+            let Some(name) = declaration.field("name") else {
+                continue;
+            };
+            let parameter = matches!(
+                declaration.kind().as_ref(),
+                "formal_parameter" | "spread_parameter" | "catch_formal_parameter"
+            );
+            let field = declaration.parent().is_some_and(|parent| {
+                matches!(
+                    parent.kind().as_ref(),
+                    "field_declaration" | "constant_declaration"
+                )
+            });
+            let Some(scope) = std::iter::once(declaration.clone())
+                .chain(declaration.ancestors())
+                .find(|node| {
+                    if parameter {
+                        matches!(
+                            node.kind().as_ref(),
+                            "method_declaration"
+                                | "constructor_declaration"
+                                | "compact_constructor_declaration"
+                                | "lambda_expression"
+                                | "catch_clause"
+                        )
+                    } else {
+                        matches!(
+                            node.kind().as_ref(),
+                            "block"
+                                | "class_body"
+                                | "interface_body"
+                                | "enum_body"
+                                | "record_body"
+                                | "for_statement"
+                                | "enhanced_for_statement"
+                                | "try_with_resources_statement"
+                                | "switch_block_statement_group"
+                        )
+                    }
+                })
+            else {
+                continue;
+            };
+            let visible_from = if parameter || field {
+                0
+            } else {
+                name.range().start
+            };
+            let declared_type = declaration
+                .field("type")
+                .or_else(|| declaration.parent().and_then(|parent| parent.field("type")))
+                .map(|kind| kind.text().into_owned());
+            scopes
+                .entry(scope.node_id())
+                .or_default()
+                .entry(name.text().into_owned())
+                .or_insert(ValueBinding {
+                    start: visible_from,
+                    declared_type,
+                });
+        }
+        Self { scopes }
+    }
+
+    fn accepts(
+        &self,
+        receiver: &Node<'_, StrDoc<SupportLang>>,
+        canonical: &str,
+        imports: &BTreeSet<String>,
+        declarations: &BTreeSet<String>,
+    ) -> bool {
+        let text = receiver.text();
+        let head = text.split('.').next().unwrap_or_default().trim();
+        let binding = receiver.ancestors().find_map(|scope| {
+            self.scopes
+                .get(&scope.node_id())
+                .and_then(|names| names.get(head))
+                .filter(|binding| binding.start <= receiver.range().start)
+        });
+        // Java permits a static call through a value of the actual API type.
+        // Rejecting every value as in C# would erase legitimate Java operations.
+        binding.is_none_or(|binding| {
+            text.trim() == head
+                && binding
+                    .declared_type
+                    .as_ref()
+                    .is_some_and(|kind| type_is(kind, canonical, imports, declarations))
+        })
     }
 }
 
@@ -238,14 +384,12 @@ fn add_key_kdf_material<'tree>(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        if short == "SecretKeySpec"
-            && imported_exact(
-                imports,
-                declarations,
-                "javax.crypto.spec.SecretKeySpec",
-                short,
-            )
-            && args.len() >= 2
+        if type_is(
+            kind_text.as_ref(),
+            "javax.crypto.spec.SecretKeySpec",
+            imports,
+            declarations,
+        ) && args.len() >= 2
             && syntactically_fixed_material(&args[0])
         {
             push(
@@ -269,10 +413,9 @@ fn add_key_kdf_material<'tree>(
             "GCMParameterSpec" => Some("javax.crypto.spec.GCMParameterSpec"),
             _ => None,
         };
-        if parameter_canonical.is_some_and(|canonical| {
-            kind_text.as_ref() == canonical
-                || imported_exact(imports, declarations, canonical, short)
-        }) && let Some(material) = args.last()
+        if parameter_canonical
+            .is_some_and(|canonical| type_is(kind_text.as_ref(), canonical, imports, declarations))
+            && let Some(material) = args.last()
             && syntactically_fixed_material(material)
         {
             push(
@@ -291,9 +434,12 @@ fn add_key_kdf_material<'tree>(
                 evidence,
             );
         }
-        if short == "PBEKeySpec"
-            && imported_exact(imports, declarations, "javax.crypto.spec.PBEKeySpec", short)
-            && args.len() >= 3
+        if type_is(
+            kind_text.as_ref(),
+            "javax.crypto.spec.PBEKeySpec",
+            imports,
+            declarations,
+        ) && args.len() >= 3
         {
             let iteration = numeric_literal(args[2].text().as_ref());
             let classification = match iteration {
@@ -575,6 +721,17 @@ fn short_type(kind: &str) -> &str {
         .split('<')
         .next()
         .unwrap_or(kind.trim())
+}
+
+fn type_is(
+    observed: &str,
+    canonical: &str,
+    imports: &BTreeSet<String>,
+    declarations: &BTreeSet<String>,
+) -> bool {
+    let short = short_type(canonical);
+    observed.trim() == canonical
+        || observed.trim() == short && imported_exact(imports, declarations, canonical, short)
 }
 
 fn compact(text: &str) -> String {

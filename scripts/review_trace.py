@@ -94,6 +94,10 @@ def summarize(run, review_id=None):
         for event in own:
             if event["event"] == "native_failed":
                 flags.append({"kind":"native_validation_failure", "operation":event.get("operation")})
+            if event["event"] == "research_budget_deferred":
+                flags.append({"kind":"research_budget_deferral", "round":event.get("round"),
+                    "deferred_queries":event["feedback"]["deferred_queries"],
+                    "interpretation":"These lookups did not execute; inspect the remaining question, not an inferred source fact."})
             if event["event"] == "progress_changed" and event.get("dropped_open_edges"):
                 flags.append({"kind":"open_relationship_disappeared", "round":event.get("round"),
                     "edges":event["dropped_open_edges"],

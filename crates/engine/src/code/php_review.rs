@@ -1,5 +1,5 @@
 //! Bounded producer navigation for review admission, never protection proofs.
-use super::{PhpContext, PhpNode, function_scope, namespace_scope, unwrap_operand};
+use super::{PhpContext, PhpNode, function_scope, unwrap_operand};
 use std::collections::BTreeMap;
 
 type ScopeName = (usize, usize, String);
@@ -17,7 +17,8 @@ fn key(scope: &std::ops::Range<usize>, name: &str) -> ScopeName {
 }
 
 impl<'a> Producers<'a> {
-    pub(super) fn collect(root: &PhpNode<'a>) -> Self {
+    pub(super) fn collect(context: &PhpContext<'a>) -> Self {
+        let root = &context.root;
         let mut result = Self::default();
         for node in root.dfs() {
             match node.kind().as_ref() {
@@ -35,7 +36,7 @@ impl<'a> Producers<'a> {
                 }
                 "function_definition" => {
                     if let Some(name) = node.field("name") {
-                        let scope = namespace_scope(&node, root);
+                        let scope = context.namespace_scope(&node);
                         result
                             .helpers
                             .entry(key(&scope, &name.text()))
@@ -51,7 +52,7 @@ impl<'a> Producers<'a> {
                         .field("function")
                         .filter(|n| n.kind().as_ref() == "name")
                     {
-                        let scope = namespace_scope(&node, root);
+                        let scope = context.namespace_scope(&node);
                         result
                             .calls
                             .entry(key(&scope, &name.text()))
@@ -167,7 +168,7 @@ impl<'a> Producers<'a> {
                         .is_some_and(|name| name.text() == node.text())
                 })?;
             let name = owner.field("name")?;
-            let namespace = namespace_scope(owner, &context.root);
+            let namespace = context.namespace_scope(owner);
             if context.imports.iter().any(|i| {
                 i.function && i.scope == namespace && i.alias.eq_ignore_ascii_case(&name.text())
             }) {
@@ -203,7 +204,7 @@ impl<'a> Producers<'a> {
         }
         if node.kind().as_ref() == "function_call_expression" {
             let name = node.field("function")?;
-            let namespace = namespace_scope(&node, &context.root);
+            let namespace = context.namespace_scope(&node);
             // Imports and qualified/dynamic calls need another binding layer.
             if name.kind().as_ref() == "name"
                 && !name.text().contains('\\')

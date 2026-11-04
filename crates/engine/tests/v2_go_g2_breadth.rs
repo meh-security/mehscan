@@ -1,6 +1,6 @@
+mod support;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{Capability, HttpRouteAccess};
 
@@ -97,14 +97,7 @@ fn adds_httprouter_sql_helper_and_cookie_policy_context() {
 
 #[test]
 fn unix_exec_is_not_reported_as_a_database_query() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-go-unix-exec-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("go-unix-exec");
     fs::create_dir_all(&root).expect("create Go unix.Exec fixture");
     fs::write(
         root.join("main.go"),
@@ -134,14 +127,7 @@ func replaceProcess(executable string, arguments []string, environment []string)
 
 #[test]
 fn keeps_discarded_repository_reads_as_context_and_prefers_the_exact_sql_sink() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-go-discarded-repository-read-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
+    let root = support::temp_dir("go-discarded-repository-read");
     fs::create_dir_all(&root).expect("create Go repository fixture");
     fs::write(
         root.join("app.go"),

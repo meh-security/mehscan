@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::{Deref, DerefMut};
+
+mod keys;
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -16,6 +19,40 @@ use super::reachability;
 
 const ENGINE: &str = "ast-grep 0.45.1 + bounded-node-identity-boundary";
 
+struct BoundaryEvidence<'a> {
+    facts: &'a mut Vec<Evidence>,
+    ids: Option<BTreeSet<String>>,
+}
+
+impl<'a> BoundaryEvidence<'a> {
+    fn new(facts: &'a mut Vec<Evidence>) -> Self {
+        Self { ids: None, facts }
+    }
+    fn ids(&mut self) -> &mut BTreeSet<String> {
+        self.ids
+            .get_or_insert_with(|| self.facts.iter().map(|e| e.id.clone()).collect())
+    }
+    fn contains_id(&mut self, id: &str) -> bool {
+        self.ids().contains(id)
+    }
+    fn push(&mut self, fact: Evidence) {
+        if self.ids().insert(fact.id.clone()) {
+            self.facts.push(fact);
+        }
+    }
+}
+impl Deref for BoundaryEvidence<'_> {
+    type Target = Vec<Evidence>;
+    fn deref(&self) -> &Self::Target {
+        self.facts
+    }
+}
+impl DerefMut for BoundaryEvidence<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.facts
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_identity_boundary_observations<'tree>(
     path: &str,
@@ -31,6 +68,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
     if !is_node_language(language) || is_non_runtime_example_path(path) {
         return;
     }
+    let mut evidence = BoundaryEvidence::new(evidence);
     let lower = source.to_ascii_lowercase();
     if lower.contains("jsonwebtoken")
         || lower.contains("sign(")
@@ -45,7 +83,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             conditional,
             literals,
             symbols,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains("tokenmap") {
@@ -56,7 +94,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains(".cookie(") {
@@ -67,7 +105,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains("req.cookies") && lower.contains("req.body") {
@@ -78,7 +116,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains("cors(") || lower.contains("access-control-allow-origin") {
@@ -89,7 +127,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains("x-forwarded-for") && lower.contains("trust proxy") {
@@ -100,7 +138,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
     if lower.contains("reset") && lower.contains("token") && lower.contains("password") {
@@ -111,7 +149,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
-            evidence,
+            &mut evidence,
         );
     }
 }
@@ -125,8 +163,9 @@ fn add_jwt_observations<'tree>(
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     symbols: &super::symbols::FileSymbolEnvironment,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
+    let mut keys = None;
     for node in root.dfs() {
         let Some(call) = call_site(node) else {
             continue;
@@ -135,13 +174,19 @@ fn add_jwt_observations<'tree>(
             continue;
         }
         let callee = compact(&call.callee);
-        let owned = |method: &str| {
+        let method = ["sign", "verify"].into_iter().find(|method| {
             symbols
                 .resolve(&callee, &format!("jsonwebtoken.{method}"))
                 .is_some_and(|r| r.confidence != mehscan_core::SymbolConfidence::Ambiguous)
                 && !symbols.has_shadowing_parameter(&call.node, &callee, language)
-        };
-        if owned("sign") {
+        });
+        if method.is_some() {
+            let keys = keys.get_or_insert_with(|| keys::KeyIndex::new(root));
+            if !keys.api_owned(&call.node, &callee, symbols) {
+                continue;
+            }
+        }
+        if method == Some("sign") {
             if let Some(key) = call.arguments.get(1) {
                 let options = call
                     .arguments
@@ -202,7 +247,7 @@ fn add_jwt_observations<'tree>(
                         evidence,
                     );
                 }
-                if is_hardcoded_signing_key(root, key) {
+                if keys.as_ref().unwrap().hardcoded(key, symbols) {
                     push_pair(
                         path,
                         language,
@@ -222,7 +267,7 @@ fn add_jwt_observations<'tree>(
                     );
                 }
             }
-        } else if owned("verify") {
+        } else if method == Some("verify") {
             let Some(token) = call.arguments.first() else {
                 continue;
             };
@@ -340,6 +385,9 @@ fn add_jwt_observations<'tree>(
             || callee == "jwt.decode"
             || callee.ends_with("security.decode")
         {
+            // This existing syntactic decode/use relationship also covers local
+            // wrappers. SDK key/configuration ownership does not prove or refute
+            // it; downstream flow keeps its applicability explicitly unknown.
             let Some(token) = call.arguments.first() else {
                 continue;
             };
@@ -385,7 +433,7 @@ fn add_session_map_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     let root_text = compact(root.text().as_ref()).to_ascii_lowercase();
     if !root_text.contains("tokenmap:{}")
@@ -443,7 +491,7 @@ fn add_cookie_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     for node in root.dfs() {
         let Some(call) = call_site(node) else {
@@ -565,7 +613,7 @@ fn add_csrf_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     for node in root.dfs() {
         let Some(call) = call_site(node) else {
@@ -650,7 +698,7 @@ fn add_cors_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     for origin in root.dfs().filter_map(call_site) {
         if !is_response_header(&origin, "access-control-allow-origin", "*")
@@ -804,7 +852,7 @@ fn add_proxy_rate_limit_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     let root_text = compact(root.text().as_ref()).to_ascii_lowercase();
     let broad_trust = root_text.contains("enable('trustproxy')")
@@ -871,7 +919,7 @@ fn add_reset_token_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     for node in root.dfs().filter(|node| {
         matches!(
@@ -956,7 +1004,7 @@ fn push_pair<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     let source_rule = language_rule(language, source_suffix);
     let source_id = evidence_id(
@@ -965,7 +1013,7 @@ fn push_pair<'tree>(
         source_node.range().start,
         source_node.range().end,
     );
-    if !evidence.iter().any(|item| item.id == source_id) {
+    if !evidence.contains_id(&source_id) {
         evidence.push(Evidence {
             id: source_id.clone(),
             kind: EvidenceKind::Source,
@@ -990,7 +1038,7 @@ fn push_pair<'tree>(
         sink_node.range().start,
         sink_node.range().end,
     );
-    if evidence.iter().any(|item| item.id == sink_id) {
+    if evidence.contains_id(&sink_id) {
         return;
     }
     evidence.push(Evidence {
@@ -1023,11 +1071,11 @@ fn push_control<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     let rule_id = language_rule(language, suffix);
     let id = evidence_id(path, &rule_id, node.range().start, node.range().end);
-    if evidence.iter().any(|item| item.id == id) {
+    if evidence.contains_id(&id) {
         return;
     }
     evidence.push(Evidence {
@@ -1060,11 +1108,11 @@ fn push_configuration<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
+    evidence: &mut BoundaryEvidence<'_>,
 ) {
     let rule_id = language_rule(language, suffix);
     let id = evidence_id(path, &rule_id, node.range().start, node.range().end);
-    if evidence.iter().any(|item| item.id == id) {
+    if evidence.contains_id(&id) {
         return;
     }
     evidence.push(Evidence {
@@ -1140,52 +1188,6 @@ fn call_site<'tree>(node: Node<'tree, StrDoc<SupportLang>>) -> Option<CallSite<'
             .filter(|child| child.is_named())
             .collect(),
     })
-}
-
-fn is_hardcoded_signing_key(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    key: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let key_text = key.text();
-    if looks_like_key_literal(key_text.as_ref()) || looks_like_secret_literal(key_text.as_ref(), "")
-    {
-        return true;
-    }
-    let Some(name) = simple_identifier(key_text.trim()) else {
-        return false;
-    };
-    root.dfs().any(|node| {
-        node.kind().as_ref() == "variable_declarator"
-            && node
-                .field("name")
-                .is_some_and(|declared| declared.text().trim() == name)
-            && node.field("value").is_some_and(|value| {
-                looks_like_key_literal(value.text().as_ref())
-                    || looks_like_secret_literal(value.text().as_ref(), name)
-            })
-    })
-}
-
-fn looks_like_key_literal(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("begin rsa private key") || lower.contains("begin private key")
-}
-
-fn looks_like_secret_literal(text: &str, name: &str) -> bool {
-    let text = text.trim();
-    if text.len() < 2 {
-        return false;
-    }
-    let quoted = ((text.starts_with('\'') && text.ends_with('\''))
-        || (text.starts_with('"') && text.ends_with('"'))
-        || (text.starts_with('`') && text.ends_with('`')))
-    .then(|| &text[1..text.len() - 1]);
-    let Some(value) = quoted else { return false };
-    let sensitive_name = name.is_empty()
-        || ["secret", "key", "token", "signing"]
-            .iter()
-            .any(|marker| name.to_ascii_lowercase().contains(marker));
-    sensitive_name && value.len() >= 12 && !value.contains("${")
 }
 
 fn function_ancestor<'tree>(
@@ -1270,16 +1272,6 @@ fn compact(text: &str) -> String {
     text.chars()
         .filter(|character| !character.is_whitespace())
         .collect()
-}
-fn simple_identifier(text: &str) -> Option<&str> {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
-        .then_some(())?;
-    chars
-        .all(|c| c == '_' || c.is_ascii_alphanumeric())
-        .then_some(text)
 }
 fn is_node_language(language: Language) -> bool {
     matches!(

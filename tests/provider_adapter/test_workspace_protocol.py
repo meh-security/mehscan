@@ -166,7 +166,8 @@ class WorkspaceProtocolTests(unittest.TestCase):
         schema = workspace.schema(task)
         self.assertEqual(schema["properties"]["lookups"]["maxItems"],0)
         self.assertNotIn("minItems",schema["properties"]["decisions"])
-        self.assertEqual(workspace.schema(task,bound_handles=False)["properties"]["decisions"]["maxItems"],2)
+        self.assertNotIn("maxItems",workspace.schema(task,bound_handles=False)["properties"]["decisions"])
+        self.assertEqual(workspace.schema(task)["properties"]["decisions"]["maxItems"],2)
 
     def test_last_aggregate_work_or_case_call_requires_conclusions_with_stable_wire_schema(self):
         from jsonschema import Draft202012Validator

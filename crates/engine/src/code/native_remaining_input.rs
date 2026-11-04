@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const SOURCE_RULE_ID: &str = "c-family-decoded-input-extent";
@@ -36,6 +37,7 @@ struct BoundsCheck<'tree> {
     kind: CheckKind,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_remaining_input_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -43,6 +45,7 @@ pub(crate) fn add_native_remaining_input_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -73,7 +76,7 @@ pub(crate) fn add_native_remaining_input_observations<'tree>(
         if !decoded_extent_origin(&scope, &check) {
             continue;
         }
-        let Some(sink_call) = downstream_read(&scope, &check, comments) else {
+        let Some(sink_call) = downstream_read(&scope, &check, comments, api) else {
             continue;
         };
         if reassigned_between(
@@ -412,6 +415,7 @@ fn downstream_read<'tree>(
     scope: &Node<'tree, StrDoc<SupportLang>>,
     check: &BoundsCheck<'tree>,
     comments: &CommentRanges,
+    api: &NativeApiContext,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     scope
         .dfs()
@@ -426,24 +430,36 @@ fn downstream_read<'tree>(
                 && !comments.is_in_comment(node.range())
         })
         .find(|call| {
-            if !is_buffer_consumer(call) {
+            if !is_buffer_consumer(call, api) {
                 return false;
             }
             let arguments = named_arguments(call);
+            if let Some(operation @ ("memcpy" | "memmove" | "bcopy")) = api.call_name(call) {
+                let source_index = usize::from(operation != "bcopy");
+                return arguments.len() == 3
+                    && compact(arguments[2].text().as_ref()) == check.length
+                    && cursor_offset(&arguments[source_index], &check.cursor);
+            }
             arguments
                 .iter()
                 .any(|argument| compact(argument.text().as_ref()) == check.length)
-                && arguments.iter().any(|argument| {
-                    let text = compact(argument.text().as_ref());
-                    text.contains(&check.cursor) && text.contains('+')
-                })
+                && arguments
+                    .iter()
+                    .any(|argument| cursor_offset(argument, &check.cursor))
         })
 }
 
-fn is_buffer_consumer(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
+fn cursor_offset(argument: &Node<'_, StrDoc<SupportLang>>, cursor: &str) -> bool {
+    argument.text().contains('+')
+        && argument
+            .dfs()
+            .any(|node| node.kind().as_ref() == "identifier" && node.text().trim() == cursor)
+}
+
+fn is_buffer_consumer(call: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
     call.field("function").is_some_and(|function| {
         let name = function.text().to_ascii_lowercase();
-        matches!(name.as_str(), "memcpy" | "memmove" | "bcopy")
+        matches!(api.call_name(call), Some("memcpy" | "memmove" | "bcopy"))
             || name.contains("copyfrom")
             || name.contains("addnametostring")
             || name.contains("readbuffer")

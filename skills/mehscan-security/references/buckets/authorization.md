@@ -23,6 +23,11 @@ resolver member, rather than a callback merely near mutation-related text.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+Rust `rust_context_*` captures can supply the actor type, extractor/guard helpers,
+imports and policy definitions. These are bounded source dependencies, not proof
+that a particular trait implementation or macro enforces this action. Bind the
+accepted identity and the effective rejection to the selected object and effect;
+keep ambiguous dispatch or conditional configuration explicit.
 For self-service actions, also inspect privilege, enrollment, billing or ownership
 side effects. A session-bound user does not alone authorize a state transition;
 check supplied resource IDs against the policy and membership actually affected.

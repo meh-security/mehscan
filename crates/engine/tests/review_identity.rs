@@ -1,3 +1,4 @@
+mod support;
 use mehscan_core::{
     IdentityContinuity, PathReviewBundle, PathReviewBundlePayload, PathReviewBundleResponseSet,
     PathReviewTriageResult, ReviewArtifactCitation, ReviewConfidence, ReviewDecision,
@@ -7,17 +8,9 @@ use mehscan_engine::investigation::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn root(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "mehscan-native-identity-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let path = support::temp_dir(&format!("native-identity-{label}"));
     fs::create_dir_all(&path).unwrap();
     path
 }

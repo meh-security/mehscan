@@ -226,6 +226,64 @@ fn source_queries_expose_inclusive_citation_lines_at_eof() {
 }
 
 #[test]
+fn symbol_directory_prefix_is_explicit_and_journaled() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-symbol-directory-cli-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("app/policy")).unwrap();
+    fs::create_dir_all(root.join("app/policy-other")).unwrap();
+    for path in ["app/policy/guard.ts", "app/policy-other/guard.ts"] {
+        fs::write(
+            root.join(path),
+            "export function guard() { return true; }\n",
+        )
+        .unwrap();
+    }
+    let journal = root.join("symbol.jsonl");
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "symbol",
+            root.to_str().unwrap(),
+            "--name",
+            "guard",
+            "--path-prefix",
+            "app/policy",
+            "--journal",
+            journal.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["results"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        value["results"][0]["location"]["path"],
+        "app/policy/guard.ts"
+    );
+    let row: serde_json::Value =
+        serde_json::from_str(fs::read_to_string(journal).unwrap().trim()).unwrap();
+    assert_eq!(row["output"]["results"], value["results"]);
+    let invalid = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "symbol",
+            root.to_str().unwrap(),
+            "--name",
+            "guard",
+            "--path",
+            "app/policy/guard.ts",
+            "--path-prefix",
+            "app/policy",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn provenance_query_is_bounded_read_only_and_journaled() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let journal = std::env::temp_dir().join(format!(

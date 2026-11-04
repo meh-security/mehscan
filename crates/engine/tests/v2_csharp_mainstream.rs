@@ -23,10 +23,15 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
         .iter()
         .filter(|item| {
             item.kind == EvidenceKind::Sink
-                && item
+                && (item
                     .provenance
                     .engine
                     .starts_with("mehscan csharp-mainstream-summary")
+                    || (item.provenance.engine == "mehscan filesystem-api-modes 1"
+                        && matches!(
+                            item.rule_id.as_str(),
+                            "csharp-filestream-read" | "csharp-filestream-write"
+                        )))
         })
         .fold(BTreeMap::new(), |mut counts, item| {
             *counts.entry(item.rule_id.as_str()).or_insert(0usize) += 1;

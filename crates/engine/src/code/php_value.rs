@@ -1,5 +1,5 @@
 //! Bounded source defaults and static template questions, never safety verdicts.
-use super::{PhpContext, PhpNode, function_scope, namespace_scope, unwrap_operand};
+use super::{PhpContext, PhpNode, function_scope, unwrap_operand};
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl Constants {
                 // definitions. Keep their named constant unresolved.
                 Some((name, (args.len() == 2).then(|| args[1].clone())))
             } else if node.kind().as_ref() == "const_element"
-                && !context.namespaced_scope(&namespace_scope(&node, root))
+                && !context.namespaced_scope(&context.namespace_scope(&node))
                 && !node.ancestors().any(|n| {
                     matches!(
                         n.kind().as_ref(),
@@ -192,7 +192,7 @@ fn expression<'a>(
     if node.kind().as_ref() == "name"
         && constant_name(node.text().as_ref())
         && !magic_constant(node.text().as_ref())
-        && !context.namespaced_scope(&namespace_scope(&node, &context.root))
+        && !context.namespaced_scope(&context.namespace_scope(&node))
     {
         return Some(Expr::Constant(node.text().to_string()));
     }

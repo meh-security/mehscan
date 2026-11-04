@@ -64,6 +64,15 @@ pub enum Capability {
     /// A native memory-writing operation whose safety depends on destination
     /// capacity, source extent, size arithmetic, or termination semantics.
     BufferWrite,
+    /// A concrete possible null field state produced by a source-defined safe constructor.
+    RawNullPointerState,
+    /// A safe wrapper constructs a standard raw slice from that same owned field.
+    RustRawSliceConstruction,
+    /// A source-defined buffer position can reach publication of initialized length.
+    /// The relationship requires review; allocation capacity is not initialization.
+    BufferLengthPublication,
+    /// A rejecting check establishes the raw slice pointer's non-null invariant only.
+    RawSliceNonNullValidation,
     /// Exact local evidence that a native byte-copy size does not exceed a
     /// statically declared destination array capacity.
     BufferCapacityValidation,
@@ -99,6 +108,17 @@ pub enum Capability {
     CppRaiiOwner,
     /// Direct construction of a standard unique owner from a raw local.
     CppOwnershipTransfer,
+    /// A raw element borrow is published from a persistent standard vector
+    /// that can be mutated on a later iteration. Storage and subsequent use
+    /// of the pointer remain review obligations.
+    ContainerBorrowLifetime,
+    /// A local standard raw-pointer collection receives fresh allocations in a
+    /// loop with an explicit exceptional exit. Pending pointee ownership and
+    /// cleanup on that exit require review.
+    ExceptionalOwnershipCleanup,
+    /// A concrete standard Rust raw-memory operation with source-bound pointer,
+    /// owner or safe API boundary evidence; individual invariants require review.
+    RustRawMemoryReview,
     /// A C-family conversion that may discard higher-order integer bits before
     /// the converted value reaches a security-relevant arithmetic operation.
     IntegerNarrowing,
@@ -175,6 +195,15 @@ pub enum Capability {
     /// Exact rejecting checks that make a loaded multiplicative memory extent
     /// representable before it is computed and consumed.
     MemoryExtentOverflowValidation,
+    /// A source integer used before subtracting an offset for a copy count.
+    IntegerExtentInput,
+    /// Defined source/count parameters forwarded to a standard copy operation.
+    MemoryCopyContract,
+    /// A copy extent obtained by subtracting an offset, including through a
+    /// source-defined helper or constructor. Other buffer invariants stay open.
+    SubtractedMemoryExtent,
+    /// An exact lower bound before subtraction; not a complete buffer proof.
+    MemoryExtentLowerBoundValidation,
     /// A decoded native length or extent compared with an authoritative
     /// remaining-input boundary before buffer consumption.
     DecodedInputExtent,
@@ -437,6 +466,18 @@ pub struct EvidenceContext {
     pub resource_policy: Option<ResourcePolicyContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_environment: Option<RuntimeEnvironment>,
+    /// Source declarations governing module availability, not runtime reachability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_dependencies: Vec<ConfigurationDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ConfigurationDependency {
+    pub declaration: Capture,
+    pub source_sha256: String,
+    pub target_path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 impl EvidenceContext {
@@ -451,6 +492,7 @@ impl EvidenceContext {
             && self.http_routes.is_empty()
             && self.resource_policy.is_none()
             && self.runtime_environment.is_none()
+            && self.configuration_dependencies.is_empty()
     }
 }
 

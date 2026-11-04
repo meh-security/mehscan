@@ -152,6 +152,7 @@ pub(super) fn inspect(file: &SourceFile, spans: &[(usize, usize)]) -> Option<Bou
                 result.decorated.insert(
                     start_index,
                     ServerMutationMarker {
+                        credential_effect: None,
                         start_index,
                         end_index,
                         related_handlers: terminal_call_identifiers(&body.text(), &symbol),

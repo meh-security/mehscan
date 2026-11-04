@@ -347,7 +347,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "mehscan-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "fs2",
  "mehscan-core",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-engine"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ast-grep-config",
  "ast-grep-core",
@@ -381,6 +381,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "toml_edit",
 ]
 
 [[package]]
@@ -859,10 +860,9 @@ dependencies = [
 [[package]]
 name = "tree-sitter-go"
 version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8560a4d2f835cc0d4d2c2e03cbd0dde2f6114b43bc491164238d333e28b16ea"
 dependencies = [
  "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 

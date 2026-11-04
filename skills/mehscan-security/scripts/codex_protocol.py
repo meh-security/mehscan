@@ -134,6 +134,12 @@ def decision_targets(packet, *, physical_lines=False):
     return targets
 
 
+def review_id_schema(ids, *, bound_handles=True):
+    # Stable provider schemas carry the protocol, not an assignment. The local
+    # schema still enforces exact current IDs before any response is admitted.
+    return {"type":"string", **({"enum":ids} if bound_handles else {})}
+
+
 def build_schema(task, *, bound_handles=True):
     text = {"type":"string"}
     integer = {"type":"integer", "minimum":1}
@@ -147,7 +153,7 @@ def build_schema(task, *, bound_handles=True):
         diagnosis = object_schema({"title":text,"cwes":{"type":"array","maxItems":5,
             "items":{"type":"string","pattern":r"^CWE-[1-9][0-9]{0,5}$"}},
             "severity":{"type":"string","enum":["unknown","note","low","medium","high","critical"]},"impact":text,"remediation":text})
-        entry = object_schema({"review_id":{"type":"string","enum":task["review_ids"]},
+        entry = object_schema({"review_id":review_id_schema(task["review_ids"], bound_handles=bound_handles),
             "decision":{"type":"string","enum":["issue","not_issue","needs_review"]},
             "confidence":{"type":"string","enum":["high","medium","low"]},
             "summary":{"type":"string","minLength":1,"maxLength":500},"reason":text,
@@ -161,7 +167,7 @@ def build_schema(task, *, bound_handles=True):
                 "distinct_from_review":{"type":"string","maxLength":500},
                 "evidence":object_schema({"path":text,"start_line":integer,"end_line":integer})})}})
         draft = object_schema({"results":{"type":"array","items":entry}})
-    query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
+    query_id = {"type":"null"} if task["kind"] == "change_pass" else review_id_schema(task["review_ids"], bound_handles=bound_handles)
     query_variants = []
     for descriptor in API["tools"]:
         tool = descriptor["name"]
@@ -188,18 +194,18 @@ def build_schema(task, *, bound_handles=True):
             "risky_dismissal","external_required","human_required","budget_exhausted","stage_budget_exhausted"]}})}
     if task["kind"] == "change_pass" or not task.get("routing_allowed", False):
         routing["maxItems"] = 0
-    if task["kind"] != "change_pass":
+    if bound_handles and task["kind"] != "change_pass":
         routing["items"]["properties"]["review_id"]["enum"] = task["review_ids"]
     schema = object_schema({"action":{"type":"string","enum":["research","final"]},"research":{"type":"array","items":query},
         "draft":{"anyOf":[draft,{"type":"null"}]},"working_chain":text,"progress":{"type":"array","items":edge},
         "routing":routing})
     if task.get("review_role") == "adjudication":
         schema["properties"]["resolutions"] = {"type":"array", "items":object_schema({
-            "review_id":{"type":"string", "enum":task["adjudicate_ids"]}, "disputed_claim":text, "reason":text})}
+            "review_id":review_id_schema(task["adjudicate_ids"], bound_handles=bound_handles), "disputed_claim":text, "reason":text})}
         schema["required"].append("resolutions")
     if task.get("review_role") == "final_qa":
-        schema["properties"]["qa_actions"] = {"type":"array","maxItems":len(task["review_ids"]),"items":object_schema({
-            "review_id":{"type":"string","enum":task["review_ids"]},
+        schema["properties"]["qa_actions"] = {"type":"array",**({"maxItems":len(task["review_ids"])} if bound_handles else {}),"items":object_schema({
+            "review_id":review_id_schema(task["review_ids"], bound_handles=bound_handles),
             "action":{"type":"string","enum":["keep","repair","reopen"]},"claim":{"type":"string","maxLength":300}})}
         schema["required"].append("qa_actions")
     # The unbound schema pins the continuation protocol, not a turn's changing
@@ -273,7 +279,7 @@ Do not cite invented IDs. Mark available unread decisive code open, not blocked.
 Inspected edges need artifacts; blocked edges need precise causes. No mandatory research when supplied evidence settles the chain.
 Use the supplied research API catalog and typed schema. outline locates current-file declarations/imports. definition locates and reads one unambiguous declaration; it is a broker operation, not a native CLI subcommand.
 Prefer definition when the helper's implementation decides the question. It returns at most the first 120 declaration lines. Actual partial source is inspected evidence only for the shown code; source_complete=false means the rest remains unread. Ambiguous matches are navigation only. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
-The batch's total query units must fit queries_remaining: two per definition, one per other query. Reuse a shared lookup across bundle IDs instead of requesting it once per ID.
+Plan within queries_remaining: two units per definition, one per other query. Order independent lookups by deciding priority. The controller validates the entire batch, executes whole lookups that fit in that order, and explicitly defers unaffordable requests. Deferred requests are unread, provide no evidence handles and cannot support inspected progress. Reuse a shared lookup across bundle IDs instead of requesting it once per ID.
 Prepared windows are verified actual source, not model summaries. complete_file=true means the complete file is supplied. Do not reread supplied source to confirm it or populate journals; a covered query is served from preparation without a native query.
 Optional path filters are null when unused. Tool argument schemas are distinct; symbol takes name, references takes symbol. Each query has a purpose <=300 characters. Native queries use their exact prompting ID; change-pass uses null.
 References are textual navigation and their limits count occurrences. Inspect named code; two preview lines are not complete effect coverage.

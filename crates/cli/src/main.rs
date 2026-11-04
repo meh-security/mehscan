@@ -1963,13 +1963,15 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "symbol" => {
             let name = parsed.required("--name")?;
             let path = parsed.optional("--path");
+            let path_prefix = parsed.optional("--path-prefix");
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
             print_logged_query(
-                engine(mehscan_engine::investigation::find_symbol(
+                engine(mehscan_engine::investigation::find_symbol_scoped(
                     &root,
                     &name,
                     path.as_deref(),
+                    path_prefix.as_deref(),
                     limit,
                 )),
                 journal.as_deref(),
@@ -3610,34 +3612,32 @@ fn compact_helper_context(
         }).collect::<Vec<_>>();
     // Path candidates intentionally omit captures. The definition fact remains
     // bound to this exact evidence ID; do not infer a target from its spelling.
-    if !anchor["rule_id"].as_str().is_some_and(|rule| {
-        ["javascript-", "typescript-", "tsx-"]
-            .iter()
-            .any(|prefix| rule.starts_with(prefix))
-            && rule.ends_with("parameter-sink-summary")
-    }) {
-        return contexts;
-    }
-    let Some(fact) = review["facts"]
+    for fact in review["facts"]
         .as_array()
         .into_iter()
         .flatten()
-        .find(|fact| {
-            fact["role"] == "captured_definition_context" && fact["evidence_id"] == anchor["id"]
+        .filter(|fact| {
+            (fact["role"] == "captured_definition_context"
+                || fact["role"] == "rust_dependency_definition_context")
+                && fact["evidence_id"] == anchor["id"]
+                && fact["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
         })
-    else {
-        return contexts;
-    };
-    let location = &fact["location"];
-    let exact_excerpt = match (
-        location["start"]["byte_offset"].as_u64(),
-        location["end"]["byte_offset"].as_u64(),
-        fact["excerpt"].as_str(),
-    ) {
-        (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
-        _ => false,
-    };
-    contexts.push(serde_json::json!({
+        .take(if review["language"] == "rust" { 8 } else { 1 })
+    {
+        let location = &fact["location"];
+        let exact_excerpt = match (
+            location["start"]["byte_offset"].as_u64(),
+            location["end"]["byte_offset"].as_u64(),
+            fact["excerpt"].as_str(),
+        ) {
+            (Some(start), Some(end), Some(text)) => {
+                end.checked_sub(start) == Some(text.len() as u64)
+            }
+            _ => false,
+        };
+        contexts.push(serde_json::json!({
         "role": fact["role"], "symbol": fact["symbol"],
         "location": {
             "path": location["path"], "start_line": location["start"]["line"], "end_line": location["end"]["line"],
@@ -3647,6 +3647,7 @@ fn compact_helper_context(
         "excerpt": fact["excerpt"],
         "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
     }));
+    }
     contexts
 }
 
@@ -3861,7 +3862,7 @@ fn review_card_from_value(
     }
     lookups.dedup();
     lookups.truncate(2);
-    Ok(serde_json::json!({
+    let mut card = serde_json::json!({
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
         "selected_anchor_id": selected_anchor_id,
@@ -3887,7 +3888,30 @@ fn review_card_from_value(
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
         "truncation": truncation,
-    }))
+    });
+    if let Some(configuration) = compact_source_configuration(anchor) {
+        card["source_configuration"] = configuration;
+    }
+    Ok(card)
+}
+
+fn compact_source_configuration(anchor: &serde_json::Value) -> Option<serde_json::Value> {
+    let dependencies = anchor["context"]["configuration_dependencies"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !anchor["rule_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("rust-"))
+        && dependencies.is_empty()
+    {
+        return None;
+    }
+    let availability = anchor["context"].get("availability")?;
+    if availability["state"] == "always" && dependencies.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({"availability":availability,"dependencies":dependencies}))
 }
 
 fn brief_location(location: &serde_json::Value) -> serde_json::Value {
@@ -4439,7 +4463,7 @@ USAGE:
   mehscan investigate enclosing-at [ROOT] --path FILE --line N
   mehscan investigate evidence [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--limit N]
   mehscan investigate units [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--context-lines N] [--limit N]
-  mehscan investigate symbol [ROOT] --name NAME [--path FILE] [--limit N]
+  mehscan investigate symbol [ROOT] --name NAME [--path FILE | --path-prefix DIR] [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
   mehscan investigate references [ROOT] --symbol NAME [--path FILE | --path-prefix DIR] [--limit N] [--summary true]
   mehscan investigate provenance [ROOT] [--inventory DIR] [--path-prefix DIR] [--limit N]
@@ -4532,6 +4556,39 @@ mod tests {
         assert_eq!(context.len(), 1);
         assert_eq!(context[0]["location"]["path"], "helper.ts");
         assert_eq!(context[0]["truncated"], false);
+        let mut rust = review.clone();
+        rust["language"] = serde_json::json!("rust");
+        let mut second = rust["facts"][0].clone();
+        second["symbol"] = serde_json::json!("Actor");
+        second["location"]["path"] = serde_json::json!("identity.rs");
+        rust["facts"].as_array_mut().unwrap().push(second);
+        let mut unrelated = rust["facts"][0].clone();
+        unrelated["evidence_id"] = serde_json::json!("another-operation");
+        rust["facts"].as_array_mut().unwrap().push(unrelated);
+        let delivered = super::compact_helper_context(&rust, &anchor);
+        assert_eq!(
+            delivered.len(),
+            2,
+            "all bounded Rust dependencies must reach the skill, with per-operation attribution"
+        );
+        assert_eq!(delivered[1]["symbol"], "Actor");
+        rust["facts"][1]["role"] = serde_json::json!("rust_dependency_definition_context");
+        assert_eq!(super::compact_helper_context(&rust, &anchor).len(), 2);
+        for rule in [
+            "go-md5-password-hash",
+            "java-helper-summary",
+            "csharp-helper-summary",
+            "rust-helper-summary",
+        ] {
+            let other_anchor = serde_json::json!({"id":"selected", "rule_id":rule});
+            assert_eq!(
+                super::compact_helper_context(&review, &other_anchor),
+                context
+            );
+        }
+        let mut empty = review.clone();
+        empty["facts"][0]["excerpt"] = serde_json::json!("");
+        assert!(super::compact_helper_context(&empty, &anchor).is_empty());
         review["truncation"]["occurred"] = serde_json::json!(true);
         assert_eq!(
             super::compact_helper_context(&review, &anchor)[0]["truncated"],
@@ -4610,6 +4667,22 @@ mod tests {
             super::compact_path_steps(&review)[0]["context"]["truncated"],
             true
         );
+    }
+
+    #[test]
+    fn compact_cards_keep_rust_module_conditions_and_hashed_declarations() {
+        let anchor = serde_json::json!({"rule_id":"rust-database-query","context":{
+            "availability":{"state":"conditional","condition":"src/lib.rs: #[cfg(feature=\"extra\")]"},
+            "configuration_dependencies":[{"target_path":"src/helper.rs","source_sha256":"abc","declaration":{"text":"mod helper;","location":{"path":"src/lib.rs","start":{"line":2},"end":{"line":2}}}}]
+        }});
+        let compact = super::compact_source_configuration(&anchor).unwrap();
+        assert_eq!(compact["availability"], anchor["context"]["availability"]);
+        assert_eq!(
+            compact["dependencies"],
+            anchor["context"]["configuration_dependencies"]
+        );
+        assert!(super::compact_source_configuration(&serde_json::json!({"rule_id":"rust-database-query","context":{"availability":{"state":"always"}}})).is_none());
+        assert!(super::compact_source_configuration(&serde_json::json!({"rule_id":"javascript-query","context":{"availability":{"state":"conditional"}}})).is_none());
     }
 
     #[test]

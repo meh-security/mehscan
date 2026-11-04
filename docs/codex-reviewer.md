@@ -27,7 +27,9 @@ python -m pip install --requirement skills/mehscan-security/scripts/requirements
 ```
 
 Stable mode sends the unbound wire schema and validates the reply against the
-exact current-turn schema locally. Handles, offered claims, query/final-turn
+exact current-turn schema locally. Assignment IDs and claim counts stay out of
+the transmitted schema, allowing independent reviews in the same mode and role
+to share it. Handles, offered claims, query/final-turn
 constraints and existing envelope/source checks still apply. Usage and private
 continuation state are recorded before a completed reply can be rejected.
 `schema-validation-<conversation>.jsonl` records validity and wire/local schema

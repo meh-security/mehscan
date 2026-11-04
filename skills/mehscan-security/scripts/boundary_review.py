@@ -35,7 +35,7 @@ def extend_schema(schema, task, *, bound_handles=True):
             "additionalProperties":False, "properties":properties, "required":list(properties)}}
 
     properties = {
-        "review_id":{"type":"string", "enum":ids},
+        "review_id":{"type":"string", **({"enum":ids} if bound_handles else {})},
         "effect":nullable, "requirement":nullable, "example":text, "observation":text,
         "status":{"type":"string", "enum":["counterexample","enforced","unresolved","no_boundary"]},
         "cause":{"type":["string","null"], "enum":[None,"search_limited","not_found_in_scope",
@@ -49,7 +49,7 @@ def extend_schema(schema, task, *, bound_handles=True):
     schema["properties"] = {"action":schema["properties"].pop("action"),
         "boundary_checks":{"type":"array",
             "minItems":len(ids) if final_only else 0,
-            "maxItems":len(ids),
+            **({"maxItems":len(ids)} if bound_handles else {}),
             "items":{"type":"object", "additionalProperties":False,
                 "properties":properties, "required":list(properties)}},
         **schema["properties"]}

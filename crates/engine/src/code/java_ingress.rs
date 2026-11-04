@@ -113,31 +113,45 @@ pub(crate) fn add_spring_parameter_sources<'tree>(
     }
 }
 
-pub(crate) fn is_bound_spring_parameter(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    method: &Node<'_, StrDoc<SupportLang>>,
-    parameter: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let imports = spring_imports(root);
-    let locally_declared_types = declared_types(root);
-    MAPPING_ANNOTATIONS
-        .iter()
-        .any(|name| has_spring_annotation(method, name, &imports, &locally_declared_types))
-        && BINDING_ANNOTATIONS.iter().any(|(name, _)| {
-            has_spring_annotation(parameter, name, &imports, &locally_declared_types)
-        })
+pub(super) struct SpringParameterContext {
+    imports: SpringImports,
+    locally_declared_types: BTreeSet<String>,
 }
 
-pub(crate) fn is_spring_multipart_parameter(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    method: &Node<'_, StrDoc<SupportLang>>,
-    parameter: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let imports = spring_imports(root);
-    let locally_declared_types = declared_types(root);
-    is_bound_spring_parameter(root, method, parameter)
-        && has_spring_annotation(parameter, "RequestPart", &imports, &locally_declared_types)
-        && is_exact_multipart_file(parameter, &imports, &locally_declared_types)
+impl SpringParameterContext {
+    pub(super) fn new(root: &Node<'_, StrDoc<SupportLang>>) -> Self {
+        Self {
+            imports: spring_imports(root),
+            locally_declared_types: declared_types(root),
+        }
+    }
+
+    pub(super) fn is_bound_spring_parameter(
+        &self,
+        method: &Node<'_, StrDoc<SupportLang>>,
+        parameter: &Node<'_, StrDoc<SupportLang>>,
+    ) -> bool {
+        MAPPING_ANNOTATIONS.iter().any(|name| {
+            has_spring_annotation(method, name, &self.imports, &self.locally_declared_types)
+        }) && BINDING_ANNOTATIONS.iter().any(|(name, _)| {
+            has_spring_annotation(parameter, name, &self.imports, &self.locally_declared_types)
+        })
+    }
+
+    pub(super) fn is_spring_multipart_parameter(
+        &self,
+        method: &Node<'_, StrDoc<SupportLang>>,
+        parameter: &Node<'_, StrDoc<SupportLang>>,
+    ) -> bool {
+        self.is_bound_spring_parameter(method, parameter)
+            && has_spring_annotation(
+                parameter,
+                "RequestPart",
+                &self.imports,
+                &self.locally_declared_types,
+            )
+            && is_exact_multipart_file(parameter, &self.imports, &self.locally_declared_types)
+    }
 }
 
 pub(crate) fn spring_parameter_evidence_id(path: &str, start: usize, end: usize) -> String {

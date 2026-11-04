@@ -1,6 +1,6 @@
 [package]
 name = "mehscan-engine"
-version = "0.9.0"
+version = "0.10.0"
 description = "Deterministic source analysis and bounded security relationships for Mehscan"
 edition.workspace = true
 rust-version.workspace = true
@@ -33,3 +33,4 @@ sha2 = "0.10.9"
 ignore.workspace = true
 oxc_resolver = "=11.0.0"
 globset = "0.4.18"
+toml_edit = { version = "=0.25.13", default-features = false, features = ["parse"] }

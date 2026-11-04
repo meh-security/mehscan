@@ -1,12 +1,11 @@
+mod support;
 use mehscan_core::{Capability, EvidenceKind, SecurityPathState};
 use std::{fs, path::PathBuf};
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("mehscan-filesystem-{name}-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
+        let root = support::temp_dir(&format!("filesystem-{name}"));
         for (path, source) in files {
             fs::write(root.join(path), source).unwrap();
         }
@@ -16,6 +15,485 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[test]
+fn rust_open_options_tracks_effects_aliases_and_uncertainty_once_per_open() {
+    let fixture = Fixture::new(
+        "open-options",
+        &[(
+            "app.rs",
+            r#"
+use std::fs::{OpenOptions as Options, File};
+fn read(path: &str) { let _ = Options::new().read(true).open(path); }
+fn append(path: &str) { let _ = std::fs::OpenOptions::new().read(true).append(true).open(path); }
+fn create(path: &str) { let _ = Options::new().write(true).create_new(true).open(path); }
+fn disabled(path: &str) { let _ = Options::new().write(true).write(false).read(true).open(path); }
+fn local(path: &str) { let mut o = File::options(); o.read(true); o.append(true); let _ = o.open(path); }
+fn alias(path: &str) { let mut o = Options::new(); let alias = &mut o; alias.write(true); let _ = o.open(path); }
+fn dynamic(path: &str, write: bool) { let _ = Options::new().read(true).write(write).open(path); }
+fn branch(path: &str, write: bool) { let mut o = Options::new(); o.read(true); if write { o.write(true); } let _ = o.open(path); }
+fn escaped(path: &str) { let mut o = Options::new(); o.read(true); configure(&mut o); let _ = o.open(path); }
+fn replacement(path: &str) { let mut o = Options::new().read(true).clone(); o = Options::new().append(true).clone(); let _ = o.open(path); }
+fn cloned(path: &str) { let mut o = Options::new(); o.read(true); let other = o.clone(); o.write(true); let _ = other.open(path); }
+fn typed(o: &std::fs::OpenOptions, path: &str) { let _ = o.open(path); }
+fn create_without_access(path: &str) { let _ = Options::new().create(true).open(path); }
+fn truncate_without_write(path: &str) { let _ = Options::new().read(true).truncate(true).open(path); }
+fn short_circuit(path: &str, write: bool) { let mut o = Options::new(); o.read(true); let _ = write && o.write(true).is_ready(); let _ = o.open(path); }
+fn looping(path: &str) { let mut o = Options::new(); o.read(true); loop { let _ = o.open(path); o.append(true); } }
+fn macro_escape(path: &str) { let mut o = Options::new(); o.read(true); configure!(&mut o); let _ = o.open(path); }
+fn restored(path: &str, write: bool) { let mut o = Options::new(); o.read(true); if write { o.write(true); } o.write(false); let _ = o.open(path); }
+fn inner_builder(path: &str, run: bool) { if run { let _ = Options::new().write(true).open(path); } }
+fn alias_branch(path: &str, choose: bool) { let mut a = Options::new(); a.read(true); let mut b = Options::new(); b.read(true); let mut alias = &mut a; if choose { alias = &mut b; } alias.write(true); let _ = a.open(path); }
+fn alias_expression(path: &str, choose: bool) { let mut a = Options::new(); a.read(true); let mut b = Options::new(); b.read(true); let alias = if choose { &mut a } else { &mut b }; alias.write(true); let _ = a.open(path); }
+fn typed_local(path: &str) { let o: std::fs::OpenOptions = configured(); let _ = o.open(path); }
+fn configured_options() -> Options { let mut o = Options::new(); o.write(true); o }
+fn helper_return(path: &str) { let _ = configured_options().create_new(true).open(path); }
+fn permissions(path: &str) { let mut o = Options::new(); o.write(true).create_new(true); std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600); let _ = o.open(path); }
+fn else_outer(path: &str, value: Option<Custom>) { let mut options = Options::new(); options.read(true); if let Some(options) = value { use_custom(options); } else { let _ = options.open(path); } }
+fn separate(path: &str) { let mut o = Options::new(); o.read(true); let _ = o.open(path); o.write(true); let _ = o.open(path); }
+async fn asynchronous(path: &str) { let _ = tokio::fs::OpenOptions::new().write(true).create(true).open(path).await; }
+mod child {
+    use std::fs::OpenOptions as LocalOptions;
+    pub fn nested(path: &str) { let _ = LocalOptions::new().read(true).open(path); }
+}
+struct Store;
+impl Store {
+    fn method_import(path: &str) { let _ = Options::new().read(true).open(path); }
+    fn method_factory(path: &str) { let _ = configured_options().create_new(true).open(path); }
+}
+trait Reader {
+    fn trait_import(path: &str) { let _ = Options::new().read(true).open(path); }
+}
+"#,
+        )],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for (symbol, capability, mode) in [
+        ("read", Capability::FilesystemRead, "read"),
+        ("append", Capability::FilesystemWrite, "read-write"),
+        ("create", Capability::FilesystemWrite, "write"),
+        ("disabled", Capability::FilesystemRead, "read"),
+        ("local", Capability::FilesystemWrite, "read-write"),
+        ("alias", Capability::FilesystemWrite, "write"),
+        ("dynamic", Capability::FilesystemRead, "unresolved"),
+        ("branch", Capability::FilesystemRead, "unresolved"),
+        ("escaped", Capability::FilesystemRead, "unresolved"),
+        ("replacement", Capability::FilesystemWrite, "write"),
+        ("cloned", Capability::FilesystemRead, "read"),
+        ("typed", Capability::FilesystemRead, "unresolved"),
+        (
+            "create_without_access",
+            Capability::FilesystemRead,
+            "unresolved",
+        ),
+        (
+            "truncate_without_write",
+            Capability::FilesystemRead,
+            "unresolved",
+        ),
+        ("asynchronous", Capability::FilesystemWrite, "write"),
+        ("short_circuit", Capability::FilesystemRead, "unresolved"),
+        ("looping", Capability::FilesystemRead, "unresolved"),
+        ("macro_escape", Capability::FilesystemRead, "unresolved"),
+        ("restored", Capability::FilesystemRead, "read"),
+        ("inner_builder", Capability::FilesystemWrite, "write"),
+        ("alias_branch", Capability::FilesystemRead, "unresolved"),
+        ("alias_expression", Capability::FilesystemRead, "unresolved"),
+        ("typed_local", Capability::FilesystemRead, "unresolved"),
+        ("helper_return", Capability::FilesystemWrite, "unresolved"),
+        ("permissions", Capability::FilesystemWrite, "write"),
+        ("else_outer", Capability::FilesystemRead, "read"),
+        ("nested", Capability::FilesystemRead, "read"),
+        ("method_import", Capability::FilesystemRead, "read"),
+        ("method_factory", Capability::FilesystemWrite, "unresolved"),
+        ("trait_import", Capability::FilesystemRead, "read"),
+    ] {
+        let effects = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| {
+                e.enclosing_symbol.as_deref() == Some(symbol)
+                    && e.tags.iter().any(|t| t == "open-options")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(effects.len(), 1, "{symbol}: {effects:?}");
+        let effect = effects[0];
+        assert_eq!(effect.capability, capability, "{symbol}");
+        assert!(
+            effect.tags.contains(&format!("filesystem-mode:{mode}")),
+            "{symbol}: {effect:?}"
+        );
+        assert_eq!(effect.captures["path"].text, "path", "{symbol}");
+        assert_eq!(effect.context.operand_facts.len(), 1);
+        assert_eq!(
+            effect.context.operand_facts[0].remaining_checks.is_empty(),
+            mode != "unresolved",
+            "{symbol}"
+        );
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol) && e.capability == capability),
+            "lost {symbol}"
+        );
+    }
+    let separate = inventory
+        .scan
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.enclosing_symbol.as_deref() == Some("separate")
+                && e.tags.iter().any(|t| t == "open-options")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(separate.len(), 2);
+    assert_eq!(separate[0].capability, Capability::FilesystemRead);
+    assert_eq!(separate[1].capability, Capability::FilesystemWrite);
+}
+
+#[test]
+fn rust_open_options_does_not_borrow_sdk_ownership_or_modes() {
+    let fixture = Fixture::new(
+        "open-options-ownership",
+        &[
+            (
+                "custom.rs",
+                r#"
+struct OpenOptions;
+fn custom(path: &str) { let _ = OpenOptions::new().read(true).open(path); }
+fn container(o: Vec<std::fs::OpenOptions>, path: &str) { let _ = o.open(path); }
+fn extension(path: &str) { let _ = std::fs::OpenOptions::new().custom().open(path); }
+fn generic<OpenOptions>(o: &OpenOptions, path: &str) { let _ = o.open(path); }
+mod nested { pub fn inherited(path: &str) { let _ = OpenOptions::new().open(path); } }
+fn wrapper() -> Vec<std::fs::OpenOptions> { unimplemented!() }
+fn wrapper_return(path: &str) { let _ = wrapper().read(true).open(path); }
+fn factory() -> std::fs::OpenOptions { unimplemented!() }
+fn shadowed_factory(path: &str) { let factory = || Custom; let _ = factory().open(path); }
+fn closure_shadow(path: &str) { let options = std::fs::OpenOptions::new(); let _ = |options| options.open(path); }
+fn for_shadow(path: &str, values: Vec<Custom>) { let options = std::fs::OpenOptions::new(); for options in values { let _ = options.open(path); } }
+fn match_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); match value { Some(options) => { let _ = options.open(path); }, None => () } }
+fn if_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); if let Some(options) = value { let _ = options.open(path); } }
+fn while_shadow(path: &str, value: Option<Custom>) { let options = std::fs::OpenOptions::new(); while let Some(options) = value { let _ = options.open(path); break; } }
+fn closure_factory_shadow(path: &str) { let _ = |factory| factory().open(path); }
+fn for_factory_shadow(path: &str, values: Vec<Custom>) { for factory in values { let _ = factory().open(path); } }
+"#,
+            ),
+            (
+                "shadow.rs",
+                r#"
+mod std {}
+use std::fs::OpenOptions as Options;
+fn shadow(path: &str) { let _ = Options::new().read(true).open(path); }
+fn qualified_shadow(path: &str) { let _ = std::fs::OpenOptions::new().read(true).open(path); }
+"#,
+            ),
+            (
+                "scope.rs",
+                r#"
+use std::fs::OpenOptions;
+fn local_shadow(path: &str) { struct OpenOptions; let _ = OpenOptions::new().read(true).open(path); }
+mod child { fn parent_import(path: &str) { let _ = OpenOptions::new().read(true).open(path); } }
+mod fake { use application::OpenOptions; fn sdk_lookalike(path: &str) { let _ = OpenOptions::new().write(true).open(path); } }
+"#,
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    assert!(
+        !inventory
+            .scan
+            .evidence
+            .iter()
+            .any(|e| e.tags.iter().any(|t| t == "open-options")),
+        "{:?}",
+        inventory.scan.evidence
+    );
+}
+
+#[test]
+fn file_contents_do_not_upgrade_unconnected_path_observations() {
+    let fixture = Fixture::new(
+        "source-direction",
+        &[(
+            "app.rs",
+            r#"
+fn own_output(path: &str) { let _ = std::fs::read_to_string(path); }
+fn unrelated(path: &str) {
+    let _content = std::fs::read_to_string("local-config");
+    let _ = std::fs::read(path);
+}
+fn later_output(path: &str) {
+    std::fs::remove_file(path);
+    let _ = std::fs::read_to_string("local-config");
+}
+fn content_selects_path() {
+    let selected = std::fs::read_to_string("selector").unwrap();
+    let _ = std::fs::read(&selected);
+}
+use axum::extract::Path;
+async fn external_path(Path(path): Path<String>) { let _ = std::fs::read(&path); }
+"#,
+        )],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["own_output", "unrelated", "later_output"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost {symbol}");
+        assert!(
+            entries.iter().all(|e| e.evidence_strength == "sink"),
+            "{symbol}: {entries:?}"
+        );
+    }
+    // Direction correction never erases file content sources or actual consumers.
+    assert!(
+        inventory
+            .scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id == "rust-file-content-input")
+    );
+    for symbol in ["content_selects_path", "external_path"] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)
+                    && e.capability == Capability::FilesystemRead
+                    && e.value_hint.is_none()),
+            "lost {symbol}"
+        );
+    }
+    assert!(
+        inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("external_path") && e.review_kind == "path"),
+        "lost actual request-to-path flow"
+    );
+}
+
+#[test]
+fn generated_temporary_selection_is_explicit_research_not_a_safe_verdict() {
+    let fixture = Fixture::new(
+        "temporary-selection",
+        &[
+            (
+                "app.rs",
+                r#"
+use tempfile::NamedTempFile as Scratch;
+fn editor() -> std::io::Result<()> {
+    let file = Scratch::new()?;
+    let path = file.into_temp_path();
+    std::fs::write(&path, "initial")?;
+    let _ = std::fs::read_to_string(&path)?;
+    Ok(())
+}
+fn direct() { let _ = std::fs::read(tempfile::NamedTempFile::new().unwrap().path()); }
+fn custom_root(root: &str) {
+    let file = Scratch::new_in(root).unwrap();
+    let _ = std::fs::read(file.path());
+}
+fn mutable_path(input: std::path::PathBuf) {
+    let file = Scratch::new().unwrap();
+    let mut path = file.into_temp_path();
+    change(&mut path, input);
+    let _ = std::fs::read(&path);
+}
+fn shadowed(input: std::path::PathBuf) {
+    let file = Scratch::new().unwrap();
+    let path = file.into_temp_path();
+    let path = input;
+    let _ = std::fs::read(&path);
+}
+fn destination(input: &str) {
+    let file = Scratch::new().unwrap();
+    std::fs::copy(file.path(), input);
+    std::fs::rename(file.path(), input);
+}
+fn custom_extension() {
+    let file = Scratch::new().unwrap();
+    let _ = std::fs::read(file.path().unwrap());
+}
+#[cfg(test)]
+mod tests { use super::*; struct Scratch; }
+"#,
+            ),
+            (
+                "custom.rs",
+                r#"
+use custom::NamedTempFile;
+fn custom() { let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "local.rs",
+                r#"
+mod tempfile { pub struct NamedTempFile; }
+fn local() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "nested.rs",
+                r#"
+use tempfile::NamedTempFile;
+fn nested() { use other::NamedTempFile; let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "custom_sink.rs",
+                r#"
+use custom::File;
+fn custom_sink() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = File::open(file.path()); }
+"#,
+            ),
+            (
+                "crate_alias.rs",
+                r#"
+extern crate other as tempfile;
+fn crate_alias() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "glob.rs",
+                r#"
+use other::*;
+fn glob() { let file = tempfile::NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+"#,
+            ),
+            (
+                "child.rs",
+                r#"
+mod child {
+    use tempfile::NamedTempFile;
+    fn child() { let file = NamedTempFile::new().unwrap(); let _ = std::fs::read(file.path()); }
+}
+"#,
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["editor", "direct"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries.len(),
+            if symbol == "editor" { 2 } else { 1 },
+            "{entries:?}"
+        );
+        assert!(
+            entries.iter().all(|e| e
+                .value_hint
+                .as_ref()
+                .is_some_and(|h| h.reason == "generated_temporary_filesystem_selection")),
+            "{entries:?}"
+        );
+    }
+    for symbol in [
+        "custom_root",
+        "mutable_path",
+        "shadowed",
+        "destination",
+        "custom_extension",
+        "custom",
+        "local",
+        "nested",
+        "custom_sink",
+        "crate_alias",
+        "glob",
+        "child",
+    ] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.symbol.as_deref() == Some(symbol))
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost {symbol}");
+        assert!(
+            entries.iter().all(|e| e.value_hint.is_none()),
+            "wrong deferral {symbol}: {entries:?}"
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some(symbol)
+                    && e.tags
+                        .iter()
+                        .any(|t| t == "filesystem-path:generated-temporary")),
+            "wrong proof {symbol}"
+        );
+    }
+}
+
+#[test]
+fn inline_sync_handles_are_inventory_but_readable_handles_and_custom_apis_survive() {
+    let fixture = Fixture::new(
+        "sync-only",
+        &[
+            (
+                "app.rs",
+                r#"
+use std::fs::File;
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> { File::open(path)?.sync_all()?; Ok(()) }
+fn sync_data(path: &str) -> std::io::Result<()> { std::fs::File::open(path)?.sync_data()?; Ok(()) }
+fn result_extension(path: &str) { std::fs::File::open(path).sync_data(); }
+fn consumed(path: &str) { let mut file = File::open(path).unwrap(); file.sync_all(); file.read_to_end(&mut Vec::new()); }
+fn returned(path: &str) { return File::open(path); }
+"#,
+            ),
+            (
+                "custom.rs",
+                r#"
+use custom::File;
+fn custom(path: &str) { File::open(path)?.sync_all()?; }
+"#,
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["sync_directory", "sync_data"] {
+        assert!(
+            inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some(symbol)
+                    && e.tags.iter().any(|t| t == "filesystem-effect:sync-only")),
+            "missing purpose {symbol}"
+        );
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)),
+            "sync is not a content-read job: {symbol}"
+        );
+    }
+    for symbol in ["consumed", "returned", "result_extension", "custom"] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)),
+            "lost {symbol}"
+        );
     }
 }
 

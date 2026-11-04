@@ -30,7 +30,7 @@ pub(super) fn add_operand_facts<'a>(
     let producers = evidence
         .iter()
         .any(|item| item.rule_id == "php-html-output")
-        .then(|| review::Producers::collect(&context.root));
+        .then(|| review::Producers::collect(context));
     for item in evidence {
         if item.rule_id == "php-command-execution" {
             if let Some(node) = item.captures.get("command").and_then(|c| {
@@ -126,7 +126,7 @@ pub(super) fn add_operand_facts<'a>(
             if node
                 .field("function")
                 .is_some_and(|function| !function.text().starts_with('\\'))
-                && context.namespaced_scope(&namespace_scope(&node, &context.root))
+                && context.namespaced_scope(&context.namespace_scope(&node))
             {
                 output_context = format!("unknown_binding:{output_context}");
             }
@@ -473,9 +473,130 @@ type PhpNode<'a> = Node<'a, StrDoc<SupportLang>>;
 type DatabaseExports = BTreeMap<String, (String, Capture)>;
 type IncludedDatabase = (Range<usize>, String, DatabaseExports);
 
+#[derive(Default)]
+struct DatabaseScope<'a> {
+    includes: Vec<PhpNode<'a>>,
+    state_barriers: Vec<PhpNode<'a>>,
+    handoffs: BTreeMap<String, Vec<PhpNode<'a>>>,
+    writes: BTreeMap<String, Vec<PhpNode<'a>>>,
+    parameters: BTreeMap<String, Vec<PhpNode<'a>>>,
+}
+
+type DatabaseScopes<'a> = BTreeMap<(usize, usize), DatabaseScope<'a>>;
+
+fn database_scopes<'a>(root: &PhpNode<'a>) -> DatabaseScopes<'a> {
+    let mut scopes = DatabaseScopes::new();
+    for node in root.dfs().filter(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "include_expression"
+                | "include_once_expression"
+                | "require_expression"
+                | "require_once_expression"
+                | "function_call_expression"
+                | "member_call_expression"
+                | "assignment_expression"
+                | "augmented_assignment_expression"
+                | "reference_assignment_expression"
+                | "unset_statement"
+                | "simple_parameter"
+        )
+    }) {
+        let owner = function_scope(&node, root);
+        let scope = scopes.entry((owner.start, owner.end)).or_default();
+        if matches!(
+            node.kind().as_ref(),
+            "include_expression"
+                | "include_once_expression"
+                | "require_expression"
+                | "require_once_expression"
+                | "reference_assignment_expression"
+                | "unset_statement"
+        ) {
+            scope.state_barriers.push(node.clone());
+        }
+        match node.kind().as_ref() {
+            "include_expression"
+            | "include_once_expression"
+            | "require_expression"
+            | "require_once_expression" => scope.includes.push(node),
+            "function_call_expression" | "member_call_expression" => {
+                if let Some(args) = node.field("arguments") {
+                    // Match the existing conservative nested argument search,
+                    // including captures inside a passed closure.
+                    let names = args
+                        .dfs()
+                        .filter(|n| n.kind().as_ref() == "variable_name")
+                        .map(|n| n.text().into_owned())
+                        .collect::<BTreeSet<_>>();
+                    for name in names {
+                        scope.handoffs.entry(name).or_default().push(node.clone());
+                    }
+                }
+            }
+            "simple_parameter" => {
+                if let Some(name) = node.field("name") {
+                    scope
+                        .parameters
+                        .entry(name.text().into_owned())
+                        .or_default()
+                        .push(node);
+                }
+            }
+            _ => {
+                if let Some(left) = node.field("left") {
+                    scope
+                        .writes
+                        .entry(left.text().into_owned())
+                        .or_default()
+                        .push(node);
+                }
+            }
+        }
+    }
+    scopes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_lookup_keeps_callable_identity_and_prior_handoff_boundaries() {
+        let ast = AstGrep::doc(StrDoc::new(
+            r#"<?php
+function native(PDO $db, $q) { $db->query($q); }
+function foreign(Other $db, $q) { $db->query($q); }
+function local($q) { $db = new PDO('sqlite::memory:'); $db->query($q); }
+function changed(PDO $db, $q) { $db = new Other(); $db->query($q); }
+function handoff(PDO $db, $q) { replace($db); $db->query($q); }
+function after(PDO $db, $q) { $db->query($q); replace($db); }
+function sibling(PDO $db, $q) {
+    function nested() { $db = new Other(); replace($db); }
+    $db->query($q);
+}
+function reference(PDO $db, $other, $q) { $db =& $other; $db->query($q); }
+function augmented(PDO $db, $q) { $db += 1; $db->query($q); }
+function included(PDO $db, $q) { include 'unknown.php'; $db->query($q); }
+function repeated(PDO $db, $q) { $db->query($q); $db->query($q); }
+"#,
+            SupportLang::PhpMixed,
+        ));
+        let root = ast.root();
+        assert!(!root.dfs().any(|node| node.is_error() || node.is_missing()));
+        let context = PhpContext::build(&root);
+        let accepted: Vec<_> = root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "member_call_expression")
+            .map(|node| context.accepts("php-pdo-query", &node))
+            .collect();
+        assert_eq!(
+            accepted,
+            [
+                true, false, true, false, false, true, true, false, false, false, true, true
+            ]
+        );
+    }
 
     #[test]
     fn native_function_filter_preserves_imports_and_namespace_shadowing() {
@@ -646,8 +767,11 @@ struct Import {
 pub(super) struct PhpContext<'a> {
     root: PhpNode<'a>,
     imports: Vec<Import>,
-    declarations: Vec<(String, bool, Range<usize>)>,
-    namespaced_scopes: Vec<Range<usize>>,
+    declarations: BTreeMap<(String, bool), BTreeSet<(usize, usize)>>,
+    global_declarations: BTreeSet<(String, bool)>,
+    namespaced_scopes: BTreeSet<(usize, usize)>,
+    namespace_index: NamespaceIndex,
+    database_scopes: std::cell::OnceCell<DatabaseScopes<'a>>,
     included: Vec<IncludedDatabase>,
     json_candidates: BTreeSet<(usize, usize, String)>,
     constants: std::sync::Arc<value::Constants>,
@@ -657,6 +781,7 @@ pub(super) struct PhpContext<'a> {
 
 impl<'a> PhpContext<'a> {
     pub(super) fn build(root: &PhpNode<'a>) -> Self {
+        let namespace_index = NamespaceIndex::new(root);
         let mut imports = Vec::new();
         for declaration in root
             .dfs()
@@ -697,11 +822,11 @@ impl<'a> PhpContext<'a> {
                         || clause
                             .field("type")
                             .is_some_and(|n| n.text().trim() == "function"),
-                    scope: namespace_scope(&declaration, root),
+                    scope: namespace_index.scope(&declaration),
                 });
             }
         }
-        let declarations = root
+        let declarations: Vec<_> = root
             .dfs()
             .filter_map(|node| {
                 let function = match node.kind().as_ref() {
@@ -712,22 +837,38 @@ impl<'a> PhpContext<'a> {
                 Some((
                     node.field("name")?.text().to_ascii_lowercase(),
                     function,
-                    namespace_scope(&node, root),
+                    namespace_index.scope(&node),
                 ))
             })
             .collect();
-        let namespaced_scopes = root
+        let namespaced_scopes: BTreeSet<_> = root
             .dfs()
             .filter(|node| {
                 node.kind().as_ref() == "namespace_definition" && node.field("name").is_some()
             })
-            .map(|node| namespace_scope(&node, root))
+            .map(|node| {
+                let scope = namespace_index.scope(&node);
+                (scope.start, scope.end)
+            })
             .collect();
+        let mut declaration_scopes = BTreeMap::<_, BTreeSet<_>>::new();
+        let mut global_declarations = BTreeSet::new();
+        for (name, function, scope) in declarations {
+            let key = (name, function);
+            let scope = (scope.start, scope.end);
+            if !namespaced_scopes.contains(&scope) {
+                global_declarations.insert(key.clone());
+            }
+            declaration_scopes.entry(key).or_default().insert(scope);
+        }
         let mut context = Self {
             root: root.clone(),
             imports,
-            declarations,
+            declarations: declaration_scopes,
+            global_declarations,
             namespaced_scopes,
+            namespace_index,
+            database_scopes: std::cell::OnceCell::new(),
             included: Vec::new(),
             json_candidates: BTreeSet::new(),
             constants: std::sync::Arc::default(),
@@ -1211,10 +1352,8 @@ impl<'a> PhpContext<'a> {
 
     fn sdk_class_exact(&self, name: &PhpNode<'a>, canonical: &str) -> bool {
         let observed = name.text().trim().to_ascii_lowercase();
-        let scope = namespace_scope(name, &self.root);
-        if self.declarations.iter().any(|(declared, function, owner)| {
-            !function && *owner == scope && *declared == observed
-        }) {
+        let scope = self.namespace_scope(name);
+        if self.declaration_in_scope(&observed, false, &scope) {
             return false;
         }
         if observed.starts_with('\\') {
@@ -1267,34 +1406,24 @@ impl<'a> PhpContext<'a> {
         if receiver.kind().as_ref() != "variable_name" {
             return false;
         }
-        let scope = function_scope(call, &self.root);
-        if self.root.dfs().any(|n| {
-            n.range().start < call.range().start
-                && function_scope(&n, &self.root) == scope
-                && matches!(
-                    n.kind().as_ref(),
-                    "include_expression"
-                        | "include_once_expression"
-                        | "require_expression"
-                        | "require_once_expression"
-                )
-        }) {
+        let Some(scope) = self.database_scope(call) else {
+            return false;
+        };
+        let receiver_name = receiver.text();
+        if scope
+            .includes
+            .iter()
+            .any(|n| n.range().start < call.range().start)
+        {
             return false;
         }
-        let writes: Vec<_> = self
-            .root
-            .dfs()
-            .filter(|n| {
-                function_scope(n, &self.root) == scope
-                    && matches!(
-                        n.kind().as_ref(),
-                        "assignment_expression"
-                            | "augmented_assignment_expression"
-                            | "reference_assignment_expression"
-                    )
-                    && n.field("left")
-                        .is_some_and(|left| left.text() == receiver.text())
-            })
+        // SDK origins deliberately count later writes too, unlike the native
+        // receiver check. Sharing navigation must not weaken that contract.
+        let writes: Vec<_> = scope
+            .writes
+            .get(receiver_name.as_ref())
+            .into_iter()
+            .flatten()
             .collect();
         if let [write] = writes.as_slice() {
             return write.range().start < call.range().start
@@ -1305,45 +1434,31 @@ impl<'a> PhpContext<'a> {
         if !writes.is_empty() {
             return false;
         }
-        if self.root.dfs().any(|n| {
-            n.range().start < call.range().start
-                && function_scope(&n, &self.root) == scope
-                && matches!(
-                    n.kind().as_ref(),
-                    "function_call_expression" | "member_call_expression"
-                )
-                && n.field("arguments").is_some_and(|args| {
-                    args.dfs().any(|arg| {
-                        arg.kind().as_ref() == "variable_name" && arg.text() == receiver.text()
-                    })
-                })
-        }) {
+        if scope
+            .handoffs
+            .get(receiver_name.as_ref())
+            .is_some_and(|calls| calls.iter().any(|n| n.range().start < call.range().start))
+        {
             return false;
         }
-        self.root
-            .dfs()
-            .filter(|n| {
-                n.kind().as_ref() == "simple_parameter" && function_scope(n, &self.root) == scope
-            })
+        scope
+            .parameters
+            .get(receiver_name.as_ref())
+            .into_iter()
+            .flatten()
             .any(|param| {
-                param
-                    .field("name")
-                    .is_some_and(|name| name.text() == receiver.text())
-                    && param.field("type").is_some_and(|ty| {
-                        types
-                            .iter()
-                            .any(|canonical| self.sdk_class_exact(&ty, canonical))
-                    })
+                param.field("type").is_some_and(|ty| {
+                    types
+                        .iter()
+                        .any(|canonical| self.sdk_class_exact(&ty, canonical))
+                })
             })
     }
 
     fn resolve(&self, name: &PhpNode<'a>, function: bool) -> Option<String> {
         let observed = name.text().trim().to_ascii_lowercase();
-        let scope = namespace_scope(name, &self.root);
-        let collision = self
-            .declarations
-            .iter()
-            .any(|(name, kind, owner)| *kind == function && *owner == scope && *name == observed);
+        let scope = self.namespace_scope(name);
+        let collision = self.declaration_in_scope(&observed, function, &scope);
         if collision {
             return None;
         };
@@ -1590,7 +1705,7 @@ impl<'a> PhpContext<'a> {
     }
 
     fn curl_origin(&self, call: &PhpNode<'a>) -> Option<(PhpNode<'a>, PhpNode<'a>)> {
-        if self.namespaced_scope(&namespace_scope(call, &self.root)) {
+        if self.namespaced_scope(&self.namespace_scope(call)) {
             return None;
         }
         let arguments = call.field("arguments")?;
@@ -1600,25 +1715,19 @@ impl<'a> PhpContext<'a> {
             return None;
         }
         let owner = function_scope(call, &self.root);
-        let writes: Vec<_> = self
-            .root
-            .dfs()
-            .filter(|n| {
-                n.range().start < call.range().start
-                    && matches!(
-                        n.kind().as_ref(),
-                        "assignment_expression"
-                            | "reference_assignment_expression"
-                            | "augmented_assignment_expression"
-                    )
-                    && function_scope(n, &self.root) == owner
-                    && n.field("left")
-                        .is_some_and(|left| left.text() == handle.text())
-            })
+        let scope = self.database_scope(call)?;
+        let handle_name = handle.text();
+        let writes: Vec<_> = scope
+            .writes
+            .get(handle_name.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|node| node.range().start < call.range().start)
             .collect();
         let [binding] = writes.as_slice() else {
             return None;
         };
+        let binding = *binding;
         if binding.kind().as_ref() != "assignment_expression"
             || !mandatory_before(binding, call, &owner)
         {
@@ -1634,37 +1743,23 @@ impl<'a> PhpContext<'a> {
             return None;
         }
         let mut endpoint = init_args.first().cloned();
-        for prior in self.root.dfs().filter(|n| {
-            n.range().start >= binding.range().end
-                && n.range().end <= call.range().start
-                && function_scope(n, &self.root) == owner
+        if scope.state_barriers.iter().any(|node| {
+            node.range().start >= binding.range().end && node.range().end <= call.range().start
         }) {
-            if matches!(
-                prior.kind().as_ref(),
-                "include_expression"
-                    | "include_once_expression"
-                    | "require_expression"
-                    | "require_once_expression"
-                    | "reference_assignment_expression"
-                    | "unset_statement"
-            ) {
-                return None;
-            }
-            if !matches!(
-                prior.kind().as_ref(),
-                "function_call_expression" | "member_call_expression"
-            ) {
-                continue;
-            }
+            return None;
+        }
+        for prior in scope
+            .handoffs
+            .get(handle_name.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|node| {
+                node.range().start >= binding.range().end && node.range().end <= call.range().start
+            })
+        {
             let Some(args) = prior.field("arguments") else {
                 continue;
             };
-            if !args
-                .dfs()
-                .any(|n| n.kind().as_ref() == "variable_name" && n.text() == handle.text())
-            {
-                continue;
-            }
             if !self.exact_function(&prior, "curl_setopt") {
                 return None;
             }
@@ -1781,13 +1876,22 @@ impl<'a> PhpContext<'a> {
     }
 
     fn namespaced_scope(&self, scope: &Range<usize>) -> bool {
-        self.namespaced_scopes.contains(scope)
+        self.namespaced_scopes.contains(&(scope.start, scope.end))
+    }
+
+    fn namespace_scope(&self, node: &PhpNode<'_>) -> Range<usize> {
+        self.namespace_index.scope(node)
+    }
+
+    fn declaration_in_scope(&self, name: &str, function: bool, scope: &Range<usize>) -> bool {
+        self.declarations
+            .get(&(name.to_string(), function))
+            .is_some_and(|scopes| scopes.contains(&(scope.start, scope.end)))
     }
 
     fn global_shadow(&self, canonical: &str, function: bool) -> bool {
-        self.declarations.iter().any(|(name, kind, scope)| {
-            *kind == function && name == canonical && !self.namespaced_scope(scope)
-        })
+        self.global_declarations
+            .contains(&(canonical.to_string(), function))
     }
 
     fn native_database_receiver(
@@ -1803,20 +1907,14 @@ impl<'a> PhpContext<'a> {
             return false;
         };
         let owner = function_scope(call, &self.root);
-        let includes: Vec<_> = self
-            .root
-            .dfs()
-            .filter(|prior| {
-                prior.range().start < call.range().start
-                    && function_scope(prior, &self.root) == owner
-                    && matches!(
-                        prior.kind().as_ref(),
-                        "include_expression"
-                            | "include_once_expression"
-                            | "require_expression"
-                            | "require_once_expression"
-                    )
-            })
+        let Some(scope) = self.database_scope(call) else {
+            return false;
+        };
+        let receiver_name = receiver.text();
+        let includes: Vec<_> = scope
+            .includes
+            .iter()
+            .filter(|prior| prior.range().start < call.range().start)
             .collect();
         // Unknown includes can replace any receiver. Only one mandatory,
         // anchored include with a conservative config summary is admitted.
@@ -1859,34 +1957,23 @@ impl<'a> PhpContext<'a> {
         };
         // A by-reference helper can replace a local receiver. Without a call
         // summary, do not carry its construction/type through that boundary.
-        if self.root.dfs().any(|prior| {
-            matches!(
-                prior.kind().as_ref(),
-                "function_call_expression" | "member_call_expression"
-            ) && prior.range().start < call.range().start
-                && function_scope(&prior, &self.root) == owner
-                && prior.field("arguments").is_some_and(|args| {
-                    args.dfs().any(|arg| {
-                        arg.kind().as_ref() == "variable_name" && arg.text() == receiver.text()
-                    })
-                })
-        }) {
+        if scope
+            .handoffs
+            .get(receiver_name.as_ref())
+            .is_some_and(|calls| {
+                calls
+                    .iter()
+                    .any(|prior| prior.range().start < call.range().start)
+            })
+        {
             return false;
         }
-        let assignments: Vec<_> = self
-            .root
-            .dfs()
-            .filter(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "assignment_expression"
-                        | "augmented_assignment_expression"
-                        | "reference_assignment_expression"
-                ) && function_scope(n, &self.root) == owner
-                    && n.range().start < call.range().start
-                    && n.field("left")
-                        .is_some_and(|left| left.text() == receiver.text())
-            })
+        let assignments: Vec<_> = scope
+            .writes
+            .get(receiver_name.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|n| n.range().start < call.range().start)
             .collect();
         if !assignments.is_empty() {
             if included_origin.is_some() {
@@ -1931,17 +2018,24 @@ impl<'a> PhpContext<'a> {
                     .get(receiver.text().as_ref())
                     .is_some_and(|(native, _)| native == class);
         }
-        self.root.dfs().any(|parameter| {
-            parameter.kind().as_ref() == "simple_parameter"
-                && function_scope(&parameter, &self.root) == owner
-                && parameter
-                    .field("name")
-                    .is_some_and(|n| n.text() == receiver.text())
-                && parameter.field("type").is_some_and(|ty| {
+        scope
+            .parameters
+            .get(receiver_name.as_ref())
+            .into_iter()
+            .flatten()
+            .any(|parameter| {
+                parameter.field("type").is_some_and(|ty| {
                     self.resolve(&ty, false)
                         .is_some_and(|canonical| canonical == class)
                 })
-        })
+            })
+    }
+
+    fn database_scope(&self, site: &PhpNode<'a>) -> Option<&DatabaseScope<'a>> {
+        let owner = function_scope(site, &self.root);
+        self.database_scopes
+            .get_or_init(|| database_scopes(&self.root))
+            .get(&(owner.start, owner.end))
     }
 
     // A single constructor assignment in the exact lexical class is a bounded
@@ -2027,29 +2121,38 @@ impl<'a> PhpContext<'a> {
     }
 }
 
-fn namespace_scope(node: &PhpNode<'_>, root: &PhpNode<'_>) -> Range<usize> {
-    if let Some(namespace) = std::iter::once(node.clone())
-        .chain(node.ancestors())
-        .find(|n| n.kind().as_ref() == "namespace_definition" && n.field("body").is_some())
-    {
-        return namespace.range();
+struct NamespaceIndex {
+    root: Range<usize>,
+    starts: Vec<usize>,
+}
+
+impl NamespaceIndex {
+    fn new(root: &PhpNode<'_>) -> Self {
+        Self {
+            root: root.range(),
+            starts: root
+                .children()
+                .filter(|n| n.kind().as_ref() == "namespace_definition")
+                .map(|n| n.range().start)
+                .collect(),
+        }
     }
-    let namespaces: Vec<_> = root
-        .children()
-        .filter(|n| n.kind().as_ref() == "namespace_definition")
-        .collect();
-    let Some(current) = namespaces
-        .iter()
-        .rev()
-        .find(|n| n.range().start <= node.range().start)
-    else {
-        return root.range();
-    };
-    current.range().start
-        ..namespaces
-            .iter()
-            .find(|n| n.range().start > current.range().start)
-            .map_or(root.range().end, |next| next.range().start)
+
+    fn scope(&self, node: &PhpNode<'_>) -> Range<usize> {
+        if let Some(namespace) = std::iter::once(node.clone())
+            .chain(node.ancestors())
+            .find(|n| n.kind().as_ref() == "namespace_definition" && n.field("body").is_some())
+        {
+            return namespace.range();
+        }
+        let position = self
+            .starts
+            .partition_point(|start| *start <= node.range().start);
+        if position == 0 {
+            return self.root.clone();
+        }
+        self.starts[position - 1]..self.starts.get(position).copied().unwrap_or(self.root.end)
+    }
 }
 
 fn function_scope(node: &PhpNode<'_>, root: &PhpNode<'_>) -> Range<usize> {

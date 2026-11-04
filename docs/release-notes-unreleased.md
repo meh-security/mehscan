@@ -1,3 +1,30 @@
 # Unreleased changes
 
+## Features
+
+- Broader Python credential, Rust state and HTTP, and Go identity review.
+- Source lookups support directory-scoped helper discovery.
+- Follow copy-count arithmetic through selected C/C++ constructors and helpers.
+- Review C++ vector element lifetimes across repeated mutations.
+- Review pending C++ allocations abandoned by explicit exceptional exits.
+- Review nullable Rust buffers passed to raw-slice APIs.
+- Review initialized Rust buffer ranges before publishing their length.
+- Review Rust raw-memory ownership, allocation layout and copy boundaries.
+- Include typed Rust helper and persistence context in AI review.
+- Preserve captured helper evidence during AI review.
+
+## Bug fixes
+
+- Preserve Rust lifetimes and source lines during AI review.
+- Exclude additional test, spec and sample conventions from ordinary scans.
+- Preserve C# handler bindings and C++ allocation ownership evidence.
+- Review .NET hash operations without inferring password or reset-token use from names.
+- Avoid false crypto claims from shadowed Java APIs and unrelated Go hashing helpers.
+- Keep JWT signing-key evidence within its owning function and preserve uncertain decoder flows.
+- Reduce repeated source analysis across supported languages.
+- Improve cache reuse between independent AI reviews.
+- Respect Rust module and test conditions when preparing evidence and review questions.
+- Recover from transient Windows review-checkpoint locks and correct rejected checklist formatting within the review budget.
+- Include language coverage guides and linked license files in release packages.
+
 [Full changelog](https://github.com/meh-security/mehscan/compare/v0.9.0...main)

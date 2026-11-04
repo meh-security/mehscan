@@ -1,16 +1,9 @@
+mod support;
 use std::collections::BTreeSet;
 
 #[test]
 fn all_canonical_client_verbs_keep_builder_context_without_final_url_flow() {
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-ktor-builders-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let root = support::temp_dir("ktor-builders");
     let verbs = [
         "get", "post", "put", "delete", "patch", "head", "options", "request",
     ];

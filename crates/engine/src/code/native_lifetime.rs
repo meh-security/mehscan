@@ -711,6 +711,7 @@ fn evidence_context<'tree>(
         http_routes: Vec::new(),
         resource_policy: None,
         runtime_environment: None,
+        configuration_dependencies: Vec::new(),
     }
 }
 fn capture(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Capture {

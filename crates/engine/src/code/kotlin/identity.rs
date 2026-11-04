@@ -1,16 +1,143 @@
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 pub(super) type KNode<'a> = Node<'a, StrDoc<SupportLang>>;
+type ScopeKey = (usize, usize);
+
+#[derive(Default)]
+struct MutationIndex {
+    symbols: BTreeMap<String, usize>,
+    bindings: BTreeMap<ScopeKey, usize>,
+}
 
 #[derive(Default)]
 pub(in crate::code) struct Imports {
     aliases: BTreeMap<String, BTreeSet<String>>,
     wildcards: BTreeSet<String>,
+    declarations: BTreeMap<String, Vec<DeclarationScope>>,
+    binding_scopes: BTreeMap<ScopeKey, BTreeMap<String, Vec<usize>>>,
+    assignments: BTreeMap<Option<(usize, usize)>, Vec<Range<usize>>>,
+    mutations: std::cell::RefCell<BTreeMap<Option<ScopeKey>, MutationIndex>>,
+}
+
+struct DeclarationScope {
+    kind: String,
+    declaration: Range<usize>,
+    scope: Range<usize>,
+    visible_before_declaration: bool,
+}
+
+impl DeclarationScope {
+    fn visible(&self, site: &KNode<'_>) -> bool {
+        let site = site.range();
+        self.scope.start <= site.start
+            && site.end <= self.scope.end
+            && (self.visible_before_declaration || self.declaration.start < site.start)
+    }
 }
 
 impl Imports {
+    pub(super) fn binding<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> Option<KNode<'a>> {
+        let symbol_key = symbol.trim_end_matches("!!");
+        let symbol_key = symbol_key.strip_prefix("this.").unwrap_or(symbol_key);
+        let entries = self.declarations.get(symbol_key)?;
+        let mut positions = std::iter::once(use_site.clone())
+            .chain(use_site.ancestors())
+            .filter_map(|scope| {
+                self.binding_scopes
+                    .get(&(scope.range().start, scope.range().end))
+            })
+            .filter_map(|names| names.get(symbol_key))
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        positions.sort_unstable();
+        positions.dedup();
+        let candidates = positions
+            .into_iter()
+            .map(|position| &entries[position])
+            .filter(|entry| entry.visible(use_site))
+            .filter(|entry| {
+                matches!(
+                    entry.kind.as_str(),
+                    "variable_declaration" | "parameter" | "class_parameter"
+                )
+            })
+            .filter_map(|entry| node_of_kind(root, entry.declaration.clone(), &entry.kind));
+        select_binding(candidates, use_site, symbol)
+    }
+
+    pub(super) fn binding_type<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> Option<String> {
+        self.binding(root, use_site, symbol)?
+            .children()
+            .find(|n| matches!(n.kind().as_ref(), "user_type" | "nullable_type"))
+            .map(|n| n.text().trim_end_matches('?').to_string())
+    }
+
+    pub(super) fn receiver_unchanged<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> bool {
+        let symbol = symbol.trim_end_matches("!!");
+        let target = self.binding(root, use_site, symbol).map(|n| n.range());
+        let owner = callable(use_site).map(|n| (n.range().start, n.range().end));
+        if !self.mutations.borrow().contains_key(&owner) {
+            let mut index = MutationIndex::default();
+            if let Some(ranges) = self.assignments.get(&owner) {
+                for range in ranges {
+                    let Some(assignment) = node_of_kind(root, range.clone(), "assignment") else {
+                        continue;
+                    };
+                    let Some(left) = assignment.children().find(|n| n.is_named()) else {
+                        continue;
+                    };
+                    let assigned = left.text().trim().to_string();
+                    index
+                        .symbols
+                        .entry(assigned.clone())
+                        .and_modify(|first| *first = (*first).min(range.start))
+                        .or_insert(range.start);
+                    if let Some(binding) = self.binding(root, &left, &assigned) {
+                        let key = (binding.range().start, binding.range().end);
+                        index
+                            .bindings
+                            .entry(key)
+                            .and_modify(|first| *first = (*first).min(range.start))
+                            .or_insert(range.start);
+                    }
+                }
+            }
+            self.mutations.borrow_mut().insert(owner, index);
+        }
+        let indexes = self.mutations.borrow();
+        let mutations = &indexes[&owner];
+        let before = use_site.range().start;
+        !mutations
+            .symbols
+            .get(symbol)
+            .is_some_and(|first| *first < before)
+            && !target.is_some_and(|target| {
+                mutations
+                    .bindings
+                    .get(&(target.start, target.end))
+                    .is_some_and(|first| *first < before)
+            })
+    }
+
     pub(super) fn default_extension(
         &self,
         root: &KNode<'_>,
@@ -23,7 +150,7 @@ impl Imports {
                 && !self.aliases.contains_key(observed)
                 && (self.wildcards.is_empty()
                     || self.wildcards.len() == 1 && self.wildcards.contains("kotlin.io"))
-                && !name_shadowed(root, use_site, observed)
+                && !self.name_shadowed(use_site, observed)
     }
     pub(super) fn local_type<'a>(
         &self,
@@ -33,10 +160,10 @@ impl Imports {
     ) -> Option<KNode<'a>> {
         if self.aliases.contains_key(observed)
             || !self.wildcards.is_empty()
-            || root.dfs().any(|n| {
-                n.kind().as_ref() == "type_parameter"
-                    && name(&n).as_deref() == Some(observed)
-                    && visible(&n, use_site)
+            || self.declarations.get(observed).is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|n| n.kind == "type_parameter" && n.visible(use_site))
             })
         {
             return None;
@@ -71,13 +198,14 @@ impl Imports {
         });
         let declaration = declarations.next()?;
         if declarations.next().is_some()
-            || root.dfs().any(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "class_declaration" | "object_declaration" | "type_alias"
-                ) && name(&n).as_deref() == Some(observed)
-                    && n.range() != declaration.range()
-                    && visible(&n, use_site)
+            || self.declarations.get(observed).is_some_and(|entries| {
+                entries.iter().any(|n| {
+                    matches!(
+                        n.kind.as_str(),
+                        "class_declaration" | "object_declaration" | "type_alias"
+                    ) && n.declaration != declaration.range()
+                        && n.visible(use_site)
+                })
             })
         {
             return None;
@@ -87,7 +215,61 @@ impl Imports {
 
     pub(in crate::code) fn build(root: &KNode<'_>) -> Self {
         let mut result = Self::default();
-        for import in root.dfs().filter(|n| n.kind().as_ref() == "import_header") {
+        for import in root.dfs() {
+            if import.kind().as_ref() == "assignment" {
+                let owner = callable(&import).map(|n| (n.range().start, n.range().end));
+                result
+                    .assignments
+                    .entry(owner)
+                    .or_default()
+                    .push(import.range());
+            }
+            if matches!(
+                import.kind().as_ref(),
+                "variable_declaration"
+                    | "parameter"
+                    | "class_parameter"
+                    | "class_declaration"
+                    | "object_declaration"
+                    | "type_alias"
+                    | "type_parameter"
+                    | "function_declaration"
+                    | "catch_block"
+            ) && let Some(name) = name(&import)
+                && let Some(owner) = scope(&import)
+            {
+                let visible_before_declaration =
+                    matches!(
+                        import.kind().as_ref(),
+                        "parameter"
+                            | "class_parameter"
+                            | "class_declaration"
+                            | "object_declaration"
+                            | "type_alias"
+                    ) || matches!(owner.kind().as_ref(), "class_body" | "source_file");
+                let declarations = result.declarations.entry(name.clone()).or_default();
+                if matches!(
+                    import.kind().as_ref(),
+                    "variable_declaration" | "parameter" | "class_parameter"
+                ) {
+                    result
+                        .binding_scopes
+                        .entry((owner.range().start, owner.range().end))
+                        .or_default()
+                        .entry(name)
+                        .or_default()
+                        .push(declarations.len());
+                }
+                declarations.push(DeclarationScope {
+                    kind: import.kind().into_owned(),
+                    declaration: import.range(),
+                    scope: owner.range(),
+                    visible_before_declaration,
+                });
+            }
+            if import.kind().as_ref() != "import_header" {
+                continue;
+            }
             let text = import.text();
             let words = text
                 .trim()
@@ -115,9 +297,15 @@ impl Imports {
         result
     }
 
-    pub(super) fn exact(
+    pub(super) fn name_shadowed(&self, site: &KNode<'_>, name: &str) -> bool {
+        self.declarations
+            .get(name.trim_matches('`'))
+            .is_some_and(|entries| entries.iter().any(|n| n.visible(site)))
+    }
+
+    pub(in crate::code) fn exact(
         &self,
-        root: &KNode<'_>,
+        _root: &KNode<'_>,
         use_site: &KNode<'_>,
         observed: &str,
         canonical: &str,
@@ -126,7 +314,7 @@ impl Imports {
         let Some(head) = observed.split('.').next() else {
             return false;
         };
-        if name_shadowed(root, use_site, head) {
+        if self.name_shadowed(use_site, head) {
             return false;
         }
         if observed == canonical {
@@ -232,24 +420,6 @@ pub(super) fn visible(declaration: &KNode<'_>, use_site: &KNode<'_>) -> bool {
     })
 }
 
-pub(super) fn name_shadowed(root: &KNode<'_>, use_site: &KNode<'_>, symbol: &str) -> bool {
-    root.dfs().any(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "variable_declaration"
-                | "parameter"
-                | "class_parameter"
-                | "class_declaration"
-                | "object_declaration"
-                | "type_alias"
-                | "type_parameter"
-                | "function_declaration"
-                | "catch_block"
-        ) && name(&n).as_deref() == Some(symbol.trim_matches('`'))
-            && visible(&n, use_site)
-    })
-}
-
 pub(super) fn binding_type<'a>(
     root: &KNode<'a>,
     use_site: &KNode<'a>,
@@ -264,6 +434,21 @@ pub(super) fn binding_type<'a>(
 
 pub(super) fn binding<'a>(
     root: &KNode<'a>,
+    use_site: &KNode<'a>,
+    symbol: &str,
+) -> Option<KNode<'a>> {
+    select_binding(root.dfs(), use_site, symbol)
+}
+
+fn node_of_kind<'a>(root: &KNode<'a>, range: Range<usize>, kind: &str) -> Option<KNode<'a>> {
+    let node = super::super::node_lookup::last_exact(root, range.clone())?;
+    std::iter::once(node.clone())
+        .chain(node.ancestors())
+        .find(|n| n.range() == range && n.kind().as_ref() == kind)
+}
+
+fn select_binding<'a>(
+    candidates: impl Iterator<Item = KNode<'a>>,
     use_site: &KNode<'a>,
     symbol: &str,
 ) -> Option<KNode<'a>> {
@@ -306,27 +491,27 @@ pub(super) fn binding<'a>(
     } else {
         None
     };
-    let mut declarations =
-        root.dfs()
-            .filter(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "variable_declaration" | "parameter" | "class_parameter"
-                ) && name(n).as_deref() == Some(symbol)
-                    && visible(n, use_site)
-                    && member_owner.as_ref().is_none_or(|member_owner| {
-                        owner(n).is_some_and(|owner| owner.range() == member_owner.range())
-                            && match n.kind().as_ref() {
-                                "class_parameter" => n
-                                    .children()
-                                    .any(|child| matches!(child.text().as_ref(), "val" | "var")),
-                                "variable_declaration" => scope(n)
-                                    .is_some_and(|scope| scope.kind().as_ref() == "class_body"),
-                                _ => false,
+    let mut declarations = candidates
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "variable_declaration" | "parameter" | "class_parameter"
+            ) && name(n).as_deref() == Some(symbol)
+                && visible(n, use_site)
+                && member_owner.as_ref().is_none_or(|member_owner| {
+                    owner(n).is_some_and(|owner| owner.range() == member_owner.range())
+                        && match n.kind().as_ref() {
+                            "class_parameter" => n
+                                .children()
+                                .any(|child| matches!(child.text().as_ref(), "val" | "var")),
+                            "variable_declaration" => {
+                                scope(n).is_some_and(|scope| scope.kind().as_ref() == "class_body")
                             }
-                    })
-            })
-            .collect::<Vec<_>>();
+                            _ => false,
+                        }
+                })
+        })
+        .collect::<Vec<_>>();
     declarations.sort_by_key(|n| {
         (
             scope(n).map_or(usize::MAX, |s| s.range().len()),
@@ -353,16 +538,16 @@ pub(super) fn receiver_unchanged<'a>(root: &KNode<'a>, use_site: &KNode<'a>, sym
     })
 }
 
-pub(super) struct Argument<'a> {
+pub(in crate::code) struct Argument<'a> {
     pub name: Option<String>,
     pub value: KNode<'a>,
 }
-pub(super) struct Call<'a> {
+pub(in crate::code) struct Call<'a> {
     pub callee: KNode<'a>,
     pub arguments: Vec<Argument<'a>>,
 }
 
-pub(super) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
+pub(in crate::code) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
     if node.kind().as_ref() != "call_expression" {
         return None;
     }
@@ -437,6 +622,53 @@ pub(super) fn annotation(
 mod tests {
     use super::*;
     use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn indexed_bindings_keep_member_local_lambda_and_mutation_ownership() {
+        let source = r#"
+class C(var tx: Transaction, val q: String) {
+    fun outer(tx: Other, q: String) {
+        tx.exec(q)
+        run {
+            val tx = unknown()
+            tx.exec(q)
+        }
+        tx = other
+        tx.exec(q)
+        this.tx.exec(this.q)
+    }
+    fun member(q: String) { tx.exec(q) }
+    fun Transaction.extension(q: String) { this.tx.exec(q) }
+}
+fun separate(tx: Transaction, q: String) { tx.exec(q) }
+"#;
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        assert!(!root.dfs().any(|node| node.is_error() || node.is_missing()));
+        let imports = Imports::build(&root);
+        let sites: Vec<_> = root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "call_expression")
+            .collect();
+        for site in sites {
+            for symbol in ["tx", "q", "this.tx", "this.q", "unknown"] {
+                assert_eq!(
+                    imports.binding(&root, &site, symbol).map(|n| n.node_id()),
+                    binding(&root, &site, symbol).map(|n| n.node_id()),
+                    "{symbol}: {}",
+                    site.text()
+                );
+                assert_eq!(
+                    imports.binding_type(&root, &site, symbol),
+                    binding_type(&root, &site, symbol)
+                );
+                assert_eq!(
+                    imports.receiver_unchanged(&root, &site, symbol),
+                    receiver_unchanged(&root, &site, symbol)
+                );
+            }
+        }
+    }
 
     #[test]
     fn generic_types_do_not_borrow_local_classes_or_default_scalar_identity() {
