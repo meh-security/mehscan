@@ -12958,10 +12958,14 @@ fn observation_source_contributes_priority(
     if source.kind != EvidenceKind::Source {
         return false;
     }
-    if !matches!(
-        anchor.capability,
-        Capability::FilesystemRead | Capability::FilesystemWrite
-    ) {
+    // The cache analysis revision invalidates Rust inventories only. Preserve
+    // other languages' priority contracts until their own admission/cache gate.
+    if !anchor.rule_id.starts_with("rust-")
+        || !matches!(
+            anchor.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+    {
         return true;
     }
     if !is_local_observation_context(anchor, source, Some(sources)) {
