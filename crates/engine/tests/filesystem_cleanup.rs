@@ -58,6 +58,14 @@ mod child {
     use std::fs::OpenOptions as LocalOptions;
     pub fn nested(path: &str) { let _ = LocalOptions::new().read(true).open(path); }
 }
+struct Store;
+impl Store {
+    fn method_import(path: &str) { let _ = Options::new().read(true).open(path); }
+    fn method_factory(path: &str) { let _ = configured_options().create_new(true).open(path); }
+}
+trait Reader {
+    fn trait_import(path: &str) { let _ = Options::new().read(true).open(path); }
+}
 "#,
         )],
     );
@@ -99,6 +107,9 @@ mod child {
         ("permissions", Capability::FilesystemWrite, "write"),
         ("else_outer", Capability::FilesystemRead, "read"),
         ("nested", Capability::FilesystemRead, "read"),
+        ("method_import", Capability::FilesystemRead, "read"),
+        ("method_factory", Capability::FilesystemWrite, "unresolved"),
+        ("trait_import", Capability::FilesystemRead, "read"),
     ] {
         let effects = inventory
             .scan

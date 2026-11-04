@@ -95,6 +95,13 @@ fn enclosing_scope(node: &RustNode<'_>) -> ScopeId {
         .map_or((0, 0), |n| scope_id(&n))
 }
 
+fn module_boundary(node: &RustNode<'_>) -> bool {
+    node.kind().as_ref() == "declaration_list"
+        && node
+            .parent()
+            .is_some_and(|n| n.kind().as_ref() == "mod_item")
+}
+
 #[derive(Default)]
 struct Names {
     names: BTreeMap<(ScopeId, String), Option<String>>,
@@ -207,7 +214,7 @@ impl Names {
             if self.factories.contains(&key) {
                 return true;
             }
-            if owner.kind().as_ref() == "declaration_list" {
+            if module_boundary(&owner) {
                 break;
             }
         }
@@ -235,7 +242,7 @@ impl Names {
                     {
                         return None;
                     }
-                    if owner.kind().as_ref() == "declaration_list" {
+                    if module_boundary(&owner) {
                         break;
                     }
                 }
@@ -244,7 +251,7 @@ impl Names {
             if self.globs.contains(&scope_id(&ancestor)) {
                 return None;
             }
-            if ancestor.kind().as_ref() == "declaration_list" {
+            if module_boundary(&ancestor) {
                 break;
             }
         }
@@ -297,10 +304,9 @@ impl<'a> Walker<'a, '_> {
             if self.bindings.contains_key(&key) {
                 return Some(key);
             }
-            if matches!(
-                ancestor.kind().as_ref(),
-                "function_item" | "source_file" | "declaration_list"
-            ) {
+            if matches!(ancestor.kind().as_ref(), "function_item" | "source_file")
+                || module_boundary(&ancestor)
+            {
                 break;
             }
         }

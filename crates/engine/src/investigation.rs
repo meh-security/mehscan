@@ -431,7 +431,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
-const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v9";
+const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
