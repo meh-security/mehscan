@@ -35,6 +35,7 @@ pub(crate) use numeric::constant_query_fact;
 pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
+pub(super) use identity::call as filesystem_call;
 use identity::{KNode, binding_type, receiver_unchanged};
 
 pub(super) fn exact_symbol(

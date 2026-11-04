@@ -1,14 +1,15 @@
-function direct(req: any, fs: any) {
+import * as fs from 'node:fs'
+function direct(req: any) {
   return fs.readFileSync(req.query.direct)
 }
 
-function propagated(req: any, fs: any, content: any) {
+function propagated(req: any, content: any) {
   const requested = req.query.propagated
   const alias = requested
   return fs.writeFileSync(alias, content)
 }
 
-function canonicalized(req: any, fs: any, path: any) {
+function canonicalized(req: any, path: any) {
   const canonical = path.resolve(req.query.protected)
   return fs.readFileSync(canonical)
 }

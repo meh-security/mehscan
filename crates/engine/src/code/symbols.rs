@@ -701,6 +701,15 @@ fn parse_csharp_using(
     }
 }
 
+pub(super) fn python_import_targets(text: &str) -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+    parse_python_import(text, &mut aliases);
+    aliases
+        .into_iter()
+        .map(|(name, binding)| (name, binding.target))
+        .collect()
+}
+
 fn parse_python_import(text: &str, aliases: &mut BTreeMap<String, Binding>) {
     let text = text.trim();
     if let Some(imports) = text.strip_prefix("import ") {

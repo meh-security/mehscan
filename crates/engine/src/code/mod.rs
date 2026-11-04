@@ -33,6 +33,7 @@ mod embedded_javascript;
 mod extended_boundaries;
 mod extended_database;
 mod file_roles;
+mod filesystem_open;
 mod filesystem_operands;
 mod go_context;
 mod go_cookie_identity;

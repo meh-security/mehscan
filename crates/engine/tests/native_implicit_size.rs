@@ -4,6 +4,37 @@ use std::fs;
 use mehscan_core::{Capability, SecurityPathState};
 
 #[test]
+fn one_nonnegative_guard_can_protect_multiple_operations_without_duplicate_ids() {
+    let root = support::temp_dir("native-shared-size-guard");
+    fs::write(root.join("app.c"), "#include <stdlib.h>\n#include <string.h>\nvoid operation(int count,const char*src){if(count<0)return;char*dst=malloc((size_t)count);memcpy(dst,src,(size_t)count);}").unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    let guards = inventory
+        .scan
+        .evidence
+        .iter()
+        .filter(|e| e.capability == Capability::NonnegativeSizeValidation)
+        .collect::<Vec<_>>();
+    assert_eq!(guards.len(), 1);
+    assert_eq!(guards[0].related_evidence.len(), 2);
+    let protected = inventory
+        .scan
+        .security_paths
+        .iter()
+        .filter(|p| {
+            p.capability == Capability::SignedSizeMemoryOperation
+                && p.state == SecurityPathState::Protected
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(protected.len(), 2);
+    assert!(
+        protected
+            .iter()
+            .all(|p| p.protection_evidence_ids == [guards[0].id.clone()])
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn implicit_standard_counts_require_a_visible_signed_scalar_and_unchanged_guard() {
     let root = support::temp_dir("native-implicit-size");
     fs::create_dir_all(&root).unwrap();

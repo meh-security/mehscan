@@ -303,7 +303,7 @@ impl Imports {
             .is_some_and(|entries| entries.iter().any(|n| n.visible(site)))
     }
 
-    pub(super) fn exact(
+    pub(in crate::code) fn exact(
         &self,
         _root: &KNode<'_>,
         use_site: &KNode<'_>,
@@ -538,16 +538,16 @@ pub(super) fn receiver_unchanged<'a>(root: &KNode<'a>, use_site: &KNode<'a>, sym
     })
 }
 
-pub(super) struct Argument<'a> {
+pub(in crate::code) struct Argument<'a> {
     pub name: Option<String>,
     pub value: KNode<'a>,
 }
-pub(super) struct Call<'a> {
+pub(in crate::code) struct Call<'a> {
     pub callee: KNode<'a>,
     pub arguments: Vec<Argument<'a>>,
 }
 
-pub(super) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
+pub(in crate::code) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
     if node.kind().as_ref() != "call_expression" {
         return None;
     }

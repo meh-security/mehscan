@@ -1967,6 +1967,19 @@ pub(crate) fn scan_source(
         summary_pass_started,
     );
     let summary_pass_started = start_summary_pass();
+    super::filesystem_open::add(
+        path,
+        &root,
+        language,
+        &symbol_environment,
+        &native_api,
+        php_context.as_ref(),
+        kotlin_imports.as_ref(),
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::rust_open_options::add(
         path,
         &root,

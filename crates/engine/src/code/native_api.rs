@@ -299,6 +299,23 @@ impl NativeApiContext {
         self.resolve(name, node.range().start, &scopes, 0) == Some("vector")
     }
 
+    pub(super) fn filesystem_stream_type(
+        &self,
+        node: &Node<'_, StrDoc<SupportLang>>,
+    ) -> Option<&'static str> {
+        let scopes = node
+            .ancestors()
+            .map(|n| (n.range().start, n.range().end))
+            .collect::<Vec<_>>();
+        self.resolve(
+            &compact(node.text().as_ref()),
+            node.range().start,
+            &scopes,
+            0,
+        )
+        .filter(|name| matches!(*name, "ifstream" | "ofstream" | "fstream"))
+    }
+
     pub(super) fn local_shadow(&self, call: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
         let Some(function) = call.ancestors().find(|n| {
             matches!(
@@ -353,8 +370,10 @@ impl NativeApiContext {
                     let target = binding.target.as_deref()?;
                     return self.resolve(target, offset, scopes, depth + 1);
                 }
-                return (!matches!(canonical, "copy" | "copy_n" | "vector")
-                    && !self.global_definition_shadows(name, offset))
+                return (!matches!(
+                    canonical,
+                    "copy" | "copy_n" | "vector" | "ifstream" | "ofstream" | "fstream"
+                ) && !self.global_definition_shadows(name, offset))
                 .then_some(canonical);
             }
             if prefix == "std" {
@@ -402,7 +421,12 @@ impl NativeApiContext {
             }
             return self.resolve(target, offset, scopes, depth + 1);
         }
-        standard_name(text).filter(|name| !matches!(*name, "copy" | "copy_n" | "vector"))
+        standard_name(text).filter(|name| {
+            !matches!(
+                *name,
+                "copy" | "copy_n" | "vector" | "ifstream" | "ofstream" | "fstream"
+            )
+        })
     }
 
     pub(super) fn macro_precedes(&self, name: &str, offset: usize) -> bool {
@@ -638,12 +662,26 @@ fn standard_name(name: &str) -> Option<&'static str> {
         "copy" => "copy",
         "copy_n" => "copy_n",
         "vector" => "vector",
+        "fopen" => "fopen",
+        "freopen" => "freopen",
+        "open" => "open",
+        "openat" => "openat",
+        "creat" => "creat",
+        "remove" => "remove",
+        "unlink" => "unlink",
+        "rename" => "rename",
+        "ifstream" => "ifstream",
+        "ofstream" => "ofstream",
+        "fstream" => "fstream",
         _ => return None,
     })
 }
 
 fn standard_namespace_name(name: &str) -> bool {
-    !matches!(name, "bcopy" | "strdup" | "strndup")
+    !matches!(
+        name,
+        "bcopy" | "strdup" | "strndup" | "open" | "openat" | "creat" | "unlink"
+    )
 }
 
 fn identifier(text: &str) -> bool {

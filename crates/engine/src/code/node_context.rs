@@ -3306,6 +3306,7 @@ fn collect_parameter_sink_summaries<'tree>(
         return;
     };
     let bindings = SummaryBindingIndex::with_template_receivers(root, imports);
+    let filesystem = filesystem_calls(path, root);
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let mut matches = Vec::new();
@@ -3314,9 +3315,14 @@ fn collect_parameter_sink_summaries<'tree>(
             // HTTP observations may sit behind controls. They are not the
             // unconditional contracts consumed by the path-summary engine.
             if straight_line || http_effects::known_fetch_api(&call.callee, imports).is_some() {
-                for (sink_argument, sink, operand) in
-                    parameter_sink_operands(&bindings, &function, &call, imports, &parameters)
-                {
+                for (sink_argument, sink, operand) in parameter_sink_operands(
+                    &bindings,
+                    &function,
+                    &call,
+                    imports,
+                    &parameters,
+                    &filesystem,
+                ) {
                     let text = compact(sink_argument.text().as_ref());
                     let Some(index) = parameters.iter().position(|p| p == &text) else {
                         continue;
@@ -3806,12 +3812,140 @@ fn external_sink_api(callee: &str, imports: &BTreeMap<String, ImportTarget>) -> 
     Some(api)
 }
 
+/// File-owned package and mutation indices for direct filesystem observations.
+/// Raw spelling rules must obey the same ownership gate as helper summaries.
+pub(super) fn filesystem_calls<'a>(
+    path: &str,
+    root: &Node<'a, StrDoc<SupportLang>>,
+) -> BTreeMap<(usize, usize), String> {
+    type Key = (usize, usize, String);
+    type Decl<'a> = (Node<'a, StrDoc<SupportLang>>, Option<ImportTarget>);
+    let key =
+        |n: &Node<'_, StrDoc<SupportLang>>| (n.range().start, n.range().end, n.kind().into_owned());
+    let mut declarations = BTreeMap::<String, BTreeMap<Key, Vec<Decl<'a>>>>::new();
+    let bindings = SummaryBindingIndex::new(root);
+    for node in root.dfs() {
+        let kind = node.kind();
+        if kind.as_ref() == "import_statement" || kind.as_ref() == "variable_declarator" {
+            let imported = javascript_imports_raw(path, &node);
+            let mut names = Vec::new();
+            if kind.as_ref() == "variable_declarator" {
+                if let Some(pattern) = node.field("name") {
+                    super::node_identity::bound_names(&pattern, &mut names);
+                }
+            } else {
+                names.extend(imported.keys().cloned());
+            }
+            let is_var = node
+                .parent()
+                .is_some_and(|p| p.kind().as_ref() == "variable_declaration");
+            if let Some(scope) = super::node_identity::scope_node(&node, is_var) {
+                for name in names {
+                    declarations
+                        .entry(name.clone())
+                        .or_default()
+                        .entry(key(&scope))
+                        .or_default()
+                        .push((node.clone(), imported.get(&name).cloned()));
+                }
+            }
+        }
+        if is_function_node(&node) {
+            for name in function_parameter_names(&node) {
+                declarations
+                    .entry(name)
+                    .or_default()
+                    .entry(key(&node))
+                    .or_default()
+                    .push((node.clone(), None));
+            }
+        }
+        if matches!(kind.as_ref(), "function_declaration" | "class_declaration")
+            && let Some(name) = node.field("name")
+            && let Some(scope) = super::node_identity::scope_node(&node, false)
+        {
+            declarations
+                .entry(name.text().into_owned())
+                .or_default()
+                .entry(key(&scope))
+                .or_default()
+                .push((node.clone(), None));
+        }
+        if kind.as_ref() == "catch_clause"
+            && let Some(parameter) = node.field("parameter")
+        {
+            let mut names = Vec::new();
+            super::node_identity::bound_names(&parameter, &mut names);
+            for name in names {
+                declarations
+                    .entry(name)
+                    .or_default()
+                    .entry(key(&node))
+                    .or_default()
+                    .push((node.clone(), None));
+            }
+        }
+    }
+    root.dfs()
+        .filter_map(call_site)
+        .filter_map(|call| {
+            let callee = compact(&call.callee);
+            let binding = callee.split('.').next()?;
+            let scopes = declarations.get(binding)?;
+            let [(declaration, Some(target))] = call
+                .node
+                .ancestors()
+                .find_map(|scope| scopes.get(&key(&scope)))
+                .map(Vec::as_slice)?
+            else {
+                return None;
+            };
+            if declaration.kind().as_ref() != "import_statement"
+                && declaration.range().end > call.node.range().start
+            {
+                return None;
+            }
+            if target.mode == super::node_modules::ImportMode::Require
+                && declarations.get("require").is_some_and(|scopes| {
+                    call.node
+                        .ancestors()
+                        .any(|scope| scopes.contains_key(&key(&scope)))
+                })
+            {
+                return None;
+            }
+            if std::iter::once(None)
+                .chain(
+                    call.node
+                        .ancestors()
+                        .filter(is_function_node)
+                        .map(|n| Some((n.range().start, n.range().end))),
+                )
+                .any(|scope| {
+                    bindings
+                        .scopes
+                        .get(&scope)
+                        .and_then(|s| s.get(binding))
+                        .is_some_and(|e| !e.writes.is_empty())
+                })
+            {
+                return None;
+            }
+            let imports = BTreeMap::from([(binding.to_string(), target.clone())]);
+            let api = external_sink_api(&callee, &imports)?;
+            api.starts_with("fs.")
+                .then_some(((call.node.range().start, call.node.range().end), api))
+        })
+        .collect()
+}
+
 fn parameter_sink_operands<'tree>(
     bindings: &SummaryBindingIndex,
     function: &Node<'tree, StrDoc<SupportLang>>,
     call: &CallSite<'tree>,
     imports: &BTreeMap<String, ImportTarget>,
     parameters: &[String],
+    filesystem: &BTreeMap<(usize, usize), String>,
 ) -> Vec<(Node<'tree, StrDoc<SupportLang>>, SummarySink, &'static str)> {
     let callee = compact(&call.callee);
     let binding = callee.split('.').next().unwrap_or(&callee);
@@ -3824,6 +3958,15 @@ fn parameter_sink_operands<'tree>(
         .then(|| external_sink_api(&callee, imports))
         .flatten()
         .or_else(|| receiver.then(|| "nunjucks.Environment.renderString".to_string()));
+    let api = if api.as_ref().is_some_and(|a| a.starts_with("fs."))
+        || filesystem.contains_key(&(call.node.range().start, call.node.range().end))
+    {
+        filesystem
+            .get(&(call.node.range().start, call.node.range().end))
+            .cloned()
+    } else {
+        api
+    };
     let legacy = summary_sink(&callee);
     let process_operand = api.as_deref().and_then(process_sink_operand);
     if legacy.is_none()
@@ -3849,6 +3992,7 @@ fn parameter_sink_operands<'tree>(
         return Vec::new();
     }
     if !receiver
+        && !filesystem.contains_key(&(call.node.range().start, call.node.range().end))
         && !bindings.is_stable(
             function,
             binding,
@@ -3867,7 +4011,46 @@ fn parameter_sink_operands<'tree>(
     if let Some(api) = api.as_deref() {
         match api {
             "fs.readFile" | "fs.readFileSync" | "fs.createReadStream" | "fs.promises.readFile" => {
-                slots.push((0, SummarySink::FilesystemRead))
+                let key = if api == "fs.createReadStream" {
+                    "flags"
+                } else {
+                    "flag"
+                };
+                let write = call
+                    .arguments
+                    .get(1)
+                    .filter(|n| n.kind().as_ref() == "object")
+                    .and_then(|n| n.children().filter(|n| n.is_named()).last())
+                    .filter(|n| {
+                        n.field("key")
+                            .is_some_and(|n| n.text().trim_matches(['\'', '"']) == key)
+                    })
+                    .and_then(|n| n.field("value"))
+                    .and_then(|n| {
+                        exact_quoted(n.text().as_ref())
+                            .and_then(super::filesystem_open::string_mode)
+                    });
+                slots.push((
+                    0,
+                    if write == Some(true) {
+                        SummarySink::FilesystemWrite
+                    } else {
+                        SummarySink::FilesystemRead
+                    },
+                ))
+            }
+            "fs.open" | "fs.openSync" | "fs.promises.open" => {
+                let write = call.arguments.get(1).and_then(|n| {
+                    exact_quoted(n.text().as_ref()).and_then(super::filesystem_open::string_mode)
+                });
+                slots.push((
+                    0,
+                    if write == Some(true) {
+                        SummarySink::FilesystemWrite
+                    } else {
+                        SummarySink::FilesystemRead
+                    },
+                ));
             }
             "fs.copyFile" | "fs.copyFileSync" | "fs.promises.copyFile" => {
                 slots.push((0, SummarySink::FilesystemRead));

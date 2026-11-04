@@ -266,72 +266,6 @@ pub(crate) fn add_mainstream_sinks<'tree>(
             );
         }
     }
-
-    for creation in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "object_creation_expression")
-    {
-        if comments.is_in_comment(creation.range())
-            || creation
-                .field("type")
-                .is_none_or(|kind| short_type(kind.text().as_ref()) != "FileStream")
-        {
-            continue;
-        }
-        let Some(arguments) = node_arguments(&creation) else {
-            continue;
-        };
-        if arguments.len() < 2 {
-            continue;
-        }
-        let Some(path_argument) = formal_argument(&creation, "path", 0) else {
-            continue;
-        };
-        let Some(mode_argument) = formal_argument(&creation, "mode", 1) else {
-            continue;
-        };
-        let mode = compact(mode_argument.text().as_ref());
-        let access = formal_argument(&creation, "access", 2);
-        let capability = if mode.ends_with("FileMode.Open") {
-            // The two-argument constructor grants ReadWrite, not read-only.
-            Some(
-                if access
-                    .as_ref()
-                    .is_some_and(|a| compact(a.text().as_ref()).ends_with("FileAccess.Read"))
-                {
-                    Capability::FilesystemRead
-                } else {
-                    Capability::FilesystemWrite
-                },
-            )
-        } else if ["Create", "CreateNew", "OpenOrCreate", "Append", "Truncate"]
-            .iter()
-            .any(|candidate| mode.ends_with(&format!("FileMode.{candidate}")))
-        {
-            Some(Capability::FilesystemWrite)
-        } else {
-            None
-        };
-        if let Some(capability) = capability {
-            push_sink(
-                path,
-                &creation,
-                capability,
-                if capability == Capability::FilesystemRead {
-                    "csharp-filestream-read"
-                } else {
-                    "csharp-filestream-write"
-                },
-                "CWE-22",
-                &["filesystem", "path", "filestream", "explicit-file-mode"],
-                [("path", &path_argument), ("mode", &mode_argument)],
-                comments,
-                conditional,
-                literals,
-                evidence,
-            );
-        }
-    }
 }
 
 pub(crate) fn add_local_redirect_controls<'tree>(
@@ -642,7 +576,7 @@ fn argument_expression(
     argument.children().filter(|child| child.is_named()).last()
 }
 
-fn formal_argument<'tree>(
+pub(super) fn formal_argument<'tree>(
     node: &Node<'tree, StrDoc<SupportLang>>,
     name: &str,
     index: usize,

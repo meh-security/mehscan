@@ -37,6 +37,7 @@ pub(crate) fn add_native_signedness_observations<'tree>(
     }
 
     let mut additions = Vec::new();
+    let mut protections = BTreeMap::<String, Evidence>::new();
     let mut paths = Vec::new();
     for call in root
         .dfs()
@@ -109,11 +110,23 @@ pub(crate) fn add_native_signedness_observations<'tree>(
         paths.push(signedness_path(&source, &sink, protection.as_ref()));
         additions.push(source);
         if let Some(protection) = protection {
-            additions.push(protection);
+            protections
+                .entry(protection.id.clone())
+                .and_modify(|existing| {
+                    existing
+                        .related_evidence
+                        .extend(protection.related_evidence.iter().cloned());
+                })
+                .or_insert(protection);
         }
         additions.push(sink);
     }
     evidence.extend(additions);
+    evidence.extend(protections.into_values().map(|mut protection| {
+        protection.related_evidence.sort();
+        protection.related_evidence.dedup();
+        protection
+    }));
     paths
 }
 

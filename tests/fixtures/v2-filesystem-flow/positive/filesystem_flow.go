@@ -1,5 +1,7 @@
 package filesystemflow
 
+import "os"
+
 func direct(r *Request) {
 	_, _ = os.Open(r.FormValue("direct"))
 }
