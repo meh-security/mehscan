@@ -117,15 +117,27 @@ Changed native keys, ambiguous moves and different contexts cannot be connected
 by this command. A `not_issue` successor does not distinguish corrected false
 alarm from verified remediation; that disposition needs additional evidence.
 
+The worker's optional [second pass](review-worker.md#optional-second-pass) uses
+this same admission and supersession path. It archives the first responses and
+exports a comparison separately; it does not edit earlier decisions in place.
+Second-pass confirmations and training-label candidates are not new native verdict
+types or independently verified truth. When rechecking an admitted attempt,
+refresh its work package and use `--supersede` explicitly, or use native-phase
+`--validate-only` to leave the state store unchanged.
+
 ## Account for planned review and pending evidence
 
 `state plan-template`, `plan`, `pending`, `fact` and `work` support explicit
 completion accounting and provider-neutral handoffs. See the
 [worker guide](review-worker.md) for input shapes and commands. Plans require an
-exact selected/deferred partition of the current native catalog and one entry
-for every changed path. Comprehensive disallows native deferrals; Value records
-their reasons. Plan revisions use `--expected-plan-id` comparison and retain
-old revisions and pinned old/current evidence in history.
+exact accounting of the current native catalog and one entry for every changed
+path. Value partitions IDs between `selected_review_ids` and reasoned
+`deferred_review_ids`. Comprehensive selects all eligible IDs, disallows native
+deferrals and records source-bound conservative exclusions in
+`excluded_review_ids`. These exclusions come from the inventory; a plan cannot
+invent or rewrite them. They remain separate from both unreviewed deferrals and
+`not_issue` decisions. Plan revisions use `--expected-plan-id` comparison and
+retain old revisions and pinned old/current evidence in history.
 
 The status/history `completion` view distinguishes `not_planned`, `incomplete`,
 `complete` and `complete_with_limits`. Completion means planned response work
@@ -197,12 +209,14 @@ byte/timeout overrides are resolved in the template, not silently in the worker.
 `state runtime-template --skill-root DIR --policy value` exports the same
 contract separately. Both Value and Comprehensive default to five research rounds
 (six total model calls), 24 query units, 512 KiB and 900 seconds per conversation.
-Coverage selection distinguishes the profiles. Templates retain the
+Coverage selection distinguishes the profiles. Value templates retain the
 compatible all-ID default. Add `--selection policy` to apply native initial
 priority hints: Value moves hinted IDs into explicit `deferred_review_ids` with
-their reason/dependency; Comprehensive keeps every admitted ID. The advisory
-Action requests this selection explicitly. Deferral is unreviewed work, not a
-negative verdict. No model-based ranking or hidden exclusion is introduced.
+their reason/dependency. Comprehensive uses conservative eligibility and selects
+every admitted ID, retaining inventory-bound exclusions even without policy
+selection. The advisory Action requests policy selection explicitly. Deferral is
+unreviewed work, not a negative verdict; conservative exclusion is a visible scope
+decision, not an AI dismissal. No model-based ranking is introduced.
 
 Contract changes produce a new plan/work ID. Exact old handoffs are rejected;
 new engine bytes require a newly bound plan. Runtime-bound `state record` requires

@@ -16,6 +16,13 @@ guidance, check-to-effect reasoning and native evidence validation without these
 auxiliary tables. Changing this option requires a fresh conversation. Existing
 execution traces remain enabled in either mode.
 
+For another assessment, use the worker's optional [Fast or Full second pass](review-worker.md#optional-second-pass),
+independently of `boundary_checks`. Fast audits the supplied proof and lookup
+trace without research; Full makes a blind assessment and compares the proofs.
+The same configured model can run both passes. Scope can be limited to findings,
+dismissals or unresolved items. Leave second pass off for ordinary single-pass
+review; it is not an adapter setting or a guarantee of correct training labels.
+
 The adapter defaults to `"schema_mode": "stable"` and
 `"source_presentation": "line-addressed-v1"`. The setup example selects Terra 6.1
 medium; explicit model overrides remain supported.
