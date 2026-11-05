@@ -12,8 +12,21 @@ pub(super) fn template(
         schema_version: "1".into(),
         policy,
         runtime: None,
-        selected_review_ids: binding.subjects.keys().cloned().collect(),
+        selected_review_ids: binding
+            .subjects
+            .keys()
+            .filter(|id| {
+                policy != ReviewCompletionPolicy::Comprehensive
+                    || !binding.comprehensive_exclusions.contains_key(*id)
+            })
+            .cloned()
+            .collect(),
         deferred_review_ids: BTreeMap::new(),
+        excluded_review_ids: if policy == ReviewCompletionPolicy::Comprehensive {
+            binding.comprehensive_exclusions.clone()
+        } else {
+            BTreeMap::new()
+        },
         change_pass: binding
             .impact_scope
             .as_ref()
@@ -264,6 +277,7 @@ pub(super) fn materialize(
         runtime: draft.runtime,
         selected_review_ids: draft.selected_review_ids,
         deferred_review_ids: draft.deferred_review_ids,
+        excluded_review_ids: draft.excluded_review_ids,
         change_pass: entries,
         native_coverage_limits,
     })
@@ -291,12 +305,30 @@ pub(super) fn validate(
     }
     let selected = plan.selected_review_ids.iter().collect::<BTreeSet<_>>();
     let deferred = plan.deferred_review_ids.keys().collect::<BTreeSet<_>>();
+    let excluded = plan.excluded_review_ids.keys().collect::<BTreeSet<_>>();
     let catalog = binding.subjects.keys().collect::<BTreeSet<_>>();
+    let expected_exclusions = if plan.policy == ReviewCompletionPolicy::Comprehensive {
+        binding.comprehensive_exclusions.clone()
+    } else {
+        BTreeMap::new()
+    };
+    if plan.excluded_review_ids != expected_exclusions {
+        return Err(
+            "profile exclusions must match the native inventory eligibility exactly".into(),
+        );
+    }
     if selected.len() != plan.selected_review_ids.len()
         || !selected.is_disjoint(&deferred)
-        || selected.union(&deferred).copied().collect::<BTreeSet<_>>() != catalog
+        || !selected.is_disjoint(&excluded)
+        || !deferred.is_disjoint(&excluded)
+        || selected
+            .union(&deferred)
+            .copied()
+            .chain(excluded.iter().copied())
+            .collect::<BTreeSet<_>>()
+            != catalog
     {
-        return Err("completion plan must partition every native ID exactly once into selected or deferred work".into());
+        return Err("completion plan must partition every native ID exactly once into selected, deferred or native profile-excluded work".into());
     }
     if plan.policy == ReviewCompletionPolicy::Comprehensive && !deferred.is_empty() {
         return Err("Comprehensive cannot defer admitted native IDs".into());

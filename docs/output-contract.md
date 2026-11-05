@@ -254,6 +254,36 @@ adjudicated severity default, JSON reports `medium` with
 CVSS score. This keeps consumer behavior predictable while making the fallback
 explicit.
 
+## Second-pass review artifacts
+
+The [local worker](review-worker.md#optional-second-pass) can optionally audit or
+reassess first-pass decisions. Its final responses still use `issue`, `not_issue`
+and `needs_review`, pass native finalization and produce the same canonical
+`findings.json`. A second pass introduces no new finding verdict. State admission
+and explicit supersession remain separate from generating a validated report.
+
+`second-pass.json` and its Markdown projection compare the first and final
+decisions for each selected review ID. They record `confirmed`, `corrected`,
+`reopened`, `unresolved` or `not_checked`, with the proof assessment, investigation
+status, objections and stage receipts. Scope counts distinguish all first-pass
+claims, targeted claims, checked claims and items outside scope. A check can be
+complete for its requested scope while other claims remain unchecked. An execution
+failure leaves the first decision in place and the supplemental check incomplete.
+These outcomes are model assessments, not independently verified correctness.
+
+`training-labels.json` links the decisions to source/runtime identity, rule and
+location metadata, evidence references and captured `training-turns/`. It separates
+`model_reviewed` from `first_pass_only` authority and `candidate` from `excluded`
+training status. `auto_approved` is always false. Neither an `issue` verdict nor a
+second-pass confirmation approves an example for training. Curate examples
+separately, preserve the actual first and second trajectories, and loss-mask
+source/controller tokens.
+
+First/second/combined accounting retains actual call counts, token and cached-input
+receipts, timing and optional configured-rate estimates. Missing receipts or model
+rates leave estimates unavailable. These supplemental files do not replace native
+findings, source evidence or the state journal.
+
 ## SARIF projection
 
 `report --format sarif` emits SARIF 2.1.0 containing confirmed issues only:

@@ -12,6 +12,9 @@ category guidance remains available. Use the guides below for manual CLI work.
 For JWT, session or API-key issuance/acceptance, expiry or cached identity, use
 [token review](references/token-review.md); workers load it through
 `guidance` with `name="token-review"` when that relationship is material.
+For composed path/root guards or platform-dependent containment, use
+[path selection review](references/path-selection-review.md), available to workers
+as `guidance` with `name="path-selection"`.
 The ordinary controller uses one configured model with direct source lookups.
 The worker's [research API](references/worker-api.md) exposes exact tool arguments,
 costs and limits. It differs from the [operator CLI](references/commands.md):
@@ -105,6 +108,9 @@ do not request every reference or reread a supplied one. Guides are trusted
 instructions, not application evidence. Record actual source and unresolved facts
 normally. The [execution trace guide](references/execution-trace.md) explains how
 to inspect review progress and separate mechanical completion from review quality.
+For an explicitly requested Fast or Full second pass, read
+[second-pass review](references/second-pass-review.md). It audits completed claims,
+retains the first results and separates model-reviewed labels from training approval.
 
 ## New scan or repository-wide review
 

@@ -23,6 +23,32 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_second_pass_roles_use_primary_provider_and_retain_annotations(self):
+        self.task.update(kind="native_bundle",review_ids=["id"],review_role="second_pass_fast",second_pass="fast")
+        self.body["second_pass"]="fast"
+        self.packet.write_text(json.dumps(self.body))
+        self.task["research"].update(rounds_remaining=0,queries_remaining=0)
+        annotation={"review_id":"id","action":"keep","claim":"","proof_status":"supported",
+            "investigation_status":"sufficient","error_codes":[]}
+        def factory(config,session):
+            fake=self.factory(config,session)
+            original=fake.review
+            def invoke(*args,**kwargs):
+                response,events,stderr=original(*args,**kwargs)
+                response["draft"]={"results":[]}
+                response["review_checks"]=[annotation]
+                return response,events,stderr
+            fake.review=invoke
+            return fake
+        value=reviewer.run(self.config,self.task,factory)
+        self.assertEqual(value["review_checks"],[annotation])
+        schema=protocol.build_schema(self.task)
+        self.assertEqual(schema["properties"]["research"]["maxItems"],0)
+        self.assertIn("review_checks",schema["required"])
+        self.task["second_pass"]="full"
+        with self.assertRaisesRegex(ValueError,"matching controller mode"):
+            reviewer.run(self.config,self.task,factory)
+
     def test_omitted_modes_use_stable_addressed_defaults_and_resume(self):
         self.config.pop("schema_mode")
         self.config.pop("source_presentation")

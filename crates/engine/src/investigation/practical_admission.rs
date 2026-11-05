@@ -561,6 +561,105 @@ pub(super) fn is_non_content_filesystem_effect(item: &Evidence) -> bool {
         })
 }
 
+/// Scope only source-established ordinary reads. Unknown provenance, effects,
+/// caller relationships and identified consumers remain admitted. This does not
+/// alter Value, remove raw evidence, or assign a security decision.
+pub(super) fn conservative_filesystem_scope(
+    entries: &mut [ReviewInventoryEntry],
+    evidence: &[Evidence],
+    sources: &RepositorySources,
+) {
+    // Process input is not necessarily operator-selected when the application
+    // can replace it at runtime. Check once for the inventory, not per read.
+    // Aliases still retain their imported API spelling; uncertain extra matches
+    // only keep work admitted and never suppress a finding.
+    let environment_mutation = sources.files.values().any(|file| {
+        ["set_var", "remove_var", "setenv", "putenv"]
+            .iter()
+            .any(|name| file.source.contains(name))
+    });
+    let consequential = evidence
+        .iter()
+        .filter(|e| {
+            e.kind != EvidenceKind::Source
+                && matches!(
+                    e.capability,
+                    Capability::FilesystemWrite
+                        | Capability::PathContainmentCheck
+                        | Capability::ProcessExecution
+                        | Capability::DynamicCodeExecution
+                        | Capability::TemplateEvaluation
+                        | Capability::HtmlOutput
+                        | Capability::HttpHeaderOutput
+                        | Capability::OutboundNetworkRequest
+                        | Capability::Deserialization
+                        | Capability::Authentication
+                        | Capability::Authorization
+                        | Capability::ResourceAccess
+                        | Capability::TokenGeneration
+                )
+        })
+        .filter_map(|e| {
+            e.enclosing_symbol
+                .as_ref()
+                .map(|s| (e.location.path.as_str(), s.as_str()))
+        })
+        .collect::<BTreeSet<_>>();
+    let by_id = evidence
+        .iter()
+        .map(|e| (e.id.as_str(), e))
+        .collect::<BTreeMap<_, _>>();
+    for entry in entries
+        .iter_mut()
+        .filter(|e| e.review_kind == "observation" && e.capability == Capability::FilesystemRead)
+    {
+        let Some(anchor) = entry
+            .identity
+            .as_ref()
+            .and_then(|i| by_id.get(i.anchor_id.as_str()))
+        else {
+            continue;
+        };
+        let Some(symbol) = anchor.enclosing_symbol.as_deref() else {
+            continue;
+        };
+        if consequential.contains(&(anchor.location.path.as_str(), symbol))
+            || anchor.captures.contains_key("root")
+            || anchor.captures.contains_key("filesystem_source")
+            || anchor.tags.iter().any(|t| {
+                matches!(
+                    t.as_str(),
+                    "filesystem-mode:unresolved"
+                        | "filesystem-mode:write"
+                        | "filesystem-mode:read-write"
+                        | "review-origin:decision-critical"
+                )
+            })
+        {
+            continue;
+        }
+        let fixed = anchor.context.literals.get("path").is_some_and(|f| {
+            f.state == LiteralState::Known && matches!(&f.value, Some(LiteralValue::String(_)))
+        });
+        let operator = !environment_mutation
+            && anchor.context.operand_facts.iter().any(|f| {
+                f.kind == mehscan_core::OperandFactKind::LocalOperandOrigin
+                    && f.role == "path_authority"
+                    && f.value == "process_environment"
+                    && f.remaining_checks.is_empty()
+            });
+        if !fixed && !operator {
+            continue;
+        }
+        entry.comprehensive_exclusion = Some(ValueReviewHint {
+            reason: if operator { "ordinary_operator_read" } else { "ordinary_fixed_read" }.into(),
+            target: anchor.location.path.clone(),
+            assumption: "Read-only path selection is locally fixed or comes from the process environment; no linked path question, local root predicate, mutation or sensitive consumer is identified. Excluded from conservative Comprehensive only. Content trust, other callers and deployment authority are not proven safe; raw evidence and Value selection remain available.".into(),
+            depends_on: None,
+        });
+    }
+}
+
 pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
     if matches!(
         item.capability,

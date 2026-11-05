@@ -208,6 +208,15 @@ def build_schema(task, *, bound_handles=True):
             "review_id":review_id_schema(task["review_ids"], bound_handles=bound_handles),
             "action":{"type":"string","enum":["keep","repair","reopen"]},"claim":{"type":"string","maxLength":300}})}
         schema["required"].append("qa_actions")
+    if task.get("review_role") in ("second_pass_fast", "second_pass_compare"):
+        schema["properties"]["review_checks"] = {"type":"array", "items":object_schema({
+            "review_id":review_id_schema(task["review_ids"], bound_handles=bound_handles),
+            "action":{"type":"string", "enum":["keep", "repair", "reopen", "insufficient"]},
+            "claim":{"type":"string", "maxLength":300},
+            "proof_status":{"type":"string", "enum":["supported", "unsupported", "undetermined"]},
+            "investigation_status":{"type":"string", "enum":["sufficient", "missing_available_evidence", "external_blocker", "budget_limited", "execution_failed"]},
+            "error_codes":{"type":"array", "items":{"type":"string", "enum":["wrong_property", "relied_on_unread_guard", "caller_constraint_ignored", "invalid_counterexample", "unsupported_impact", "lost_adjacent_lead", "unnecessary_research"]}}})}
+        schema["required"].append("review_checks")
     # The unbound schema pins the continuation protocol, not a turn's changing
     # handles or remaining research allowance. The actual wire schema makes a
     # final-only turn enforceable instead of asking the model to remember it.
@@ -388,6 +397,8 @@ def envelope(response):
         out["resolutions"] = response["resolutions"]
     if "qa_actions" in response:
         out["qa_actions"] = response["qa_actions"]
+    if "review_checks" in response:
+        out["review_checks"] = response["review_checks"]
     if response["action"] == "research" and response["draft"] is None and response["research"]:
         for value in response["research"]:
             value["arguments"] = {key: item for key, item in value["arguments"].items() if item is not None}

@@ -1,0 +1,368 @@
+"""Opt-in source/trace review. Native finalization and state remain authoritative."""
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import copy
+import json
+import math
+from pathlib import Path
+import time
+
+import review_context as context
+import review_orchestration as orchestration
+import review_trace
+
+ROLES = ("second_pass_fast", "second_pass_compare")
+OUTCOMES = ("confirmed", "corrected", "reopened", "unresolved", "not_checked")
+PROOFS = ("supported", "unsupported", "undetermined")
+INVESTIGATIONS = ("sufficient", "missing_available_evidence", "external_blocker", "budget_limited", "execution_failed")
+ERRORS = ("wrong_property", "relied_on_unread_guard", "caller_constraint_ignored", "invalid_counterexample",
+          "unsupported_impact", "lost_adjacent_lead", "unnecessary_research")
+
+
+def review_scope(value):
+    aliases = {"issues":"issue", "issue":"issue", "tp":"issue", "dismissals":"not_issue", "dismissed":"not_issue",
+        "not_issue":"not_issue", "fp":"not_issue", "pending":"needs_review", "needs_review":"needs_review"}
+    if value == "all":
+        return ("issue", "not_issue", "needs_review")
+    parts = value.split(",") if isinstance(value, str) else []
+    if not parts or any(p.strip().lower() not in aliases for p in parts):
+        raise ValueError("second-pass scope must be all or comma-separated issues,dismissals,pending")
+    chosen = {aliases[p.strip().lower()] for p in parts}
+    return tuple(v for v in ("issue", "not_issue", "needs_review") if v in chosen)
+
+
+def validate_rates(value):
+    if not isinstance(value, dict) or set(value) != {"models"} or not isinstance(value["models"], dict):
+        raise ValueError("rates must contain a models mapping")
+    for model, rate in value["models"].items():
+        required = {"input_per_million", "cached_input_per_million", "output_per_million"}
+        if not isinstance(model, str) or not model or not isinstance(rate, dict) or not required <= set(rate) or set(rate)-required-{"long_context"}:
+            raise ValueError("invalid model token-rate fields")
+        if any(type(rate[k]) not in (int, float) or not math.isfinite(rate[k]) or rate[k] < 0 for k in required):
+            raise ValueError("token rates must be finite nonnegative numbers")
+        if "long_context" in rate:
+            long = rate["long_context"]
+            if (not isinstance(long, dict) or set(long) != {"threshold_tokens", "input_multiplier", "output_multiplier"}
+                    or type(long["threshold_tokens"]) is not int or long["threshold_tokens"] <= 0
+                    or any(type(long[k]) not in (int, float) or not math.isfinite(long[k]) or long[k] <= 0 for k in ("input_multiplier", "output_multiplier"))):
+                raise ValueError("invalid long-context rate basis")
+    return value
+
+
+def read(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def checks(values, ids):
+    """Validate semantic annotations structurally; this is not a truth checker."""
+    if (not isinstance(values, list) or any(not isinstance(v, dict) for v in values)
+            or Counter(v.get("review_id") for v in values) != Counter(ids)):
+        raise ValueError("second-pass checks must cover exact assigned IDs once")
+    for row in values:
+        if (set(row) != {"review_id", "action", "claim", "proof_status", "investigation_status", "error_codes"}
+                or row["action"] not in ("keep", "repair", "reopen", "insufficient")
+                or row["proof_status"] not in PROOFS or row["investigation_status"] not in INVESTIGATIONS
+                or not isinstance(row["claim"], str) or len(row["claim"]) > 300
+                or not isinstance(row["error_codes"], list) or any(e not in ERRORS for e in row["error_codes"])
+                or len(set(row["error_codes"])) != len(row["error_codes"])):
+            raise ValueError("invalid second-pass assessment")
+        if row["action"] != "keep" and not row["claim"].strip():
+            raise ValueError("second-pass objection needs an exact claim")
+        if row["action"] == "keep" and (row["proof_status"] != "supported" or row["error_codes"]):
+            raise ValueError("keeping a proof requires supported evidence without known errors")
+        if row["action"] == "insufficient" and row["proof_status"] != "undetermined":
+            raise ValueError("insufficient audit coverage cannot certify or refute a proof")
+    return {r["review_id"]: r for r in values}
+
+
+def brief(response):
+    """Rebind inspected source to current bundle membership, preserving claims/leads."""
+    values = []
+    for row in response["results"]:
+        investigation = row.get("investigation") or {}
+        evidence = []
+        for artifact in investigation.get("decisive_artifacts", []):
+            loc = artifact["location"]
+            end = loc["end"]["line"] - int(loc["end"]["column"] == 1 and loc["end"]["line"] > loc["start"]["line"])
+            evidence.append({"path":loc["path"], "start_line":loc["start"]["line"], "end_line":end})
+        value = {k:copy.deepcopy(row[k]) for k in ("review_id", "decision", "confidence", "summary", "checks", "diagnosis") if k in row}
+        value.update(reason=" ".join(r["claim"] for r in investigation.get("reviewer_inferences", [])),
+                     evidence=evidence, blockers=copy.deepcopy(investigation.get("blockers", [])))
+        leads = []
+        for lead in investigation.get("reviewer_origin_leads", []):
+            loc = lead["location"]
+            leads.append({k:copy.deepcopy(lead[k]) for k in ("question", "security_relevance", "distinct_from_review")})
+            leads[-1]["evidence"] = {"path":loc["path"], "start_line":loc["start"]["line"],
+                "end_line":loc["end"]["line"] - int(loc["end"]["column"] == 1 and loc["end"]["line"] > loc["start"]["line"])}
+        if leads:
+            value["source_leads"] = leads
+        values.append(value)
+    return {"results":values}
+
+
+def reconcile(baseline, assessment, annotations, mode):
+    """Fast cannot install repairs; Full requires an explicit supported comparison."""
+    original = {r["review_id"]:r for r in baseline["results"]}
+    proposed = {r["review_id"]:r for r in assessment["results"]}
+    if len(proposed) != len(assessment["results"]) or set(proposed) != set(original):
+        raise ValueError("second assessment differs from selected coverage")
+    notes = checks(annotations, list(original))
+    result = copy.deepcopy(baseline)
+    outcomes = []
+    for index, old in enumerate(result["results"]):
+        rid = old["review_id"]; note = notes[rid]; candidate = proposed[rid]
+        action = note["action"]
+        chosen = copy.deepcopy(old)
+        if action == "keep":
+            if candidate["decision"] != old["decision"]:
+                raise ValueError("keep cannot approve a different verdict")
+            outcome = "unresolved" if old["decision"] == "needs_review" else "confirmed"
+        elif action == "insufficient":
+            outcome = "not_checked"
+        elif mode == "full" and action == "repair" and note["proof_status"] == "supported":
+            chosen = copy.deepcopy(candidate)
+            outcome = "unresolved" if chosen["decision"] == "needs_review" else "corrected"
+            # A repair of prose/conditions is real even if the label is unchanged.
+        else:
+            chosen = copy.deepcopy(candidate if candidate["decision"] == "needs_review" else old)
+            chosen.update(decision="needs_review", diagnosis=None)
+            chosen["checks"] = list(dict.fromkeys([*old.get("checks", []), *chosen.get("checks", []), note["claim"]]))
+            chosen.setdefault("investigation", {})["blockers"] = list(dict.fromkeys([
+                *chosen.get("investigation", {}).get("blockers", []), note["claim"]]))
+            outcome = "unresolved" if old["decision"] == "needs_review" else "reopened"
+        result["results"][index] = chosen
+        outcomes.append({"review_id":rid, "first_decision":old["decision"], "final_decision":chosen["decision"],
+            "outcome":outcome, "claim":note["claim"], "proof_status":note["proof_status"],
+            "investigation_status":note["investigation_status"], "error_codes":note["error_codes"]})
+    return result, outcomes
+
+
+def prior_material(base, ids, byte_limit, deciding_paths=None):
+    """Bound source sharing to contributing original jobs; omit prior opinions from facts."""
+    facts, lookup_trace, fingerprints, job_ids = [], [], [], set()
+    if base is None:
+        return {"facts":[], "omitted_facts":0}, {"history":"unavailable", "queries":[], "flags":[]}, fingerprints
+    base = Path(base)
+    for path in sorted((base / "jobs").glob("*.json")):
+        job = read(path)
+        if str(job.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"):
+            continue
+        if not set(job.get("binding", {}).get("review_ids", [])) & set(ids):
+            continue
+        job_ids.add(path.stem)
+        fingerprints.append([str(path), context.digest(job)])
+        for row in job.get("results", []):
+            query = row.get("query", {})
+            if deciding_paths is not None and query.get("review_id") not in ids and query.get("arguments", {}).get("path") not in deciding_paths:
+                continue
+            # Only broker-returned evidence; checkpoint prose is deliberately not carried.
+            fact = {k:copy.deepcopy(row[k]) for k in ("result_id", "origin_package_id", "origin_review_id", "query", "result") if k in row}
+            if len(fact) == 5:
+                fact["query"].pop("purpose", None)
+                facts.append(fact)
+            query = row.get("query", {})
+            value = row.get("result", {})
+            lookup_trace.append({"round":row.get("round"), "query":query,
+                "result_id":row.get("result_id"), "operation":value.get("operation"),
+                "source_complete":value.get("source_complete"), "truncated":value.get("truncated", False),
+                "limit":value.get("limit"), "error":value.get("error"), "empty":value.get("results") == []})
+    handoff = orchestration.source_handoff([{"source_facts":facts}], byte_limit)
+    # Bound trace text separately; no unbounded event or source replay.
+    selected, used = [], 0
+    for row in lookup_trace:
+        size = len(json.dumps(row, ensure_ascii=False).encode())
+        if used + size > 65536:
+            break
+        selected.append(row); used += size
+    flags = review_trace.query_flags([{"query":r["query"], "result":{"truncated":r["truncated"],
+        "source_complete":r["source_complete"], **({"error":r["error"]} if r["error"] else {})}} for r in selected])
+    events, torn = review_trace.jsonl(base / "review-trace.jsonl")
+    for event in events:
+        if event.get("job_id") not in job_ids:
+            continue
+        if event["event"] == "progress_changed" and event.get("dropped_open_edges"):
+            flags.append({"kind":"open_relationship_disappeared", "round":event.get("round"),
+                "edges":event["dropped_open_edges"], "interpretation":"Check whether resolved, rephrased or abandoned."})
+        elif event["event"] in ("research_budget_deferred", "native_failed"):
+            flags.append({"kind":event["event"], "round":event.get("round"), "operation":event.get("operation")})
+    return handoff, {"history":"recorded" if (base / "review-trace.jsonl").is_file() else "legacy_reconstruction",
+        "queries":selected, "omitted_queries":len(lookup_trace)-len(selected),
+        "flags":flags[:100], "omitted_flags":max(0,len(flags)-100), "torn_trace_rows":torn}, fingerprints
+
+
+def comparison_context(baseline, proposed, trace):
+    sources = {}
+    def compact(response):
+        if response is None:
+            return None
+        rows = []
+        for row in response["results"]:
+            value = {k:copy.deepcopy(row[k]) for k in ("review_id", "decision", "confidence", "summary", "checks", "diagnosis") if k in row}
+            investigation = row.get("investigation") or {}
+            refs = []
+            for artifact in investigation.get("decisive_artifacts", []):
+                key = "source-" + context.digest([artifact["location"], artifact["excerpt"]])[:24]
+                sources[key] = {"location":artifact["location"], "excerpt":artifact["excerpt"]}
+                refs.append(key)
+            value.update(evidence=refs, inferences=investigation.get("reviewer_inferences", []),
+                blockers=investigation.get("blockers", []), source_leads=investigation.get("reviewer_origin_leads", []))
+            rows.append(value)
+        return {"results":rows}
+    first, second = compact(baseline), compact(proposed)
+    return {"baseline":first, "assessment":second, "decisive_source":sources, "lookup_trace":trace,
+        "scope":"Exact assigned claims; trace is navigation, not semantic proof."}
+
+
+def run(*, mode, requests, baselines, first_directory, output, task_base, execute_stage,
+        finalize, write, workers, byte_limit, outside_scope=(), scope=("issue", "not_issue", "needs_review"), archive_baselines=True):
+    """Independent bundle failures preserve baseline results and exact unchecked coverage."""
+    started = time.monotonic(); output = Path(output); rows = []; failures = []
+    (output / "first-pass").mkdir(exist_ok=True)
+    write(output / "second-pass-status.json", {"mode":mode, "status":"running"})
+    if archive_baselines:
+        for filename, _, _ in requests:
+            write(output / "first-pass" / filename, baselines[filename])
+    def one(item):
+        filename, request, data = item; ids = data["review_ids"]; baseline = baselines[filename]
+        deciding_paths = {a["location"]["path"] for row in baseline["results"]
+            for a in row.get("investigation", {}).get("decisive_artifacts", [])} if tuple(scope) != review_scope("all") else None
+        handoff, trace, frozen = prior_material(first_directory, ids, byte_limit, deciding_paths)
+        task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":ids,
+            "review_playbooks":data.get("review_playbooks", {}), "profile":"routine",
+            "second_pass":mode, "assessment_cycle":"second_pass_" + mode, "source_handoff":handoff}
+        stages = []
+        if mode == "full":
+            fresh = {**task, "review_role":"verification"}
+            stage = execute_stage(fresh); stages.append(stage)
+            # Do not decide agreement from labels: proof/conditions can differ too.
+            task["source_handoff"] = orchestration.source_handoff([stage], byte_limit)
+            proposed = stage["response"]
+        else:
+            proposed = baseline
+        task.update(review_role="second_pass_fast" if mode == "fast" else "second_pass_compare",
+            assessment_cycle="second_pass_" + mode + "_check",
+            stage_context=comparison_context(baseline, proposed if mode == "full" else None, trace))
+        checked = execute_stage(task); stages.append(checked)
+        for path, digest in frozen:
+            if context.digest(read(path)) != digest:
+                raise ValueError("first-pass evidence changed during second review")
+        combined, outcomes = reconcile(baseline, checked["response"], checked["checks"], mode)
+        finalize(combined, filename, request)
+        for row in outcomes:
+            row.update(mode=mode, stages=[s["receipt"] for s in stages],
+                source_handoff_omitted=handoff["omitted_facts"], trace_history=trace["history"],
+                trace_queries_omitted=trace["omitted_queries"] if "omitted_queries" in trace else 0)
+        return outcomes
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-second-pass") as pool:
+        futures = {pool.submit(one, request):request for request in requests}
+        for future in as_completed(futures):
+            filename, request, data = futures[future]
+            try:
+                values = future.result()
+            except Exception as error:
+                failures.append({"bundle":filename, "error":type(error).__name__, "detail":str(error)[:500]})
+                finalize(baselines[filename], filename, request)
+                values = [{"review_id":r["review_id"], "first_decision":r["decision"], "final_decision":r["decision"],
+                    "outcome":"not_checked", "mode":mode, "claim":"Second-pass execution did not complete.",
+                    "proof_status":"undetermined", "investigation_status":"execution_failed", "error_codes":[], "stages":[]}
+                    for r in baselines[filename]["results"]]
+            rows.extend(values)
+            write(output / "second-pass-progress.json", {"mode":mode, "results":rows, "failures":failures})
+    targeted = len(rows)
+    incomplete = sum(r["outcome"] == "not_checked" for r in rows)
+    rows.extend({"review_id":r["review_id"], "first_decision":r["decision"], "final_decision":r["decision"],
+        "outcome":"not_checked", "mode":mode, "claim":"Outside the requested second-pass scope.",
+        "reason":"outside_scope", "proof_status":"undetermined", "investigation_status":None,
+        "error_codes":[], "stages":[]} for r in outside_scope)
+    counts = Counter(r["outcome"] for r in rows)
+    summary = {"schema_version":"1", "mode":mode, "status":"partial" if incomplete else "complete",
+        "scope":list(scope), "selected":len(rows), "targeted":targeted, "checked":targeted-incomplete,
+        "outside_scope":len(outside_scope),
+        "outcomes":{k:counts[k] for k in OUTCOMES}, "results":sorted(rows, key=lambda r:r["review_id"]),
+        "failures":failures, "elapsed_seconds":time.monotonic()-started,
+        "label_authority":"model_reviewed" if targeted-incomplete else "first_pass_only", "semantic_ground_truth":False}
+    write(output / "second-pass.json", summary)
+    write(output / "second-pass-status.json", {k:summary[k] for k in ("mode", "status", "selected", "targeted", "checked", "outside_scope")})
+    return summary
+
+
+def accounting(metrics, roles, rates=None, expected_calls=None):
+    selected = [r for r in metrics if r.get("role", "investigator") in roles]
+    names = ("input_tokens", "cached_input_tokens", "output_tokens")
+    totals = {k:sum(r.get("usage", {}).get(k, 0) for r in selected) for k in names}
+    expected_calls = len(selected) if expected_calls is None else expected_calls
+    complete = expected_calls == len(selected) and all(all(k in r.get("usage", {}) for k in names)
+        and not set(r.get("unknown_delta_counters", [])) & set(names) for r in selected)
+    cost = 0.0 if rates is not None and complete else None
+    if cost is not None:
+        for row in selected:
+            rate = rates.get("models", {}).get((row.get("provider") or {}).get("model"))
+            if rate is None:
+                cost = None; break
+            u = row["usage"]; long = rate.get("long_context", {})
+            large = u["input_tokens"] > long.get("threshold_tokens", float("inf"))
+            factor = long.get("input_multiplier", 1) if large else 1
+            out_factor = long.get("output_multiplier", 1) if large else 1
+            cost += ((u["input_tokens"]-u["cached_input_tokens"])*rate["input_per_million"]*factor
+                + u["cached_input_tokens"]*rate["cached_input_per_million"]*factor
+                + u["output_tokens"]*rate["output_per_million"]*out_factor)/1e6
+    return {"calls":expected_calls, "receipted_calls":len(selected), "usage":totals, "usage_complete":complete,
+        "cached_fraction":totals["cached_input_tokens"]/totals["input_tokens"] if totals["input_tokens"] else None,
+        "provider_seconds_sum":sum(r.get("elapsed_ms", 0) for r in selected)/1000,
+        "cost":cost, "cost_basis":"configured_rates" if cost is not None else "unavailable"}
+
+
+def export(output, metrics, write, rates=None, original_metrics=(), original_calls=None):
+    """Derived labels retain source/provenance; no automatic training approval."""
+    output = Path(output)
+    path = output / "second-pass.json"
+    if not path.is_file():
+        return
+    summary = read(path)
+    # Metrics from verification use their conversation's captured stage task.
+    stage_conversations = set()
+    for p in (output / "training-turns").glob("*/*-input.json"):
+        task = read(p)
+        if task.get("second_pass"):
+            stage_conversations.add(task["conversation_id"])
+    second = [r for r in metrics if r.get("conversation_id") in stage_conversations or r.get("role") in ROLES]
+    first = [*original_metrics, *[r for r in metrics if r not in second]]
+    jobs = [read(p) for p in (output / "jobs").glob("*.json")]
+    second_calls = sum(j["calls"] for j in jobs if str(j.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"))
+    first_calls = sum(j["calls"] for j in jobs)-second_calls+(len(original_metrics) if original_calls is None else original_calls)
+    all_roles = {r.get("role", "investigator") for r in [*first, *second]}
+    summary["accounting"] = {"first_pass":accounting(first, all_roles, rates, first_calls),
+        "second_pass":accounting(second, all_roles, rates, second_calls),
+        "combined":accounting([*first, *second], all_roles, rates, first_calls+second_calls)}
+    work = read(output / "work.json")["payload"]
+    questions = {}
+    for p in output.glob("context-*.json"):
+        questions.update({r["review_id"]:r for r in read(p).get("native_questions", [])})
+    final = read(output / "findings.json") if (output / "findings.json").is_file() else {}
+    evidence = {r["response"]["review_id"]:r["response"].get("investigation", {}).get("decisive_artifacts", []) for r in final.get("decision_records", [])}
+    labels = []
+    for row in summary["results"]:
+        labels.append({**{k:row[k] for k in ("review_id", "first_decision", "final_decision")},
+            "second_pass":{k:row[k] for k in ("mode", "outcome", "proof_status", "investigation_status", "error_codes")},
+            "label_authority":"model_reviewed" if row["outcome"] != "not_checked" else "first_pass_only",
+            "training_status":"excluded" if row["outcome"] in ("not_checked", "reopened") or row["proof_status"] != "supported" else "candidate",
+            "snapshot_id":work["snapshot_id"], "inventory_input_fingerprint":work["inventory_input_fingerprint"],
+            "repository":work["repository"], "runtime":work["runtime"], "evidence_claim":row["claim"],
+            "question":{k:questions.get(row["review_id"], {}).get(k) for k in ("rule_id", "capability", "path", "line")},
+            "evidence_references":[{"artifact_id":r["artifact_id"], "location":r["location"]} for r in evidence.get(row["review_id"], [])],
+            "stages":row["stages"], "trajectory_root":"training-turns/",
+            "trajectory_ids":[s["trajectory_id"] for s in row["stages"] if s.get("trajectory_id")],
+            "supervision":"actual_assistant_actions_only; source/controller tokens must be loss-masked"})
+    write(output / "second-pass.json", summary)
+    write(output / "training-labels.json", {"schema_version":"1", "auto_approved":False, "labels":labels})
+    lines = ["# Second-pass review", "", f"Mode: {summary['mode']}. Status: {summary['status']}. Checked {summary['checked']}/{summary.get('targeted', summary['selected'])} targeted; {summary['selected']} first-pass claims, {summary.get('outside_scope', 0)} outside scope.",
+        "", " · ".join(f"{key}: {value}" for key,value in summary["outcomes"].items()), "",
+        "| Review ID | First | Final | Second pass | Detail |", "| --- | --- | --- | --- | --- |"]
+    def cell(value):
+        return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+    for row in summary["results"]:
+        lines.append("| " + " | ".join(cell(row[k]) for k in ("review_id", "first_decision", "final_decision", "outcome", "claim")) + " |")
+    lines += ["", "Model-reviewed outcomes are not semantic ground truth; training labels require separate approval.", ""]
+    for phase, values in summary["accounting"].items():
+        lines.append(f"{phase}: {values['calls']} calls; input {values['usage']['input_tokens']}; cached {values['usage']['cached_input_tokens']}; output {values['usage']['output_tokens']}; cost {values['cost']} ({values['cost_basis']}).")
+    (output / "second-pass.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -27,15 +27,117 @@ See [Prepare review work](#prepare-review-work) for the ordinary setup.
 
 Use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
-jobs. An orchestration policy, collection agent or automatic second review is
-not required. Group claims only when they share the actual operation and
-implementation; a shared file or CWE alone is insufficient.
+jobs. Group claims only when they share the actual operation and implementation;
+a shared file or CWE alone is insufficient. The profile allowances are ceilings:
+finish settled relationships early and keep an essential unresolved fact pending.
 
-The profile allowances above are ceilings, not instructions to spend the entire
-budget. Finish settled
-relationships early. An essential unresolved fact remains pending. Request a
-separate claim challenge only for a specific material assumption, rather than
-routinely repeating the investigation or routing by a confidence threshold.
+## Optional second pass
+
+Add `--second-pass fast` or `--second-pass full` to the normal worker command.
+The default is `off`, independently of Value or Comprehensive. These are Python
+worker options, not flags on `mehscan scan` or `mehscan report`.
+
+| Mode | Work performed | Possible result |
+| --- | --- | --- |
+| `off` | Ordinary first-pass review. | No additional reviewer calls. |
+| `fast` | One final-only call per bundle checks the first verdict, deciding source and compact lookup trace. No new research. | Keep the original result or reopen a concrete proof gap. It cannot promote, dismiss or close a pending claim. |
+| `full` | A fresh source-backed assessment without the original verdict, using the normal research allowance, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
+
+Fast is useful for checking an existing proof. Full is useful when the selected
+claim needs another investigation. Both add model cost and can make mistakes;
+agreement and source-valid citations do not establish correctness. They use an
+ordinary single-profile plan and can use the same configured model for both
+passes. Experimental tiered/multi-model orchestration is separate.
+
+### Choose which results to check
+
+`--second-pass-scope` selects decisions from the first pass, within the chosen
+work package:
+
+| Scope | First-pass decision |
+| --- | --- |
+| `all` (default) | Every selected claim, including dismissals and unresolved items. |
+| `issues` | Reported findings (`issue`). |
+| `dismissals` | Dismissed candidates (`not_issue`). |
+| `pending` | Unresolved claims (`needs_review`). |
+
+Combine scopes with commas, for example `--second-pass-scope issues,pending`.
+`tp`/`fp` aliases mean first-pass issue/dismissal, not established ground truth.
+Filtering happens before new bundles and reviewer packets are formed, reducing
+calls and context. Unselected claims retain their first result and are marked
+not checked / outside scope; they are not counted as second-pass confirmations.
+The summary separates all first-pass claims, targeted claims and checked claims.
+An empty target scope makes no second-pass model call. Completion applies to the
+requested scope, not every candidate in the application.
+
+For a first review followed immediately by a Fast check of findings, add these
+options to the [normal worker invocation](#run-the-worker):
+
+```text
+--second-pass fast --second-pass-scope issues
+```
+
+### Recheck a completed attempt
+
+Reuse the completed first pass instead of paying for it again. Keep its source,
+inventory, runtime, provider binding and original attempt directory unchanged.
+The generation must still be owned and active. Refresh `state work` and save its
+JSON output as `RUN/work-second-pass.json`:
+
+```text
+mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation GENERATION --owner OWNER --skill-root TRUSTED/mehscan-security
+```
+
+Then check pending claims with Full in a new output directory:
+
+```text
+python scripts/review_worker.py --scanner TRUSTED/mehscan --source-root ROOT --inventory RUN/inventory --store STATE --stream pr:24 --claim PRIVATE/claim.json --work-package RUN/work-second-pass.json --reviewer-command TRUSTED/reviewer-command.json --reviewer-label configured-reviewer --skill-root TRUSTED/mehscan-security --run RUN/bundles --output RUN/second-pass-1 --phase native --first-pass RUN/attempt-1 --second-pass full --second-pass-scope pending --supersede
+```
+
+Use the generation and owner from the current claim receipt. Keep any configured
+`--provider-contract FILE` on the state and worker commands. The bundles must match
+the chosen work IDs; the worker creates narrower second-pass bundles itself.
+`--supersede` links the new admitted results to their exact prior decisions,
+preserving history. To produce source-validated reports without admission, replace
+`--supersede` with `--validate-only` and keep `--phase native`.
+
+### Read the results
+
+| Artifact | Contents |
+| --- | --- |
+| `findings.json` | Canonical native final findings and decisions. |
+| `second-pass.md` | Human-readable first/final comparison and outcome counts. |
+| `second-pass.json` | Per-claim objections, scope, stage receipts and first/second/combined usage. |
+| `first-pass/` | Original responses retained before second-pass changes. |
+| `training-labels.json` | Verdict, proof assessment, investigation status and label provenance. |
+| `training-turns/` | Actual input/fact/response snapshots linked to native context. |
+
+Outcomes are `confirmed`, `corrected`, `reopened`, `unresolved` or `not_checked`.
+Confirmed means this check supported the first proof; it is not a correctness
+certificate. A second-pass execution failure keeps the original result marked
+not checked while other bundles continue, and the second-pass summary is partial.
+Outside-scope items are also not checked, with an explicit `outside_scope` reason.
+
+Training labels remain candidates or excluded and are never automatically
+approved. Checked labels identify `model_reviewed` authority; unchecked labels
+remain `first_pass_only`. Review candidates separately before training, and
+loss-mask source/controller tokens. A corrected trajectory does not rewrite the
+first one. See the [output contract](output-contract.md#second-pass-review-artifacts)
+for the distinction between final decisions and supplemental review labels.
+
+Optional `--second-pass-rates RATES.json` prices recorded calls using your explicit
+rate basis. Without rates, costs are unknown rather than assumed free. Format:
+
+```json
+{"models":{"your-model":{"input_per_million":1,"cached_input_per_million":0.1,"output_per_million":5}}}
+```
+
+Rates are per model and currency unit; these example numbers are not vendor prices.
+An optional `long_context` object supports `threshold_tokens`, `input_multiplier`
+and `output_multiplier`. Unmatched models or unknown token counters leave cost
+unavailable. Provider elapsed totals are sums of calls, not parallel wall time;
+the second-pass summary records its own wall time separately. See
+[usage and cache accounting](#usage-and-cache-accounting) for receipt handling.
 
 ## Prepare review work
 
@@ -52,15 +154,19 @@ the exact executable, trusted skill-package digest, worker protocol and effectiv
 profile limits. Keep the skill outside ROOT. Manual CLI plans without a runtime
 remain supported, but the worker rejects them before model execution.
 
-Save the JSON as `RUN/plan.json`. Comprehensive selects every native ID. Value
-allows selection, but every other native ID must have an explicit reason in
-`deferred_review_ids`. Every changed path starts `unassessed`; an empty native
-queue still needs a change pass. Admit the plan and export the work package:
+Save the JSON as `RUN/plan.json`. Comprehensive selects every eligible native ID
+and retains native conservative exclusions in `excluded_review_ids`. Value allows
+selection, but every other native ID must have an explicit reason in
+`deferred_review_ids`. Exclusions and deferrals are not dismissals; see
+[completion accounting](review-state.md#account-for-planned-review-and-pending-evidence).
+Every changed path starts `unassessed`; an empty native queue still needs a change
+pass. Admit the plan and export the work package:
 
 For initial Value priority selection, use `--policy value --selection policy`
 on the template. Existing native hints become explicit unreviewed deferrals;
 they do not become safe decisions. Omitting `--selection` preserves the all-ID
-template default for manual/full-coverage audits. The advisory Action uses
+template default for Value manual/full-coverage audits. Comprehensive still
+applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
 
@@ -234,7 +340,11 @@ original operation keys and input hashes. A retry checks native source/runtime
 and ownership, verifies those exact inputs and replays the original transactions.
 The native journal returns existing receipts rather than admitting duplicates.
 A committed decision batch resumes without calling reviewers or regenerating
-its responses. Interrupted change-pass writes complete before native reviews.
+its responses. For second-pass attempts, recovery also retains the first responses,
+captured contexts and stage records, and regenerates the summary and training-label
+exports without repeating completed reviewer calls. Keep the same second-pass
+mode, scope, rates and first-pass inputs on recovery. Interrupted change-pass
+writes complete before native reviews.
 Changed inputs or superseded ownership stop recovery; they do not authorize a
 new verdict. Keep all earlier attempt directories: replay references their
 original artifacts. The checkpoints contain no ownership credential and are
@@ -290,6 +400,8 @@ need old primary evidence and current primary evidence; deletions need old
 evidence. Base means the pinned merge base, otherwise the direct base commit.
 The CLI reads the actual excerpts and rejects invalid ranges or source changes.
 An assessed effect without a native ID remains a source-only lead/question.
+
+## Run the worker
 
 Configure model, explicit authentication and supported analysis-only provider
 settings in the adapter. Runner isolation belongs to the operator. The controller is not a sandbox. The adapter must treat target source

@@ -34,6 +34,9 @@ than calling available source external or demanding speculative deployment proof
 Use `definition` for a needed body and inspect source_complete/limit; an ambiguous
 locator or clipped prefix cannot prove the unseen implementation. Follow actual
 imports/overrides and returned paths instead of repeating a failed name search.
+If a deciding name is absent from a returned window, locate it with scoped
+`references` (or a failed definition's `text_lookup`) before reading more sibling
+branches. A satisfied range request does not establish that the body was inspected.
 Resolve only the missing relationship, not an exhaustive transitive caller set.
 <!-- runtime:api_semantics -->
 Apply established documented API semantics when the actual import, relevant

@@ -17,6 +17,9 @@ pub struct ReviewStateBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordination_key: Option<String>,
     pub subjects: BTreeMap<String, ReviewSubjectIdentity>,
+    /// Native profile eligibility, bound to the exact inventory; never verdicts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub comprehensive_exclusions: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

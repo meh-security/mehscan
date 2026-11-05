@@ -248,6 +248,25 @@ class LookupFailures(unittest.TestCase):
         self.assertIsNotNone(partial["source"])
         self.assertEqual(worker.research_cost([{"tool":"definition"},{"tool":"source"}]), 3)
 
+    def test_missing_ast_definition_returns_text_navigation_without_claiming_a_body(self):
+        refs = {"operation":"find_text_references", "truncated":False, "results":[
+            {"location":{"path":"view.txt","start":{"line":205},"end":{"line":205}},
+             "text":"a named helper or its use"}]}
+        looked = []
+        def find():
+            looked.append(True)
+            return refs
+        def source(_):
+            self.fail("Text locations must not be read as a guessed declaration")
+        result = worker.definition_result({"results":[],"truncated":False}, source, find)
+        self.assertEqual(result["text_lookup"], refs)
+        self.assertEqual(result["limit"], "declaration_not_found")
+        self.assertIsNone(result["source"])
+        self.assertFalse(result["source_complete"])
+        self.assertEqual(looked, [True])
+        worker.definition_result({"results":[],"truncated":True}, source, find)
+        self.assertEqual(looked, [True])
+
     def test_only_exact_current_source_not_found_is_recoverable(self):
         query = {"tool": "source", "arguments": {"path": "missing.ts"}}
         message = 'error: text file "missing.ts" was not found under the scan root\n'
@@ -399,6 +418,150 @@ else:
             "--claim", str(self.claim), "--work-package", str(self.package), "--reviewer-command", str(self.command),
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
+
+    def second_pass_provider(self, fail=False):
+        original=self.base/"first-reviewer.py"
+        shutil.copyfile(self.reviewer,original)
+        self.reviewer.write_text('''import json,sys,subprocess
+from pathlib import Path
+task=json.load(sys.stdin)
+role=task.get("review_role","investigator")
+if role not in ("second_pass_fast","second_pass_compare","verification"):
+    print(subprocess.check_output([sys.executable,ORIGINAL],input=json.dumps(task),text=True));sys.exit()
+packet=json.loads(Path(task["evidence_packet"]).read_text())
+if role=="verification":
+    assert "stage_context" not in packet
+    assert not packet["work"]["parent_decisions"]
+    assert not packet["work"]["pending_questions"]
+    decision="issue"
+else:
+    assert task["research"]["queries_remaining"]==0
+    assert task["research"]["rounds_remaining"]==0
+    assert packet["stage_context"]["lookup_trace"]["history"] in ("recorded","legacy_reconstruction")
+    if FAIL:raise RuntimeError("Rejected audit fixture")
+    decision="needs_review" if role=="second_pass_fast" else "not_issue"
+draft={"results":[{"review_id":rid,"decision":decision,"confidence":"medium",
+    "summary":"Scoped source-backed second assessment.","reason":"The selected expression and caller binding are the disputed property.",
+    "checks":["Inspect the applicable caller guard."] if decision=="needs_review" else [],"blockers":[],
+    "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for rid in task["review_ids"]]}
+value={"draft":draft,"working_chain":"","progress":[]}
+if role!="verification":
+    value["review_checks"]=[{"review_id":rid,"action":"reopen" if role=="second_pass_fast" else "repair",
+        "claim":"The prior material claim needs correction.","proof_status":"unsupported" if role=="second_pass_fast" else "supported",
+        "investigation_status":"missing_available_evidence" if role=="second_pass_fast" else "sufficient","error_codes":[]}
+        for rid in task["review_ids"]]
+print(json.dumps(value))
+'''.replace("ORIGINAL",repr(str(original))).replace("FAIL",repr(fail)),encoding="utf-8")
+
+    def test_second_pass_fast_reopens_with_native_report_and_training_provenance(self):
+        self.second_pass_provider()
+        result=self.invoke(extra=["--second-pass","fast"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["checked"],len(self.ids))
+        self.assertEqual(summary["outcomes"]["reopened"],len(self.ids))
+        report=json.loads((output/"findings.json").read_text())
+        self.assertEqual(report["summary"]["needs_review_decisions"],len(self.ids))
+        original=json.loads(next((output/"first-pass").glob("*.json")).read_text())
+        self.assertEqual(original["results"][0]["decision"],"issue")
+        labels=json.loads((output/"training-labels.json").read_text())
+        self.assertFalse(labels["auto_approved"])
+        self.assertTrue(all(r["training_status"]=="excluded" for r in labels["labels"]))
+        self.assertTrue(list((output/"training-turns").glob("*/*-response.json")))
+
+    def test_second_pass_full_blind_assessment_and_explicit_correction(self):
+        self.second_pass_provider()
+        result=self.invoke(extra=["--second-pass","full"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        summary=json.loads((self.base/"worker/second-pass.json").read_text())
+        self.assertEqual(summary["outcomes"]["corrected"],len(self.ids))
+        self.assertTrue(all(r["final_decision"]=="not_issue" for r in summary["results"]))
+        self.assertEqual(len(summary["results"][0]["stages"]),2)
+
+    def test_second_pass_failure_preserves_original_and_marks_unchecked(self):
+        self.second_pass_provider(fail=True)
+        result=self.invoke(extra=["--second-pass","fast"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        summary=json.loads((self.base/"worker/second-pass.json").read_text())
+        self.assertEqual(summary["status"],"partial")
+        self.assertEqual(summary["checked"],0)
+        self.assertTrue(all(r["final_decision"]=="issue" for r in summary["results"]))
+
+    def test_second_pass_completed_attempt_preserves_native_lineage(self):
+        result=self.invoke()
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        saved=(self.base/"worker/findings.json").read_bytes()
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        self.second_pass_provider()
+        result=self.invoke(name="second",extra=["--phase","native","--first-pass",str(self.base/"worker"),"--second-pass","full","--supersede"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual((self.base/"worker/findings.json").read_bytes(),saved)
+        self.assertTrue(json.loads((self.base/"second/supersessions.json").read_text()))
+        state=json.loads((self.base/"second/state.json").read_text())
+        self.assertFalse(state["completion"]["missing_or_conflicting_review_ids"])
+
+    def test_second_pass_scope_omits_all_review_calls_for_unselected_decisions(self):
+        self.second_pass_provider(fail=True)
+        result=self.invoke(extra=["--second-pass","fast","--second-pass-scope","pending"])
+        detail=(self.base/"worker/worker.json").read_text() if (self.base/"worker/worker.json").exists() else ""
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr+detail)
+        summary=json.loads((self.base/"worker/second-pass.json").read_text())
+        self.assertEqual(summary["status"],"complete")
+        self.assertEqual(summary["targeted"],0)
+        self.assertEqual(summary["outside_scope"],len(self.ids))
+        jobs=[json.loads(p.read_text()) for p in (self.base/"worker/jobs").glob("*.json")]
+        self.assertFalse(any(j['binding']['role'].startswith('second_pass') for j in jobs))
+        self.assertTrue(all(r["final_decision"]=="issue" for r in summary["results"]))
+        archived=[r for p in (self.base/"worker/first-pass").glob("*.json") for r in json.loads(p.read_text())["results"]]
+        self.assertEqual({r["review_id"] for r in archived},set(self.ids))
+
+    def test_second_pass_scoped_bundle_is_native_validated_and_admitted(self):
+        self.second_pass_provider()
+        result=self.invoke(extra=["--second-pass","fast","--second-pass-scope","issues"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        summary=json.loads((self.base/"worker/second-pass.json").read_text())
+        self.assertEqual(summary["targeted"],len(self.ids))
+        self.assertEqual(summary["checked"],len(self.ids))
+        self.assertEqual(summary["outcomes"]["reopened"],len(self.ids))
+        self.assertTrue((self.base/"worker/second-pass-bundles/manifest.json").is_file())
+
+    def test_second_pass_admission_recovery_retains_labels_and_never_repeats_review(self):
+        from argparse import Namespace
+        self.second_pass_provider()
+        args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
+            output=str(self.base/"interrupted-second"), skill_root=str(ROOT/"skills/mehscan-security"),
+            provider_contract=None, source_profile=None, artifact_root=None, phase="all", supersede=False,
+            timeout=None, research_rounds=None, research_queries=None, research_bytes=None,
+            workers=2, query_workers=2, resume_from=None, second_pass="fast", second_pass_scope="issues")
+        original=worker.execute; calls=[]; crash=[True]
+        def execute(command,*rest,**kwargs):
+            if len(command)==2 and command[1]==str(self.reviewer):calls.append(command)
+            result=original(command,*rest,**kwargs)
+            if command[1:3]==["state","record"] and crash[0]:
+                crash[0]=False
+                raise TimeoutError("Native record committed without a local receipt")
+            return result
+        with patch.object(worker,"execute",side_effect=execute):first=worker.run(args)
+        self.assertEqual(first["status"],"incomplete",first)
+        completed_calls=len(calls)
+        self.assertGreater(completed_calls,0)
+        first_dir=Path(args.output)
+        args.output=str(self.base/"recovered-second");args.resume_from=str(first_dir)
+        with patch.object(worker,"execute",side_effect=execute):recovered=worker.run(args)
+        self.assertEqual(recovered["status"],"admitted",recovered)
+        self.assertTrue(recovered["recovered_admission"])
+        self.assertEqual(len(calls),completed_calls)
+        final=Path(args.output)
+        summary=json.loads((final/"second-pass.json").read_text())
+        self.assertEqual(summary["outcomes"]["reopened"],len(self.ids))
+        self.assertTrue((final/"second-pass.md").exists())
+        labels=json.loads((final/"training-labels.json").read_text())["labels"]
+        self.assertTrue(all(r["question"]["rule_id"] for r in labels))
+        self.assertEqual(len(list((final/"training-turns").glob("*/*-input.json"))),completed_calls)
+        self.assertTrue(list((final/"first-pass").glob("*.json")))
 
     def configure_tiered(self, run_calls=2, quality=False, research_rounds=0, audit_percent=100, final_qa=True):
         from argparse import Namespace
@@ -1613,6 +1776,24 @@ else:
         self.assertEqual(row["reserved_query_units"], 2)
         self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"], 2)
         self.assertTrue((directory / "journals" / (self.ids[0] + ".jsonl")).exists())
+
+    def test_definition_text_fallback_locates_unparsed_file_without_guessing_a_body(self):
+        self.extra_source_files = {"policy.txt":"# settings\n" * 204 + "decision_helper = enabled\n"}
+        self.setUp()  # Include the text before freezing the source binding.
+        self.research_reviewer('[{"tool":"definition", "review_id":task["review_ids"][0], '
+                              '"arguments":{"name":"decision_helper","path":"policy.txt","limit":10}}]')
+        self.reviewer.write_text(self.reviewer.read_text().replace(
+            'assert "eval" in json.dumps(task["research"]["results"])',
+            'assert "text_lookup" in json.dumps(task["research"]["results"])'))
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        row = json.loads((directory / "research.jsonl").read_text().splitlines()[0])
+        self.assertFalse(row["result"]["source_complete"])
+        self.assertIsNone(row["result"]["source"])
+        self.assertEqual(row["result"]["text_lookup"]["results"][0]["lines"],[205])
+        self.assertEqual(row["reserved_query_units"],2)
+        self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"],2)
 
     def test_query_batch_uses_one_post_fence_including_cache_hits(self):
         self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'

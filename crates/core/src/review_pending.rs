@@ -75,6 +75,8 @@ pub struct ReviewWorkPayload {
     pub runtime: Option<crate::ReviewRuntimeContract>,
     pub planned_review_ids: Vec<String>,
     pub deferred_review_ids: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub excluded_review_ids: std::collections::BTreeMap<String, String>,
     pub expected_parents: std::collections::BTreeMap<String, Vec<String>>,
     pub parent_decisions: Vec<crate::ReviewDecisionRecord>,
     pub pending_questions: Vec<ReviewPendingRecord>,

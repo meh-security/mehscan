@@ -109,6 +109,11 @@ else:
         "summary":"Installed package smoke retains an unresolved caller question.", "reason":"The operation evaluates the supplied request code.",
         "evidence":[{"path":"app.js", "start_line":1, "end_line":1}],
         "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[]} for value in task["review_ids"]]}
+    if task.get("review_role") == "second_pass_fast":
+        assert task["research"]["queries_remaining"] == 0
+        result = {"draft":result, "working_chain":"", "progress":[], "review_checks":[{
+            "review_id":value, "action":"keep", "claim":"", "proof_status":"supported",
+            "investigation_status":"external_blocker", "error_codes":[]} for value in task["review_ids"]]}
 print(json.dumps(result))
 ''', encoding="utf-8")
     command = base / "reviewer-command.json"
@@ -122,6 +127,22 @@ print(json.dumps(result))
     assert record["status"] == "admitted"
     assert record["completion"]["pending_review_ids"]
     assert record["completion"]["security_resolution"] == "not_established"
+    # Exercise the optional mode from the extracted files, retaining the first
+    # attempt and using native supersession rather than editing its responses.
+    save(work_file, native("state", "work", *common, "--skill-root", skill))
+    second = base / "second-pass"
+    call(sys.executable, "-B", package / "scripts/review_worker.py", "--scanner", scanner,
+         "--source-root", source, "--inventory", inventory, "--store", store, "--stream", "package-smoke",
+         "--claim", claim_file, "--work-package", work_file, "--reviewer-command", command,
+         "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", second,
+         "--skill-root", skill, "--phase", "native", "--first-pass", attempt,
+         "--second-pass", "fast", "--second-pass-scope", "pending", "--supersede")
+    checked = json.loads((second / "second-pass.json").read_text(encoding="utf-8"))
+    labels = json.loads((second / "training-labels.json").read_text(encoding="utf-8"))
+    assert checked["status"] == "complete" and checked["checked"] == len(plan["selected_review_ids"])
+    assert checked["outcomes"]["unresolved"] == checked["checked"]
+    assert not labels["auto_approved"] and labels["labels"]
+    assert all(row["label_authority"] == "model_reviewed" for row in labels["labels"])
     sarif = native("report", "--run", attempt / "run", "--source-root", source,
                    "--reviewer", "package-smoke/deterministic", "--format", "sarif")
     assert sarif["version"] == "2.1.0" and sarif["runs"][0]["results"] == []
@@ -130,7 +151,8 @@ print(json.dumps(result))
     call(scanner, "state", "end", "--store", store, "--stream", "package-smoke", "--repository-key", "test:installed-package",
          "--generation", "1", "--owner", claim["result"]["owner"], "--status", "finished", "--operation-key", "end")
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,
-                      "installed_worker":True, "document_links":"passed", "inference":False}))
+                      "installed_worker":True, "second_pass":"passed", "scoped_pending":True,
+                      "training_labels":"not_auto_approved", "document_links":"passed", "inference":False}))
 
 
 if __name__ == "__main__":

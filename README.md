@@ -10,6 +10,7 @@ It runs locally without building or executing your application. Use the CLI on i
 - Follow relevant source, imports and helper implementations during review.
 - Prepare review bundles for AI coding agents.
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
+- Add an optional second pass to check review quality or reassess selected results.
 - Export JSON, SARIF and Markdown reports.
 
 Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
@@ -69,7 +70,9 @@ See the [Changed review guide](skills/mehscan-security/references/changed-review
 
 Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your coding agent to review a repository or a change. The skill uses your agent's model and Mehscan's source lookup tools to investigate the relevant code.
 
-**Value** is the default review mode. It prioritizes useful security leads and keeps deferred work visible. Choose **Comprehensive** to cover every admitted review item. Findings include supporting evidence; unresolved items identify what still needs investigation.
+**Value** is the default review mode. It prioritizes useful security leads and keeps deferred work visible. **Comprehensive** uses conservative eligibility and reviews every admitted item, including broader unresolved security questions. Findings include supporting evidence; unresolved items identify what still needs investigation. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the scope of each mode.
+
+An optional [second pass](docs/review-worker.md#optional-second-pass) can check all results or just findings, dismissals or unresolved items. **Fast** checks the evidence and investigation trace, keeping supported results or reopening a proof gap. **Full** makes an independent assessment and compares it with the first review. Second pass is off by default; neither mode certifies a result as correct.
 
 For manual bundle review:
 
@@ -83,7 +86,7 @@ After your agent has reviewed the bundles, generate a report:
 mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id
 ```
 
-For scripted use, the [local AI worker](docs/review-worker.md) runs a configured reviewer and tracks review progress. The [Codex adapter guide](docs/codex-reviewer.md) covers model setup, dependencies and optional flow diagnostics. The [advisory GitHub Action](docs/github-action.md) supports pull-request and release review.
+For scripted use, the [local AI worker](docs/review-worker.md) runs a configured reviewer, tracks progress, and records token usage, cached input and timing. The [Codex adapter guide](docs/codex-reviewer.md) covers model setup, dependencies and optional flow diagnostics. The [advisory GitHub Action](docs/github-action.md) supports pull-request and release review.
 
 ## Documentation
 
