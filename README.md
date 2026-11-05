@@ -22,13 +22,13 @@ Download a package from [GitHub Releases](https://github.com/meh-security/mehsca
 **Linux and macOS**
 
 ```sh
-bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.9.0
+bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.10.0
 ```
 
 **Windows**
 
 ```powershell
-pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.9.0
+pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.10.0
 ```
 
 The installers require GitHub CLI (`gh`). Linux/macOS also need Bash and Python 3.9+; Windows needs PowerShell 7. See the [installation guide](docs/installation.md) for platform setup and installation options.
@@ -98,7 +98,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [Release notes](docs/release-notes-v0.9.0.md)
+- [Release notes](docs/release-notes-v0.10.0.md)
 
 Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
 

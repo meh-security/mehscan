@@ -17,6 +17,7 @@
   "docs/output-contract.md",
   "docs/php-coverage.md",
   "docs/release-notes-v0.9.0.md",
+  "docs/release-notes-v0.10.0.md",
   "docs/review-state.md",
   "docs/review-worker.md",
   "scripts/github_action.py",
