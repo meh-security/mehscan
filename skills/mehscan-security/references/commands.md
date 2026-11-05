@@ -40,7 +40,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Directed compiler evidence | `mehscan investigate csharp-semantic ROOT --inventory RUN/inventory --evidence-ids ID,ID --context CONTEXT --backend EXE --output FILE` (or `typescript-semantic` / SCRIPT); use card `anchor.id`, not review IDs. |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
-| Value selection / deferred work | Add `--selection value` / `--selection deferred`; Comprehensive uses `--selection all`. Inspect `dependency_review_ids`; rebuild the ledger to reopen unsafe/unresolved dependents (`reopened_count`). Deferrals retain IDs and reasons, not safe verdicts. |
+| Profile selection / deferred work | Add `--selection value` or `--selection comprehensive`. Inspect `--selection deferred` for Value deferrals and `--selection excluded` for native conservative Comprehensive exclusions. `all` lists the full inventory. Inspect `dependency_review_ids`; rebuild the ledger to reopen unsafe/unresolved Value dependents (`reopened_count`). Scope exclusions and deferrals have no verdict. |
 | Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `fixed_filesystem_path`, `temporary_filesystem_path`, `immutable_filesystem_operand`, `configured_root_path`, `encoding_call`, `local_operand_origin`, `operand_boundary`, `query_structure`, `process_shell_mode`, `native_operand_declaration`, `local_call_argument`, `prepared_statement_use`, `unclassified`) |
 | Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` (native C# producers: `--operand-kind shared_filesystem_producer` or `shared_outbound_destination`) |
 | Reuse inspected facts | `mehscan investigate review-facts ROOT --inventory DIR --facts FILE --contract KEY` (record with `--notes INPUT --output FILE`) |
@@ -135,8 +135,13 @@ parents or fingerprints. Use normal queries and finalization for the new answer.
 For a provider-neutral worker, create the plan with the trusted skill package:
 `mehscan state plan-template --inventory DIR --source-root ROOT --policy value --selection policy --skill-root TRUSTED/mehscan-security`.
 `--selection policy` applies initial native Value hints as explicit unreviewed
-deferrals, with reasons/dependencies. Comprehensive keeps all IDs. The default
-without this option remains `all` for compatible manual/full-coverage templates.
+deferrals, with reasons/dependencies. Comprehensive applies conservative native
+eligibility: locally proven ordinary read-only selections can be excluded with
+reasons, while unknown modes, provenance and consequential relationships stay
+admitted. Its `excluded_review_ids` are inventory-bound scope, not deferred
+mandatory work or safe decisions. Comprehensive must finish every admitted ID;
+Value retains its existing selection. The profiles need not be nested.
+Without this option Value templates select all; Comprehensive eligibility still applies.
 Deferred work has no verdict; promote it when stronger evidence warrants review.
 The native runtime binds the same per-conversation allowance for Value and
 Comprehensive: five research rounds (six total calls), 24 query units, 512 KiB and

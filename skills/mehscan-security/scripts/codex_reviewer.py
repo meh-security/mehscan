@@ -279,7 +279,11 @@ def run(config, task, launcher_factory=Launcher):
     profile = task.get("profile", "routine")
     role = task.get("review_role", "investigator")
     quality = (runtime.get("orchestration") or {}).get("quality") or {}
-    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection") or (
+    second_role = role in ("second_pass_fast", "second_pass_compare")
+    if second_role and (profile != "routine" or task.get("second_pass") != (
+            "fast" if role == "second_pass_fast" else "full") or packet.get("second_pass") != task["second_pass"]):
+        raise ValueError("second-pass role requires an explicit matching controller mode")
+    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection", "second_pass_fast", "second_pass_compare") or (
             role == "collection" and (profile not in ("routine", "expert") or not runtime.get("orchestration"))) or (
             role == "research" and (profile != "expert" or not runtime.get("orchestration"))) or (
             role in ("adjudication", "final_qa") and (profile != "expert" or not quality.get(

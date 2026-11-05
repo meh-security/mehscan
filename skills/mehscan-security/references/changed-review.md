@@ -83,7 +83,7 @@ mehscan investigate review-inventory-list --inventory RUN/inventory --selection 
 mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1
 ```
 
-Comprehensive uses `--selection all`. Follow [bundle workflow](review-workflow.md)
+Comprehensive uses `--selection comprehensive`. Follow [bundle workflow](review-workflow.md)
 for selected IDs and [finalization](finish-review.md) for decisions. Read whole
 changed files as needed, including unchanged sinks; a hunk-only queue can miss a
 removed guard. Search unchanged context only for a named missing edge. Record

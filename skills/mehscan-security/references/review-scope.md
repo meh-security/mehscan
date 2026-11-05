@@ -11,7 +11,7 @@ queue entry is not proof that it deserves its assigned priority.
 | Queue | Include when | Rationale |
 | --- | --- | --- |
 | **Value** | A shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific high-value lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the first review budget on likely useful findings and conclusions. Useful medium issues can qualify; default severity alone does not decide. |
-| **Comprehensive** | A plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next fact that could settle it. | Research credible relationships whose evidence is weaker or whose expected impact is lower. Includes Value. |
+| **Comprehensive** | A plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next fact that could settle it. | Conservative eligibility retains uncertain relationships and excludes source-established ordinary reads. It preserves other admitted families; its scope need not contain every Value ID. |
 | **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
 
 Unknown attacker control does not automatically discard a dangerous construction.
@@ -74,7 +74,9 @@ decision-critical mechanism promotes it. Connected Go gob/Python marshal also
 starts Comprehensive-only. Ordinary logging, redirects, cookie transport/script
 access, CORS and CSRF start there; consequential chains can justify promotion.
 Shared producer/dependency hints defer repeated research without sharing a safe
-verdict. Comprehensive includes Value; exclusion removes ordinary work from both.
+verdict. Native inventory exclusions remove ordinary work from both. Profile-specific
+`comprehensive_exclusion` facts affect conservative Comprehensive only, preserving
+Value's existing queue. Exclusions remain raw evidence and never become clean verdicts.
 
 Frontend build/cache/dependency artifacts are outside both ordinary source-review
 queues. Keep authored implementations and consequential leads; report exclusions

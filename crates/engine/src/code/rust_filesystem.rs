@@ -188,6 +188,20 @@ pub(super) fn annotate<'a>(language: Language, root: &RustNode<'a>, evidence: &m
                 vec!["temporary_file_identity_and_content_consumers".into()],
             )
         } else {
+            if item.capability == Capability::FilesystemRead
+                && let Some(argument) = call
+                    .field("arguments")
+                    .and_then(|a| a.children().find(|n| n.is_named()))
+                && index.environment_path(&argument, call, 0)
+            {
+                item.context.operand_facts.push(OperandFact {
+                    role: "path_authority".into(),
+                    kind: OperandFactKind::LocalOperandOrigin,
+                    location: path.location.clone(),
+                    value: "process_environment".into(),
+                    remaining_checks: vec![],
+                });
+            }
             continue;
         };
         item.tags.push(tag.into());
@@ -234,6 +248,106 @@ enum Temporary {
 }
 
 impl Index<'_, '_> {
+    fn environment_path(&self, node: &RustNode<'_>, at: &RustNode<'_>, depth: usize) -> bool {
+        if depth >= 12 {
+            return false;
+        }
+        if node.kind().as_ref() == "reference_expression" {
+            return node
+                .field("value")
+                .is_some_and(|n| self.environment_path(&n, at, depth + 1));
+        }
+        if node.kind().as_ref() == "try_expression" {
+            return node
+                .children()
+                .find(|n| n.is_named())
+                .is_some_and(|n| self.environment_path(&n, at, depth + 1));
+        }
+        if node.kind().as_ref() == "identifier" {
+            let Some(scope) = callable(at) else {
+                return false;
+            };
+            let key = (scope.range().start, node.text().into_owned());
+            if self.unstable.contains(&key) {
+                return false;
+            }
+            // A match binding shadows an outer let. Follow only an exact Ok
+            // extraction from the corresponding Result/tuple component.
+            for owner in at.ancestors() {
+                if matches!(
+                    owner.kind().as_ref(),
+                    "function_item" | "closure_expression"
+                ) {
+                    break;
+                }
+                if owner.kind().as_ref() != "match_arm" {
+                    continue;
+                }
+                let Some(pattern) = owner.field("pattern") else {
+                    continue;
+                };
+                if !pattern
+                    .dfs()
+                    .any(|n| n.kind().as_ref() == "identifier" && n.text() == node.text())
+                {
+                    continue;
+                }
+                let Some(matched) = owner
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "match_expression")
+                else {
+                    return false;
+                };
+                let Some(value) = matched.field("value") else {
+                    return false;
+                };
+                return result_binding_value(&pattern, &value, node.text().as_ref())
+                    .is_some_and(|v| self.environment_path(&v, &matched, depth + 1));
+            }
+            let Some(declarations) = self.bindings.get(&key) else {
+                return false;
+            };
+            if self.unstable.contains(&key) || declarations.len() != 1 {
+                return false;
+            }
+            let declaration = declarations[0];
+            return declaration.range().end <= at.range().start
+                && declaration
+                    .parent()
+                    .is_some_and(|b| b.range().contains(&at.range().start))
+                && declaration
+                    .field("value")
+                    .is_some_and(|v| self.environment_path(&v, declaration, depth + 1));
+        }
+        if node.kind().as_ref() != "call_expression" {
+            return false;
+        }
+        let Some(function) = node.field("function") else {
+            return false;
+        };
+        if self.exact(&function, "std::env::var") || self.exact(&function, "std::env::var_os") {
+            return true;
+        }
+        if function.kind().as_ref() != "field_expression" {
+            return false;
+        }
+        let Some(method) = function.field("field") else {
+            return false;
+        };
+        let count = node.field("arguments").map_or(usize::MAX, |a| {
+            a.children().filter(|n| n.is_named()).count()
+        });
+        if !matches!(
+            (method.text().as_ref(), count),
+            ("unwrap", 0) | ("expect", 1)
+        ) {
+            return false;
+        }
+        function
+            .field("value")
+            .is_some_and(|v| self.environment_path(&v, at, depth + 1))
+    }
+
     fn exact(&self, node: &RustNode<'_>, expected: &str) -> bool {
         let text = node.text();
         let text = text.trim();
@@ -307,6 +421,44 @@ impl Index<'_, '_> {
             _ => None,
         }
     }
+}
+
+fn result_binding_value<'a>(
+    pattern: &RustNode<'a>,
+    value: &RustNode<'a>,
+    name: &str,
+) -> Option<RustNode<'a>> {
+    if pattern.kind().as_ref() == "match_pattern" {
+        return result_binding_value(&pattern.children().find(|n| n.is_named())?, value, name);
+    }
+    if pattern.kind().as_ref() == "tuple_pattern" && value.kind().as_ref() == "tuple_expression" {
+        let patterns = pattern
+            .children()
+            .filter(|n| n.is_named() || n.kind().as_ref() == "_")
+            .collect::<Vec<_>>();
+        let values = value
+            .children()
+            .filter(|n| n.is_named())
+            .collect::<Vec<_>>();
+        if patterns.len() != values.len() {
+            return None;
+        }
+        return patterns
+            .iter()
+            .zip(values.iter())
+            .find_map(|(p, v)| result_binding_value(p, v, name));
+    }
+    if pattern.kind().as_ref() == "tuple_struct_pattern"
+        && pattern
+            .text()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            == format!("Ok({name})")
+    {
+        return Some(value.clone());
+    }
+    None
 }
 
 fn callable<'a>(node: &RustNode<'a>) -> Option<RustNode<'a>> {

@@ -144,7 +144,13 @@ def _lookup(bridge, query, arguments, key, work_id=None):
             args = worker.research_arguments(child,bridge.root,bridge.payload["review_ids"],bridge.directory / "journals",
                 api=context.research_api(bridge.skill),guidance=context.guidance_catalog(bridge.skill))
             return execute(child,args)
-        result = worker.definition_result(result,read_source)
+        def find_references():
+            child = {**query,"tool":"references","arguments":{
+                **{k:v for k,v in values.items() if k != "name"},"symbol":values["name"]}}
+            args = worker.research_arguments(child,bridge.root,bridge.payload["review_ids"],bridge.directory / "journals",
+                api=context.research_api(bridge.skill),guidance=context.guidance_catalog(bridge.skill))
+            return execute(child,args)
+        result = worker.definition_result(result,read_source,find_references)
     # Publication owns the freshness fence after transactional source capture.
     return result,[],count,None
 

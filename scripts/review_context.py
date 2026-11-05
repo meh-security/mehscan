@@ -130,6 +130,8 @@ def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="inv
     result = [sections(core, selected_sections)]
     if role in ("verification", "adjudication", "final_qa"):
         result.append(sections(core, [role]))
+    elif role in ("second_pass_fast", "second_pass_compare"):
+        result.append(sections(skill_root / "references/second-pass-review.md", [role]))
     elif role not in ("investigator", "research", "collection"):
         raise ValueError("unknown reviewer role")
     if any(entry.get("capability") == "html_output" for entry in entries) or any(

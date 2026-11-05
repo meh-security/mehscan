@@ -25,6 +25,61 @@ experimental. Manual skill use runs in the host agent and does not require this 
 See [Prepare review work](#prepare-review-work) for the ordinary setup.
 [Source preparation](#optional-source-preparation) is an optional experiment.
 
+## Optional second pass
+
+Add `--second-pass fast` or `--second-pass full` to the normal worker command.
+The default is `off`, independently of Value or Comprehensive.
+
+Fast checks the first verdict, deciding source and compact lookup trace in one
+final-only call per bundle. It keeps a supported result or reopens a concrete
+proof gap; it cannot promote, dismiss or close a pending claim. Full first makes
+a fresh source-backed assessment without the original verdict, using the normal
+research allowance, then runs one final-only comparison of the two proofs and
+conditions. It can correct a result; unresolved disagreements stay pending.
+Both include clean and pending claims in the chosen work package.
+Use `--second-pass-scope issues`, `dismissals`, `pending` or a comma-separated
+combination to select first-pass decisions. The default is `all`. For example,
+`--second-pass fast --second-pass-scope issues` checks reported findings, while
+`--second-pass full --second-pass-scope pending` investigates unresolved claims.
+`tp`/`fp` aliases mean first-pass issue/dismissal, not established ground truth.
+Filtering happens before new bundles and reviewer packets are formed, reducing
+calls and context. Unselected claims retain their first result and are marked
+not checked / outside scope; they are not counted as second-pass confirmations.
+The summary separates all first-pass claims, targeted claims and checked claims.
+
+For an already completed attempt, refresh `state work` for the desired IDs and
+use the new work package with `--first-pass OLD_ATTEMPT --second-pass fast|full
+--supersede` and a fresh output directory. `--phase native --validate-only` can
+instead produce source-validated reports without state admission or supersession.
+Use an ordinary single-profile plan; this option does not enable experimental
+tiered/multi-model orchestration. The same configured model can run both passes.
+
+`second-pass.md` shows first/final results and confirmed, corrected, reopened,
+unresolved or not-checked outcomes. `second-pass.json` retains per-claim objections,
+stage receipts and first/second/combined usage. `findings.json` remains the native
+final report; original responses remain in `first-pass/`. A second-pass failure
+keeps the original result visibly not checked while other bundles continue.
+
+`training-labels.json` separates the verdict, proof assessment, investigation
+status and label provenance. Labels remain candidates or excluded; they are not
+automatically approved. `training-turns/` holds actual input/fact/response snapshots
+linked to their native context. Source/controller tokens must be loss-masked when
+preparing training data. A corrected trajectory does not rewrite the first one.
+Neither model agreement nor valid citations establish semantic ground truth.
+
+Optional `--second-pass-rates RATES.json` prices recorded calls using your explicit
+rate basis. Without rates, costs are unknown rather than assumed free. Format:
+
+```json
+{"models":{"your-model":{"input_per_million":1,"cached_input_per_million":0.1,"output_per_million":5}}}
+```
+
+Rates are per model and currency unit; these example numbers are not vendor prices.
+An optional `long_context` object supports `threshold_tokens`, `input_multiplier`
+and `output_multiplier`. Unmatched models or unknown token counters leave cost
+unavailable. Provider elapsed totals are sums of calls, not parallel wall time;
+the second-pass summary records its own wall time separately.
+
 Use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. An orchestration policy, collection agent or automatic second review is

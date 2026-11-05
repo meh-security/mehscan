@@ -201,6 +201,9 @@ pub struct ReviewInventoryEntry {
     /// Review-effort heuristic, never a safety verdict or admission closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_hint: Option<ValueReviewHint>,
+    /// Conservative Comprehensive eligibility; independent of Value priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comprehensive_exclusion: Option<ValueReviewHint>,
 }
 
 fn question_source_configuration(
@@ -430,7 +433,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "29";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "30";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -1947,6 +1950,7 @@ fn build_path_review_jobs_internal(
                 value_hint: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .and_then(|sink| practical_admission::comprehensive_hint(sink)),
+                comprehensive_exclusion: None,
             }
         }));
         entries.extend(observation_groups.iter().filter_map(|group| {
@@ -2002,9 +2006,11 @@ fn build_path_review_jobs_internal(
                             .then(|| practical_admission::filesystem_research_hint(anchor))
                             .flatten()
                     }),
+                comprehensive_exclusion: None,
             })
         }));
         share_csharp_filesystem_questions(entries);
+        practical_admission::conservative_filesystem_scope(entries, &scan.evidence, &sources);
         share_csharp_destination_questions(entries);
         // Scope hints affect Value selection only. Strong relationships and
         // decision-critical operations remain active even in build components.

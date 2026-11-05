@@ -1,6 +1,244 @@
 use std::{fs, path::PathBuf, process::Command};
 
 #[test]
+fn conservative_comprehensive_excludes_only_proven_ordinary_reads_and_preserves_value() {
+    let base = std::env::temp_dir().join(format!("mehscan-conservative-{}", std::process::id()));
+    fs::create_dir(&base).unwrap();
+    let root = base.join("source");
+    fs::create_dir(&root).unwrap();
+    fs::write(
+        root.join("app.rs"),
+        r#"
+pub fn fixed() -> std::io::Result<String> { std::fs::read_to_string("/var/local/version") }
+pub fn configured() -> std::io::Result<String> {
+    let file = std::env::var("INPUT_FILE").unwrap();
+    std::fs::read_to_string(file)
+}
+pub fn delegated(file: &str) -> std::io::Result<String> { std::fs::read_to_string(file) }
+pub fn configured_match(key: &str) -> Option<String> {
+    let value = std::env::var(key);
+    match (false, value) {
+        (_, Ok(file)) => std::fs::read_to_string(file).ok(),
+        _ => None,
+    }
+}
+pub fn shadowed_match(input: Result<String, ()>) -> Option<String> {
+    let file = std::env::var("INPUT_FILE").unwrap();
+    match input {
+        Ok(file) => std::fs::read_to_string(file).ok(),
+        _ => Some(file),
+    }
+}
+pub fn changed(other: String) -> std::io::Result<String> {
+    let mut file = std::env::var("INPUT_FILE").unwrap();
+    file = other;
+    std::fs::read_to_string(file)
+}
+pub fn unknown_mode(path: &str, options: bool) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new().read(true).write(options).open(path)
+}
+"#,
+    )
+    .unwrap();
+    fs::write(root.join("app.py"), "def fixed_python():\n    return open('/var/local/version').read()\n\ndef delegated_python(file):\n    return open(file).read()\n").unwrap();
+    let inventory = base.join("inventory");
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+        "--repository-key",
+        "fixture:conservative",
+    ]);
+    let plan = |policy| {
+        run(&[
+            "state",
+            "plan-template",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--policy",
+            policy,
+            "--selection",
+            "policy",
+        ])
+    };
+    let value = plan("value");
+    let comprehensive = plan("comprehensive");
+    let all = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--selection",
+        "all",
+    ]);
+    let rows = all["entries"].as_array().unwrap();
+    let excluded = comprehensive["excluded_review_ids"].as_object().unwrap();
+    let selected = comprehensive["selected_review_ids"].as_array().unwrap();
+    let value_ids = value["selected_review_ids"].as_array().unwrap();
+    for row in rows.iter().filter(|r| r["capability"] == "filesystem_read") {
+        let symbol = row["symbol"].as_str().unwrap();
+        let id = row["review_id"].as_str().unwrap();
+        let ordinary = matches!(
+            symbol,
+            "fixed" | "fixed_python" | "configured" | "configured_match"
+        );
+        assert_eq!(excluded.contains_key(id), ordinary, "{row}");
+        assert_eq!(selected.contains(&row["review_id"]), !ordinary);
+        assert!(
+            value_ids.contains(&row["review_id"]),
+            "Value must retain {symbol}"
+        );
+    }
+    // Fixed literal readers are already inventory-only in the shared admission
+    // policy. The new profile cut is the proven process-input reader.
+    assert_eq!(excluded.len(), 2);
+    assert!(
+        comprehensive["deferred_review_ids"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let selected_list = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--selection",
+        "comprehensive",
+    ]);
+    assert_eq!(
+        selected_list["matching_count"].as_u64().unwrap() as usize,
+        selected.len()
+    );
+    let raw = fs::read_to_string(inventory.join("scan-cache.json")).unwrap();
+    assert!(raw.contains("/var/local/version"));
+    let store = base.join("state");
+    let claim = run(&[
+        "state",
+        "claim",
+        "--store",
+        store.to_str().unwrap(),
+        "--stream",
+        "check",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--source-root",
+        root.to_str().unwrap(),
+        "--attempt-id",
+        "first",
+        "--expected-generation",
+        "0",
+        "--operation-key",
+        "claim",
+    ]);
+    let input = base.join("plan.json");
+    fs::write(&input, serde_json::to_vec(&comprehensive).unwrap()).unwrap();
+    let generation = claim["result"]["generation"].as_u64().unwrap().to_string();
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    run(&[
+        "state",
+        "plan",
+        "--store",
+        store.to_str().unwrap(),
+        "--stream",
+        "check",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--source-root",
+        root.to_str().unwrap(),
+        "--generation",
+        &generation,
+        "--owner",
+        owner,
+        "--input",
+        input.to_str().unwrap(),
+        "--operation-key",
+        "plan",
+    ]);
+    let mut forged = comprehensive.clone();
+    let selected_id = selected[0].as_str().unwrap();
+    forged["selected_review_ids"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|v| v.as_str() != Some(selected_id));
+    forged["excluded_review_ids"][selected_id] =
+        serde_json::json!("Invented exclusion to skip an admitted claim.");
+    fs::write(&input, serde_json::to_vec(&forged).unwrap()).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "state",
+            "plan",
+            "--store",
+            store.to_str().unwrap(),
+            "--stream",
+            "check",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--generation",
+            &generation,
+            "--owner",
+            owner,
+            "--input",
+            input.to_str().unwrap(),
+            "--operation-key",
+            "forged-plan",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("profile exclusions"));
+    // A separate callable can replace process configuration. Retain its readers
+    // instead of treating environment provenance as immutable operator authority.
+    fs::write(
+        root.join("writer.rs"),
+        "pub fn replace(path: &str) { unsafe { std::env::set_var(\"INPUT_FILE\", path); } }\n",
+    )
+    .unwrap();
+    let guarded_inventory = base.join("with-writer");
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        guarded_inventory.to_str().unwrap(),
+        "--repository-key",
+        "fixture:environment-writer",
+    ]);
+    let guarded_plan = run(&[
+        "state",
+        "plan-template",
+        "--inventory",
+        guarded_inventory.to_str().unwrap(),
+        "--source-root",
+        root.to_str().unwrap(),
+        "--policy",
+        "comprehensive",
+        "--selection",
+        "policy",
+    ]);
+    assert!(guarded_plan.get("excluded_review_ids").is_none());
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn policy_plan_selection_partitions_priority_without_inventing_verdicts() {
     let base =
         std::env::temp_dir().join(format!("mehscan-policy-selection-{}", std::process::id()));

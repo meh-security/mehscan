@@ -996,8 +996,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let selection = parsed
                 .optional("--selection")
                 .unwrap_or_else(|| "all".into());
-            if !matches!(selection.as_str(), "all" | "value" | "deferred") {
-                return Err("invalid --selection; use all, value, or deferred".into());
+            if !matches!(
+                selection.as_str(),
+                "all" | "value" | "comprehensive" | "excluded" | "deferred"
+            ) {
+                return Err(
+                    "invalid --selection; use all, value, comprehensive, excluded, or deferred"
+                        .into(),
+                );
             }
             if group_by
                 .as_deref()
@@ -1139,6 +1145,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             matching.retain(|entry| match selection.as_str() {
                 "value" => entry["value_hint"].is_null() || reopened(entry),
                 "deferred" => !entry["value_hint"].is_null() && !reopened(entry),
+                "comprehensive" => entry["comprehensive_exclusion"].is_null(),
+                "excluded" => !entry["comprehensive_exclusion"].is_null(),
                 _ => true,
             });
             if group_by.is_some() {
@@ -4441,7 +4449,7 @@ USAGE:
   mehscan investigate review-inventory [ROOT] --output DIR [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base] [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
     Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
   mehscan investigate review-inventory ROOT --continue-from DIR --marker-page N --output DIR
-  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|comprehensive|excluded|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

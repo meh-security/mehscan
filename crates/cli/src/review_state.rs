@@ -926,6 +926,7 @@ fn work_package(
         runtime: saved.plan.runtime.clone(),
         planned_review_ids: saved.plan.selected_review_ids.clone(),
         deferred_review_ids: saved.plan.deferred_review_ids.clone(),
+        excluded_review_ids: saved.plan.excluded_review_ids.clone(),
         expected_parents,
         parent_decisions: parents
             .into_iter()
@@ -1028,6 +1029,7 @@ fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Resu
         "status":if !work_complete { "incomplete" } else if has_limits { "complete_with_limits" } else { "complete" },
         "accounting_complete":unassessed.is_empty(),"review_work_complete":work_complete,
         "selected_review_count":plan.selected_review_ids.len(),"deferred_review_ids":plan.deferred_review_ids,
+        "excluded_review_ids":plan.excluded_review_ids,
         "missing_or_conflicting_review_ids":missing,"pending_review_ids":pending,"issue_review_ids":issues,
         "unassessed_changed_paths":unassessed,"limited_changed_paths":limited,"pending_changed_effects":change_pending,
         "native_coverage_limits":plan.native_coverage_limits,"security_resolution":"not_established"}))
@@ -1234,6 +1236,10 @@ fn inventory(
         impact_scope: cache.scan.impact_scope.clone(),
         coordination_key: None,
         subjects: catalog.subjects.clone(),
+        comprehensive_exclusions: cache.entries.iter().filter_map(|entry| {
+            entry.comprehensive_exclusion.as_ref().map(|hint|
+                (entry.review_id.clone(), format!("Conservative Comprehensive scope ({}): {} Unreviewed; not a safety verdict.", hint.reason, hint.assumption)))
+        }).collect(),
     };
     Ok((cache, binding))
 }

@@ -18,6 +18,7 @@ import time
 import review_context as context
 import review_source_profile as source_profiles
 import review_orchestration as orchestration
+import review_second_pass as second_pass
 from review_trace import ReviewTrace
 
 _cancelled = False
@@ -764,7 +765,7 @@ def research_batch_plan(queries, root, review_ids, journals, query_units_remaini
     return ([query for _, query, _ in selected], [command for _, _, command in selected], feedback)
 
 
-def definition_result(discovery, read_source):
+def definition_result(discovery, read_source, find_references=None):
     """Read one native declaration range; never guess dispatch or pick an overload."""
     result = {"operation":"get_definition", "symbol_lookup":discovery,
               "source":None, "source_complete":False, "limit":None}
@@ -775,6 +776,11 @@ def definition_result(discovery, read_source):
     unique = {json.dumps(item.get("location"), sort_keys=True):item for item in matches if isinstance(item, dict)}
     if len(unique) != 1:
         result["limit"] = "ambiguous_declaration" if unique else "declaration_not_found"
+        if not unique and find_references is not None:
+            # The declaration lookup used one of the two reserved units. Use
+            # the other for navigation when syntax or an import alias hides a
+            # definition. Text matches are not declarations or inspected bodies.
+            result["text_lookup"] = find_references()
         return result
     location = next(iter(unique.values())).get("location") or {}
     first, last = location.get("start", {}).get("line"), location.get("end", {}).get("line")
@@ -832,6 +838,17 @@ def run(args):
 
 
 def run_locked(args):
+    second_mode = getattr(args, "second_pass", "off")
+    second_scope = second_pass.review_scope(getattr(args, "second_pass_scope", "all"))
+    if second_mode == "off" and second_scope != second_pass.review_scope("all"):
+        raise ValueError("second-pass scope requires --second-pass fast or full")
+    first_path = getattr(args, "first_pass", None)
+    if second_mode not in ("off", "fast", "full") or first_path and second_mode == "off":
+        raise ValueError("a completed first pass requires --second-pass fast or full")
+    if second_mode != "off" and args.phase == "change-pass":
+        raise ValueError("second-pass review operates on native claim IDs")
+    if first_path and not (args.supersede or getattr(args, "validate_only", False)):
+        raise ValueError("reviewing an admitted first pass requires --supersede or --validate-only")
     validate_only = getattr(args, "validate_only", False)
     if type(validate_only) is not bool or validate_only and (args.phase != "native" or args.supersede):
         raise ValueError("validation-only review requires native phase without supersession")
@@ -853,6 +870,12 @@ def run_locked(args):
             setattr(args, limit_options[key], fallback)
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
+    first_directory = outside(first_path, root) if first_path else None
+    if first_directory and read(first_directory / "worker.json")["status"] not in ("admitted", "source_validated"):
+        raise ValueError("first pass must have complete source-validated results")
+    rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
+    if rates_path:
+        second_pass.validate_rates(read(rates_path))
     invocation = outside(args.reviewer_command, root)
     claim_path = outside(args.claim, root)
     supplied_work_path = outside(args.work_package, root)
@@ -1075,7 +1098,7 @@ def run_locked(args):
                     validate_native_candidate(task, job, draft, max(0, args.timeout - job.prior_elapsed))
             except CommandFailure as error:
                 message = finalization_feedback(error, task.get("review_ids", []))
-                if (message is None or job.state.get("citation_feedback") or job.state.get("unknown_provider_calls")
+                if (message is None or task.get("review_role") in second_pass.ROLES or job.state.get("citation_feedback") or job.state.get("unknown_provider_calls")
                         or job.state["calls"] >= args.research_rounds + 1):
                     raise
                 job.state.pop("candidate_draft")
@@ -1108,6 +1131,8 @@ def run_locked(args):
         if task.get("assessment_cycle"):
             conversation_parts.append(task["assessment_cycle"])
         conversation_id = context.digest(conversation_parts)
+        if second_mode != "off":
+            job.save(conversation_id=conversation_id)
         ids = task.get("review_ids", [])
         entries = [entry for entry in inventory_data["entries"] if entry["review_id"] in (ids or payload["planned_review_ids"])]
         packet = {"schema_version": "1", "package_id": expected["package_id"],
@@ -1122,6 +1147,8 @@ def run_locked(args):
             packet["assessment_cycle"] = task["assessment_cycle"]
         if task.get("stage_context") is not None:
             packet["stage_context"] = task["stage_context"]
+        if task.get("second_pass"):
+            packet["second_pass"] = task["second_pass"]
         if task.get("source_handoff") is not None:
             packet["source_handoff"] = {"fact_count":len(task["source_handoff"]["facts"]),
                                        "omitted_facts":task["source_handoff"]["omitted_facts"]}
@@ -1132,6 +1159,11 @@ def run_locked(args):
             # assessment. Source updates remain facts, with their original scope.
             packet["work"]["parent_decisions"] = {}
             packet["work"]["change_pass"] = []
+            packet["work"]["pending_questions"] = []
+        if role in second_pass.ROLES:
+            packet["work"]["parent_decisions"] = {}
+            packet["work"]["change_pass"] = []
+            packet["work"]["pending_questions"] = []
         sweep_facts = []
         if role in ("research", "collection"):
             packet["native_questions"] = []
@@ -1227,6 +1259,8 @@ def run_locked(args):
 
         calls_left = args.research_rounds + 1 - job.state["calls"]
         calls_left = remaining_count("model_calls", calls_left)
+        if role in second_pass.ROLES:
+            calls_left = min(calls_left, max(0, 1 - job.state["calls"]))
         if task.get("assessment_cycle") == "revalidation":
             calls_left = min(calls_left, 1)  # Assess already recovered source, no new research loop.
         if tiered_policy and profile == "routine" and role in ("investigator", "verification"):
@@ -1289,6 +1323,13 @@ def run_locked(args):
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
+            if role in second_pass.ROLES:
+                frame["research"].update(rounds_remaining=0, queries_remaining=0)
+            if second_mode != "off":
+                turn_directory = output / "training-turns" / conversation_id
+                turn_directory.mkdir(parents=True, exist_ok=True)
+                write(turn_directory / (str(round_index) + "-input.json"), frame)
+                write(turn_directory / (str(round_index) + "-facts.json"), read(facts_path))
             started = time.monotonic()
             execution_trace.emit("provider_started", job_id=job.path.stem, conversation_id=conversation_id,
                 round=round_index, calls_remaining=calls_left-round_index, queries_remaining=frame["research"]["queries_remaining"])
@@ -1328,6 +1369,8 @@ def run_locked(args):
             job.save(model_inflight=False, active_turn=None, active_since=time.time())
             check_fresh()
             received_response = json.loads(json.dumps(value))
+            if second_mode != "off":
+                write(turn_directory / (str(round_index) + "-response.json"), received_response)
             execution_trace.emit("reviewer_response", job_id=job.path.stem, conversation_id=conversation_id,
                 round=round_index, response=received_response)
             try:
@@ -1359,7 +1402,7 @@ def run_locked(args):
                     job.save(dependency_support=handoff)
                     return job.complete({field:note})
                 if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value or "routing" in value):
-                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions", "qa_actions"}:
+                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions", "qa_actions", "review_checks"}:
                         raise ValueError("review envelope contains unsupported fields")
                     routing = orchestration.validate_routing(value.get("routing", []), ids)
                     if routing and not frame["routing_allowed"]:
@@ -1406,6 +1449,15 @@ def run_locked(args):
                             value["draft"] = orchestration.quality_intent(value["draft"], value["qa_actions"],
                                 task["stage_context"]["baseline"], set(task["stage_context"].get("assigned_ids", ids)))
                             job.save(qa_actions=value["qa_actions"])
+                        if role in second_pass.ROLES:
+                            second_pass.checks(value.get("review_checks"), ids)
+                            if role == "second_pass_fast":
+                                before = {r["review_id"]:r["decision"] for r in task["stage_context"]["baseline"]["results"]}
+                                if any(r["decision"] not in (before.get(r["review_id"]), "needs_review") for r in value["draft"].get("results", [])):
+                                    raise ValueError("Fast second pass cannot install an opposing verdict")
+                            job.save(review_checks=value["review_checks"])
+                        elif value.get("review_checks"):
+                            raise ValueError("review checks require a second-pass audit role")
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
                         if any(item["reason"] in {"external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
                                and decisions.get(item["review_id"]) != "needs_review" for item in [*reported_routing, *routing]):
@@ -1436,6 +1488,8 @@ def run_locked(args):
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
+                    if role in second_pass.ROLES:
+                        raise ValueError("second-pass checks require an annotated final draft")
                     if role in ("research", "collection"):
                         raise ValueError("research tasks return scoped knowledge, not verdicts")
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
@@ -1554,7 +1608,22 @@ def run_locked(args):
                                 if missing is None:
                                     raise
                                 return missing
-                        result = definition_result(result, read_definition)
+                        def find_definition_references():
+                            nonlocal native_queries
+                            values = query["arguments"]
+                            child = {**query, "tool":"references", "arguments":{
+                                **{k:v for k,v in values.items() if k != "name"},
+                                "symbol":values["name"]}}
+                            child_args = research_arguments(child, root, ids, journals)
+                            native_queries += 1
+                            try:
+                                return native(child_args, remaining())
+                            except CommandFailure as error:
+                                missing = missing_source_result(child, error)
+                                if missing is None:
+                                    raise
+                                return missing
+                        result = definition_result(result, read_definition, find_definition_references)
                     origin_kind = "preparation" if result.get("operation") == "prepared_source" else "pinned_base" if result.get("operation") == "get_base_source" else task["kind"]
                     fact = {"result_id": "mehscanQueryFact/v1:" + context.digest([key, result]),
                             "cache_key": key,
@@ -1654,6 +1723,8 @@ def run_locked(args):
                 raise ValueError("worker override differs from native runtime limits; admit a new plan")
             setattr(args, name, configured)
         check_runtime()
+        if second_mode != "off" and bound_runtime.get("orchestration"):
+            raise ValueError("second-pass mode uses an ordinary single-profile plan; prepare it without tiered orchestration")
         def validate_provider_command(argv, expected):
             if expected is None:
                 return
@@ -1715,6 +1786,12 @@ def run_locked(args):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if second_mode != "off":
+            recovery_binding["second_pass"] = {"mode":second_mode,
+                "scope":list(second_scope),
+                "implementation_sha256":digest_file(second_pass.__file__),
+                "first_report_sha256":digest_file(first_directory / "findings.json") if first_directory else None,
+                "rates_sha256":digest_file(rates_path) if rates_path else None}
         recovered_change_pass = False
         if recovery:
             prior = read(recovery / "recovery.json")
@@ -1725,6 +1802,27 @@ def run_locked(args):
             recovered_change_pass = prior["change_pass_completed"]
             copy_review_files(recovery / "journals", output / "journals")
             copy_review_files(recovery / "jobs", output / "jobs")
+            if second_mode != "off" and (recovery / "training-turns").is_dir():
+                (output / "training-turns").mkdir()
+                for directory in (recovery / "training-turns").iterdir():
+                    if directory.is_symlink() or not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{64}", directory.name):
+                        raise ValueError("invalid recovered training trajectory directory")
+                    copy_review_files(directory, output / "training-turns" / directory.name)
+            if second_mode != "off":
+                import shutil
+                # These are retained observed inputs, not regenerated provider
+                # requests. They also make the recovered training index usable.
+                for pattern in ("context-*.json", "facts-*.json"):
+                    for path in recovery.glob(pattern):
+                        if path.is_symlink() or not path.is_file():
+                            raise ValueError("recovered reviewer inputs require regular files")
+                        shutil.copyfile(path, output / path.name)
+                for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json"):
+                    path = recovery / name
+                    if path.exists():
+                        if path.is_symlink() or not path.is_file():
+                            raise ValueError("recovered second-pass records require regular files")
+                        shutil.copyfile(path, output / name)
             # Retain actual previous provider counters; recovery never presents
             # the new attempt's usage alone as the cost of the whole review.
             consolidate_metrics(output, recovery)
@@ -1782,6 +1880,14 @@ def run_locked(args):
                 write(output / "review-execution.json", read(execution))
             if (original_run.parent / "quality-summary.json").is_file():
                 write(output / "quality-summary.json", read(original_run.parent / "quality-summary.json"))
+            if second_mode != "off":
+                for name in ("first-pass", "second-pass-baselines", "second-pass-finalized"):
+                    if (recovery / name).is_dir():
+                        copy_review_files(recovery / name, output / name)
+                if not (output / "second-pass.json").is_file():
+                    raise ValueError("admitted second-pass recovery requires its original outcome record")
+                summary = read(output / "second-pass.json")
+                record["second_pass"] = {k:summary[k] for k in ("mode", "status", "scope", "selected", "targeted", "checked", "outside_scope", "outcomes")}
             receipts = mutations.apply("admission")
             record["admission_sequence"] = receipts[0]["sequence"]
             record["recovered_admission"] = True
@@ -1833,7 +1939,8 @@ def run_locked(args):
                 if not isinstance(result, dict) or set(result) != {"change_pass"}:
                     raise ValueError("change reviewer must return only change_pass entries")
                 draft = {"schema_version": "1", "policy": payload["policy"], "selected_review_ids": payload["planned_review_ids"],
-                         "deferred_review_ids": payload["deferred_review_ids"], "change_pass": result["change_pass"]}
+                         "deferred_review_ids": payload["deferred_review_ids"],
+                         "excluded_review_ids": payload.get("excluded_review_ids", {}), "change_pass": result["change_pass"]}
                 draft["runtime"] = payload["runtime"]
                 draft_path = output / "change-pass.json"
                 write(draft_path, draft)
@@ -1937,7 +2044,7 @@ def run_locked(args):
                 with ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="mehscan-review") as pool:
                     pools, caps = {"routine": pool, "expert": pool}, {"routine": workers, "expert": expert_workers}
                     futures, active = {}, {"routine": 0, "expert": 0}
-                    for filename, request, data in requests:
+                    for filename, request, data in ([] if first_directory else requests):
                         task = {**task_base, "kind": "native_bundle", "bundle": str(request),
                                 "review_ids": data["review_ids"], "review_playbooks": data.get("review_playbooks", {})}
                         profile = "expert" if set(data["review_ids"]) & direct_ids else "routine"
@@ -2051,6 +2158,83 @@ def run_locked(args):
                     # Preserve completed drafts/responses; never fabricate the missing
                     # ones or admit a partial set as a complete native run.
                     raise failures[0]
+                if second_mode != "off":
+                    original_metrics = []
+                    if first_directory:
+                        first_work = read(first_directory / "work.json")["payload"]
+                        for key in ("snapshot_id", "inventory_input_fingerprint", "repository", "assessment_context"):
+                            if first_work[key] != payload[key]:
+                                raise ValueError("first-pass source or assessment binding differs from current work")
+                        source_run = first_directory / "run"
+                        prior_report = native(["report", "--run", str(source_run), "--source-root", str(root)])
+                        old = {r["response"]["review_id"]:r["response"] for r in prior_report["decision_records"]}
+                        for filename, request, data in requests:
+                            if not set(data["review_ids"]) <= set(old):
+                                raise ValueError("second pass selects an ID missing from the first report")
+                            finalize_combined(second_pass.brief({"results":[old[rid] for rid in data["review_ids"]]}), filename, request)
+                        metric_file = first_directory / "provider-metrics.jsonl"
+                        if metric_file.exists():
+                            original_metrics = [json.loads(line) for line in metric_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+                    baselines = {filename:read(response_dir / filename) for filename, _, _ in requests}
+                    (output / "first-pass").mkdir(exist_ok=True)
+                    for filename, baseline in baselines.items():
+                        write(output / "first-pass" / filename, baseline)
+                    review_requests, review_baselines = requests, baselines
+                    outside_scope = []
+                    scoped_responses = {}
+                    all_rows = {r["review_id"]:r for b in baselines.values() for r in b["results"]}
+                    if second_scope != second_pass.review_scope("all"):
+                        scope_ids = [rid for rid,row in all_rows.items() if row["decision"] in second_scope]
+                        outside_scope = [row for row in all_rows.values() if row["decision"] not in second_scope]
+                        scope_run = output / "second-pass-bundles"
+                        scoped_manifest = {"bundles":[]}
+                        if scope_ids:
+                            native(["investigate", "review-bundles", str(root), "--inventory", str(inventory),
+                                "--review-ids", ",".join(scope_ids), "--output", str(scope_run)])
+                            scoped_manifest = read(scope_run / "manifest.json")
+                        review_requests, review_baselines = [], {}
+                        (output / "second-pass-baselines").mkdir()
+                        (output / "second-pass-finalized").mkdir()
+                        for item in scoped_manifest["bundles"]:
+                            filename = item["filename"]
+                            if Path(filename).name != filename:
+                                raise ValueError("second-pass request filename is not bounded")
+                            request = scope_run / "requests" / filename
+                            data = read(request)
+                            draft_file = output / "second-pass-baselines" / ("draft-" + filename)
+                            response_file = output / "second-pass-baselines" / filename
+                            write(draft_file, second_pass.brief({"results":[all_rows[rid] for rid in data["review_ids"]]}))
+                            native(["investigate", "review-bundle-finalize", "--bundle", str(request),
+                                "--draft", str(draft_file), "--source-root", str(root), "--journal-dir", str(journals), "--output", str(response_file)])
+                            review_requests.append((filename, request, data))
+                            review_baselines[filename] = read(response_file)
+                        actual_ids = [rid for _,_,data in review_requests for rid in data["review_ids"]]
+                        if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(scope_ids):
+                            raise ValueError("scoped bundles differ from the selected first-pass decisions")
+                    def finalize_second(response, filename, request):
+                        if second_scope == second_pass.review_scope("all"):
+                            return finalize_combined(response, filename, request)
+                        draft_file = output / "second-pass-finalized" / ("draft-" + filename)
+                        response_file = output / "second-pass-finalized" / filename
+                        write(draft_file, finalization_draft(response))
+                        native(["investigate", "review-bundle-finalize", "--bundle", str(request),
+                            "--draft", str(draft_file), "--source-root", str(root), "--journal-dir", str(journals), "--output", str(response_file)])
+                        scoped_responses.update({r["review_id"]:r for r in read(response_file)["results"]})
+                    def second_stage(task):
+                        job = job_for(task)
+                        stage = finalize_stage(task, job, execute_job(task, job), Path(task["bundle"]))
+                        stage["checks"] = job.state.get("review_checks")
+                        stage["receipt"]["trajectory_id"] = job.state.get("conversation_id")
+                        return stage
+                    summary = second_pass.run(mode=second_mode, requests=review_requests, baselines=review_baselines,
+                        first_directory=first_directory or output, output=output, task_base=task_base,
+                        execute_stage=second_stage, finalize=finalize_second, write=write,
+                        workers=workers, byte_limit=args.research_bytes, outside_scope=outside_scope, scope=second_scope, archive_baselines=False)
+                    if second_scope != second_pass.review_scope("all"):
+                        for filename,request,data in requests:
+                            finalize_combined(second_pass.brief({"results":[scoped_responses.get(rid,all_rows[rid]) for rid in data["review_ids"]]}), filename, request)
+                    record["second_pass"] = {k:summary[k] for k in ("mode", "status", "scope", "selected", "targeted", "checked", "outside_scope", "outcomes")}
+                    write(output / "first-pass-metrics.json", original_metrics)
                 if quality_policy.get("final_qa"):
                     baselines = {filename:read(response_dir / filename) for filename, _, _ in requests}
                     peer_index = orchestration.index_peers(baselines.values())
@@ -2235,6 +2419,15 @@ def run_locked(args):
                     for row in record["provider_usage"]))
     except (OSError, ValueError, KeyError, TypeError) as error:
         record.update(status="incomplete", usage_error=type(error).__name__)
+    if second_mode != "off":
+        try:
+            second_pass.export(output, metrics if "metrics" in locals() else [], write,
+                read(rates_path) if rates_path else None,
+                read(output / "first-pass-metrics.json") if (output / "first-pass-metrics.json").exists() else [],
+                sum(read(p)["calls"] for p in (first_directory / "jobs").glob("*.json")) if first_directory else None)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            record["second_pass_export_error"] = type(error).__name__
+            record["status"] = "incomplete"
     if record["status"] not in ("admitted", "source_validated") and "package" in locals():
         try:
             partial = save_partial_results(output, package)
@@ -2254,6 +2447,10 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
+    parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional final evidence/trace audit or independent review")
+    parser.add_argument("--second-pass-scope", default="all", help="all or comma-separated issues,dismissals,pending from the first pass; filter before bundling")
+    parser.add_argument("--first-pass", help="completed worker attempt to review instead of buying a new first pass")
+    parser.add_argument("--second-pass-rates", help="optional JSON model token rates for first/second/combined price accounting")
     parser.add_argument("--artifact-root")
     parser.add_argument("--phase", choices=("all", "change-pass", "native"), default="all")
     parser.add_argument("--supersede", action="store_true")
@@ -2278,7 +2475,10 @@ def main():
             and (args.timeout is None or 1 <= args.timeout <= 3600)):
         parser.error("review and research budgets must be positive and within bounded limits")
     result = run(args)
-    print(json.dumps({"status": result["status"], "generation": result["generation"], "directory": args.output}))
+    summary = {"status": result["status"], "generation": result["generation"], "directory": args.output}
+    if "second_pass" in result:
+        summary["second_pass"] = result["second_pass"]
+    print(json.dumps(summary))
     return 0 if result["status"] in ("admitted", "source_validated") else 2
 
 

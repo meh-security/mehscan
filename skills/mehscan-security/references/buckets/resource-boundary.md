@@ -61,11 +61,10 @@ than rereading equivalent distributions.
   close an independently selected source. For a Comprehensive recursive-root
   question, follow the content/export/disclosure consumer instead of researching
   every listed filename. Ordinary setup/listing sinks are omitted at extraction.
-  Check a filename guard against the actual path library and supported platforms.
-  Rejecting separators and `..` alone leaves Windows drive-relative names such
-  as `C:name`; .NET `Path.Combine` can discard the intended root. Rooted-path
-  rejection, basename extraction or complete proven selectors can settle that
-  property. Unknown platform semantics require a targeted check, not a safe verdict.
+  For a composed root/filename guard or platform-dependent resolution, load
+  [path selection review](../path-selection-review.md), worker guidance
+  `path-selection`. Check its actual transforms and applicable caller before
+  relying on rejection; fixed/operator-selected work can still close locally.
 - C# native `fixed_filesystem_path` establishes fixed selection for that exact
   operand, not authorization or safe contents/effects. Complete
   `temporary_filesystem_path` closes routine generated-path traversal selection.

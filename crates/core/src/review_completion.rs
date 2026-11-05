@@ -55,6 +55,8 @@ pub struct ReviewCompletionDraft {
     pub runtime: Option<crate::ReviewRuntimeContract>,
     pub selected_review_ids: Vec<String>,
     pub deferred_review_ids: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub excluded_review_ids: BTreeMap<String, String>,
     pub change_pass: Vec<ReviewChangePassDraftEntry>,
 }
 
@@ -88,6 +90,8 @@ pub struct ReviewCompletionPlan {
     pub runtime: Option<crate::ReviewRuntimeContract>,
     pub selected_review_ids: Vec<String>,
     pub deferred_review_ids: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub excluded_review_ids: BTreeMap<String, String>,
     pub change_pass: Vec<ReviewChangePassEntry>,
     pub native_coverage_limits: Vec<ReviewCompletionCoverageLimit>,
 }
