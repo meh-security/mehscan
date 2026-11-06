@@ -322,6 +322,20 @@ fn resolve_change_scope(
     Ok(request)
 }
 
+fn razor_options(
+    backend: Option<PathBuf>,
+    sdk: Option<PathBuf>,
+) -> Result<Option<mehscan_engine::razor_frontend::RazorOptions>, String> {
+    match (backend, sdk) {
+        (Some(backend), Some(sdk)) => Ok(Some(mehscan_engine::razor_frontend::RazorOptions {
+            backend,
+            sdk,
+        })),
+        (None, None) => Ok(None),
+        _ => Err("--razor-backend and --razor-sdk must be supplied together".into()),
+    }
+}
+
 fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut root = None;
     let mut format = ScanOutputFormat::Text;
@@ -336,11 +350,27 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut merge_base = false;
     let mut csharp_semantic = None;
     let mut csharp_context = None;
+    let mut razor_backend = None;
+    let mut razor_sdk = None;
     let mut typescript_semantic = None;
     let mut typescript_context = None;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            "--razor-backend" => {
+                razor_backend = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--razor-backend requires an executable")?,
+                ))
+            }
+            "--razor-sdk" => {
+                razor_sdk = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--razor-sdk requires an installed SDK directory")?,
+                ))
+            }
             "--typescript-semantic" => {
                 typescript_semantic = Some(PathBuf::from(
                     arguments
@@ -431,6 +461,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    let razor = razor_options(razor_backend, razor_sdk)?;
     if typescript_semantic.is_some() != typescript_context.is_some() {
         return Err(
             "--typescript-semantic and --typescript-context must be supplied together".into(),
@@ -464,6 +495,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         jobs,
         scan_secrets: false,
         impact_scope,
+        razor,
     };
     let (mut result, profile) = if timings {
         let (result, profile) = engine(mehscan_engine::scan_path_profiled_with_options(
@@ -763,6 +795,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
             let context = parsed.optional("--csharp-context").map(PathBuf::from);
             let backend = parsed.optional("--csharp-backend").map(PathBuf::from);
+            let razor = razor_options(
+                parsed.optional("--razor-backend").map(PathBuf::from),
+                parsed.optional("--razor-sdk").map(PathBuf::from),
+            )?;
             let ts_semantic = parsed.optional("--typescript-semantic").map(PathBuf::from);
             let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);
             let ts_backend = parsed.optional("--typescript-backend").map(PathBuf::from);
@@ -822,6 +858,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     || backend.is_some()
                     || ts_input.is_some()
                     || impact_scope.is_some()
+                    || razor.is_some()
                 {
                     return Err("continuation reuses cached scope and native facts; omit scan/native options".into());
                 }
@@ -855,6 +892,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         ts_input,
                         mehscan_engine::ScanOptions {
                             impact_scope,
+                            razor,
                             ..Default::default()
                         },
                         timings.then_some(&mut profile),
@@ -983,6 +1021,92 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(
                 &serde_json::json!({"overview": output.join("overview.json"), "inventory": output.join("inventory.json"), "review_count": inventory.entries.len()}),
             )
+        }
+        "source-review-plan" | "source-review-check" | "source-review-admit" => {
+            let directory = PathBuf::from(parsed.required("--inventory")?);
+            let base: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
+                &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            if operation == "source-review-plan" {
+                let ids = parsed
+                    .optional("--review-ids")
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                parsed.finish()?;
+                print_json(&engine(
+                    mehscan_engine::investigation::source_review::plan(&root, &base, &ids),
+                )?)
+            } else {
+                let input = PathBuf::from(parsed.required("--input")?);
+                if operation == "source-review-check" {
+                    parsed.finish()?;
+                    let admission =
+                        serde_json::from_slice(&fs::read(input).map_err(|e| e.to_string())?)
+                            .map_err(|e| e.to_string())?;
+                    let evidence = engine(
+                        mehscan_engine::investigation::source_review::validate_admission(
+                            &root, &base, &admission,
+                        ),
+                    )?;
+                    return print_json(
+                        &serde_json::json!({"source_validated_questions":evidence.len(),"native_admission":false}),
+                    );
+                }
+                let output = PathBuf::from(parsed.required("--output")?);
+                parsed.finish()?;
+                let admission =
+                    serde_json::from_slice(&fs::read(input).map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                let (inventory, mapping) = engine(
+                    mehscan_engine::investigation::source_review::admit(&root, &base, &admission),
+                )?;
+                if output.exists() {
+                    return Err("source admission output must be a new directory".into());
+                }
+                let parent = output
+                    .parent()
+                    .ok_or("source admission output requires a parent directory")?;
+                let mut ancestor = parent;
+                while !ancestor.exists() {
+                    ancestor = ancestor
+                        .parent()
+                        .ok_or("source admission output requires an existing ancestor")?;
+                }
+                let source = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+                if fs::canonicalize(ancestor)
+                    .map_err(|e| e.to_string())?
+                    .starts_with(&source)
+                {
+                    return Err("source admission output must be outside the target source".into());
+                }
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                let parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+                if parent.starts_with(&source) {
+                    return Err("source admission output must be outside the target source".into());
+                }
+                fs::create_dir(&output).map_err(|e| e.to_string())?;
+                fs::write(
+                    output.join("scan-cache.json"),
+                    serde_json::to_vec(&inventory).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                let summary = serde_json::json!({"schema_version":inventory.schema_version,"source_fingerprint":inventory.source_fingerprint,
+                    "input_fingerprint":engine(inventory.input_fingerprint())?,"include_review_material":inventory.include_review_material,
+                    "identity_catalog":inventory.identity_catalog,"entries":inventory.entries,"admission_audit":inventory.admission_audit,
+                    "marker_admission":inventory.marker_admission,"review_count":inventory.entries.len(),"coverage":inventory.scan.coverage.totals,"impact_scope":inventory.scan.impact_scope});
+                fs::write(
+                    output.join("inventory.json"),
+                    serde_json::to_vec(&summary).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                print_json(
+                    &serde_json::json!({"mapping":mapping,"input_fingerprint":summary["input_fingerprint"],"review_count":inventory.entries.len()}),
+                )
+            }
         }
         "review-inventory-list" => {
             let inventory_dir = PathBuf::from(parsed.required("--inventory")?);
@@ -4406,6 +4530,9 @@ fn print_report_help() {
 
 fn print_scan_help() {
     println!(
+        "Optional Razor/Blazor C#: --razor-backend EXE --razor-sdk SDK_DIRECTORY (installed official SDK; no target build). Also available on investigate review-inventory."
+    );
+    println!(
         "Optional C# facts: --csharp-semantic SNAPSHOT --csharp-context CONTEXT (full scan context only)."
     );
     println!(
@@ -4459,6 +4586,9 @@ USAGE:
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
   mehscan investigate review-sweep --bundle PATH
+  mehscan investigate source-review-plan [ROOT] --inventory DIR [--review-ids ID,ID]
+  mehscan investigate source-review-check [ROOT] --inventory DIR --input FILE
+  mehscan investigate source-review-admit [ROOT] --inventory DIR --input FILE --output NEW_DIR
   mehscan investigate review-response-schema --bundle PATH [--output PATH]
   mehscan investigate review-bundle-finalize --bundle PATH --draft PATH --journal-dir DIR --output PATH --source-root ROOT
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH [--source-root ROOT] [--summary true|false]

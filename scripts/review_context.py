@@ -99,6 +99,51 @@ def source_file(root, path):
     return result
 
 
+def source_result_window(result):
+    """Normalize the native reader and prepared-source coordinate contracts."""
+    if result.get("operation")=="get_definition":
+        return source_result_window(result.get("source") or {})
+    if result.get("operation") not in ("get_source","prepared_source"):
+        return None
+    body=result.get("results",{})
+    if not isinstance(body,dict) or not isinstance(body.get("text"),str):
+        return None
+    location=body.get("location",body)
+    extent=body.get("line_range",body)
+    path=location.get("path")
+    first,last=extent.get("start_line"),extent.get("end_line")
+    if not isinstance(path,str) or type(first) is not int or type(last) is not int or not 1<=first<=last:
+        raise ValueError("source reader returned invalid coordinates")
+    return {"path":path,"start_line":first,"end_line":last,"text":body["text"]}
+
+
+def delivered_source_window(root, result):
+    """Bind only complete, delivered current-source lines to the bytes checked."""
+    window = source_result_window(result)
+    if window is None or not window["text"]:
+        return None
+    data = source_file(root, window["path"]).read_bytes()
+    original = data.decode("utf8")
+    if "\0" in original:
+        raise ValueError("source evidence must be text")
+    lines = source_lines(original)
+    first, last = window["start_line"], window["end_line"]
+    rows = source_lines(window["text"])
+    if first > len(lines) or last > len(lines) or len(rows) != last - first + 1:
+        raise ValueError("source result has inconsistent line coordinates")
+    expected = lines[first - 1:last]
+    if rows[:-1] != expected[:-1] or not expected[-1].startswith(rows[-1]):
+        raise ValueError("source result differs from original bytes")
+    if rows[-1] != expected[-1]:
+        # A byte-clipped final line is navigation, never full-line evidence.
+        rows.pop()
+    if not rows:
+        return None
+    return {"path":window["path"], "start_line":first,
+            "end_line":first + len(rows) - 1, "text":"\n".join(rows),
+            "source_sha256":hashlib.sha256(data).hexdigest()}
+
+
 def base_object(root, base, path, env, timeout):
     relative_file(root, path)
     prefix = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-prefix"], env=env,
@@ -107,6 +152,31 @@ def base_object(root, base, path, env, timeout):
         raise ValueError("base source root is not in the pinned Git repository")
     return base + ":" + prefix.stdout.decode("utf-8").rstrip("\r\n") + path
 
+
+
+def read_base_source(root, comparison, values, env, budget):
+    """Read only the pinned Git blob under the remaining investigation deadline."""
+    if not comparison:
+        raise ValueError("base source requires a pinned Git comparison")
+    base = comparison.get("merge_base_commit") or comparison["base_commit"]
+    target = base_object(root, base, values["path"], env, budget())
+    size = subprocess.run(["git", "-C", str(root), "cat-file", "-s", target], env=env,
+                          capture_output=True, timeout=budget())
+    if size.returncode or int(size.stdout) > MAX_FILE_BYTES:
+        raise ValueError("pinned base source unavailable or exceeds preparation bound")
+    blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", target], env=env,
+                          capture_output=True, timeout=budget())
+    if blob.returncode:
+        raise ValueError("pinned base source unavailable")
+    lines = source_lines(blob.stdout.decode("utf-8"))
+    start, end = values["start_line"], min(values["end_line"], len(lines))
+    if start > end:
+        raise ValueError("base source starts after end of file")
+    text = "\n".join(lines[start - 1:end])
+    if len(text.encode("utf-8")) > 64 * 1024:
+        raise ValueError("base source window exceeds 64 KiB")
+    return {"operation":"get_base_source","provenance":{"engine":"pinned-git-blob","resolution":"textual"},
+            "revision":base,"results":{"side":"base","path":values["path"],"start_line":start,"end_line":end,"text":text}}
 
 def sections(path, names):
     raw = path.read_text(encoding="utf-8")
@@ -134,6 +204,8 @@ def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="inv
         result.append(sections(skill_root / "references/second-pass-review.md", [role]))
     elif role not in ("investigator", "research", "collection"):
         raise ValueError("unknown reviewer role")
+    if role == "investigator":
+        result.append(sections(skill_root / "references/final-proof-check.md", ["final_proof"]))
     if any(entry.get("capability") == "html_output" for entry in entries) or any(
             Path(path).suffix.lower() in (".html", ".htm", ".vue", ".jsx", ".tsx") for path in paths):
         result.append(sections(skill_root / "references/html-output-review.md", ["chain", "frontend", "dom", "writers", "decisions"]))

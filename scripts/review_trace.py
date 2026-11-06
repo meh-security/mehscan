@@ -125,6 +125,10 @@ def summarize(run, review_id=None):
             "calls":job.get("calls"), "query_units":job.get("queries"), "bytes":job.get("bytes"),
             "elapsed_seconds":job.get("elapsed_seconds"), "unknown_provider_calls":job.get("unknown_provider_calls",0),
             "latest_progress":progress, "working_chain":chain,
+            "fast_phase":job.get("fast_phase"),
+            "audit_objections":(job.get("fast_audit") or {}).get("checks"),
+            "recovery_ids":(job.get("fast_audit") or {}).get("review_ids"),
+            "source_assignment_ids":job.get("source_assignment_ids",[]),
             "decisions":decisions, "attention_flags":flags, "events":own,
             "queries":[{k:r.get(k) for k in ("round","query","result_id","reused")} for r in lookups]})
     if review_id is not None and not jobs:
@@ -145,6 +149,8 @@ def summarize(run, review_id=None):
         "native_events":[e for e in events if e["event"].startswith("native_")],
         "prior_attempt":worker.get("recovered_from"),
         "jobs":jobs}
+    if worker.get("source_review"):
+        result["source_review"]=worker["source_review"]
     return result
 
 
@@ -152,6 +158,11 @@ def markdown(result):
     lines = ["# Review execution", "", "Status: " + result["execution_status"] + ". Trace: " + result["trace_history"] + ".",
         "Execution records do not establish semantic correctness.", "",
         "| Review IDs | Job state | Calls | Query units | Attention flags |", "| --- | --- | ---: | ---: | --- |"]
+    source=result.get("source_review")
+    if source:
+        lines[4:4]=[f"Source review: {source['completed_assignments']}/{source['assignments']} assignments completed, "
+            f"{source['source_questions']} new questions, {source.get('calls','unknown')} source-stage calls. "
+            "Source calls are separate from the native finalization jobs below; inspect source-review/jobs for original turns.", ""]
     for job in result["jobs"]:
         lines.append("| " + ", ".join(job["review_ids"]) + " | " + str(job["checkpoint_status"]) + " | " +
             str(job["calls"]) + " | " + str(job["query_units"]) + " | " +

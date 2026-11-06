@@ -104,12 +104,24 @@ if task["kind"] == "change_pass":
     result = {"change_pass":[{"path":"app.js", "status":"reviewed", "summary":"Compared the supplied old and current operation.",
         "questions":[], "native_review_ids":ids, "evidence":[{"side":"base", "path":"app.js", "start_line":1, "end_line":1},
         {"side":"current", "path":"app.js", "start_line":1, "end_line":1}]}]}
+elif task["kind"] == "source_review":
+    packet = json.load(open(task["evidence_packet"], encoding="utf-8"))
+    windows = packet["primary"]["windows"]
+    result = {"draft":{"results":[{"review_id":row["review_id"], "decision":"needs_review", "confidence":"low",
+        "summary":"Installed package smoke retains an unresolved caller question.",
+        "reason":"The operation evaluates the supplied request code.",
+        "evidence":[{"path":row["path"], "start_line":row["line"], "end_line":row["line"]}],
+        "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[]}
+        for row in packet["native_questions"]], "proposals":[], "coverage":[{
+        **{key:window[key] for key in ("path","start_line","end_line")},
+        "status":"examined", "summary":"Examined the assigned original source."} for window in windows]}}
 else:
     result = {"results":[{"review_id":value, "decision":"needs_review", "confidence":"low",
         "summary":"Installed package smoke retains an unresolved caller question.", "reason":"The operation evaluates the supplied request code.",
         "evidence":[{"path":"app.js", "start_line":1, "end_line":1}],
         "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[]} for value in task["review_ids"]]}
     if task.get("review_role") == "second_pass_fast":
+        assert task["fast_phase"] == "audit"
         assert task["research"]["queries_remaining"] == 0
         result = {"draft":result, "working_chain":"", "progress":[], "review_checks":[{
             "review_id":value, "action":"keep", "claim":"", "proof_status":"supported",
@@ -127,6 +139,15 @@ print(json.dumps(result))
     assert record["status"] == "admitted"
     assert record["completion"]["pending_review_ids"]
     assert record["completion"]["security_resolution"] == "not_established"
+    handoff = json.loads((attempt / "source-review/summary.json").read_text(encoding="utf-8"))
+    assert handoff["completed_assignments"] == handoff["assignments"] > 0
+    assert handoff["calls"] > 0 and handoff["unknown_provider_calls"] == 0
+    effective = handoff["effective_args"]
+    inventory, claim_file, work_file, bundles = [Path(effective[name]) for name in
+        ("inventory", "claim", "work_package", "run")]
+    claim = json.loads(claim_file.read_text(encoding="utf-8"))
+    common = ["--store", store, "--stream", "package-smoke", "--inventory", inventory, "--source-root", source,
+              "--generation", str(claim["result"]["generation"]), "--owner", claim["result"]["owner"]]
     # Exercise the optional mode from the extracted files, retaining the first
     # attempt and using native supersession rather than editing its responses.
     save(work_file, native("state", "work", *common, "--skill-root", skill))
@@ -149,9 +170,9 @@ print(json.dumps(result))
     # This checks imports from the archive, without credentials or a client launch.
     call(sys.executable, "-B", skill / "scripts/codex_reviewer.py", "--help")
     call(scanner, "state", "end", "--store", store, "--stream", "package-smoke", "--repository-key", "test:installed-package",
-         "--generation", "1", "--owner", claim["result"]["owner"], "--status", "finished", "--operation-key", "end")
+         "--generation", str(claim["result"]["generation"]), "--owner", claim["result"]["owner"], "--status", "finished", "--operation-key", "end")
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,
-                      "installed_worker":True, "second_pass":"passed", "scoped_pending":True,
+                      "installed_worker":True, "source_review":"passed", "second_pass":"passed", "scoped_pending":True,
                       "training_labels":"not_auto_approved", "document_links":"passed", "inference":False}))
 
 

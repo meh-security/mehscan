@@ -47,6 +47,10 @@ than rereading equivalent distributions.
   engine or closing that path. A writer
   elsewhere in the repository is a lead until its destination can reach the
   read target.
+  For a disclosure claim, a sample-file label or fixed path does not establish
+  harmless contents. Check a relevant sensitive value and its actual consumer;
+  retain the condition if it depends on active configuration. An index and its
+  file delivery may represent the same disclosure root, not two independent flaws.
   Read the actual open flags/mode before calling it a read or write. An
   `filesystem-mode:unresolved` tag asks for the effective mode, not an invented
   effect. The read/write capability label is provisional in that case. Resolving

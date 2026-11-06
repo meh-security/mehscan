@@ -20,6 +20,14 @@ class ReviewHandoff(fixtures.NativeFixture):
 from pathlib import Path
 task=json.load(sys.stdin)
 work=json.loads(Path(task["work_package"]).read_text())["payload"]
+if task["kind"]=="source_review":
+    packet=json.loads(Path(task["evidence_packet"]).read_text())
+    print(json.dumps({"draft":{"results":[{"review_id":i,"decision":"issue","confidence":"medium",
+        "summary":"Synthetic operation issue for handoff acceptance.","reason":"The current code passes request.query.code into eval.",
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for i in task["review_ids"]],
+        "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},
+            "status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}}))
+    sys.exit()
 if task["kind"]=="change_pass":
     print(json.dumps({"change_pass":[{"path":"app.js","status":"reviewed",
         "summary":"Inspected the changed operation and its previous source.","questions":[],

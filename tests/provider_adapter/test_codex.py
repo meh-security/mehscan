@@ -23,6 +23,35 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_source_assignment_resumes_with_stable_schema_without_native_ids(self):
+        self.task.update(kind="source_review",review_ids=[])
+        self.config.update(schema_mode="stable",source_presentation="line-addressed-v1")
+        self.body.update(contract="Review assigned original source.",primary={"windows":[{"path":"Widget.razor","start_line":1,"end_line":1,
+            "text":"<p>@value</p>","artifact_id":"original"}]})
+        self.task["research"].update(artifact_handles={"s0":"original"},source_artifact_handles=["s0"])
+        self.packet.write_text(json.dumps(self.body))
+        def factory(config,session):
+            fake=self.factory(config,session)
+            original=fake.review
+            def invoke(*args,**kwargs):
+                response,events,stderr=original(*args,**kwargs)
+                for key in ("progress","routing"):response.pop(key,None)
+                response["draft"]={"results":[],"proposals":[],"coverage":[{"path":"Widget.razor","start_line":1,"end_line":1,
+                    "status":"examined","summary":"Ordinary escaped text output."}]}
+                return response,events,stderr
+            fake.review=invoke
+            return fake
+        first=reviewer.run(self.config,self.task,factory)
+        self.assertEqual(first["draft"]["proposals"],[])
+        self.task["research"].update(round=1,rounds_remaining=0,queries_remaining=0)
+        reviewer.run(self.config,self.task,factory)
+        self.assertEqual([c[1] for c in self.calls],[None,THREAD])
+        self.assertEqual(self.calls[0][2],self.calls[1][2])
+        populated={**self.task,"review_ids":["native-id"]}
+        self.assertEqual(protocol.build_schema(self.task,bound_handles=False),protocol.build_schema(populated,bound_handles=False))
+        self.assertIn("L1 | <p>@value</p>",self.calls[0][0])
+        self.assertNotIn("L1 | <p>@value</p>",self.calls[1][0])
+
     def test_second_pass_roles_use_primary_provider_and_retain_annotations(self):
         self.task.update(kind="native_bundle",review_ids=["id"],review_role="second_pass_fast",second_pass="fast")
         self.body["second_pass"]="fast"

@@ -1055,7 +1055,8 @@ fn empty_changed_inventory_exports_bound_empty_sarif_without_claiming_resolution
             .unwrap()
             .is_empty()
     );
-    assert_error(
+    let deferred_run = output_dir(&root, "deferred-empty-run");
+    cli_ok(
         &root,
         &[
             "investigate",
@@ -1066,14 +1067,43 @@ fn empty_changed_inventory_exports_bound_empty_sarif_without_claiming_resolution
             "--review-ids",
             "",
             "--output",
-            output_dir(&root, "invalid-empty-run").to_str().unwrap(),
+            deferred_run.to_str().unwrap(),
         ],
-        "select at least one review ID",
+    );
+    assert!(
+        read_json(&deferred_run.join("manifest.json"))["bundles"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let deferred_sarif = cli_json(
+        &root,
+        &[
+            "report",
+            "--run",
+            deferred_run.to_str().unwrap(),
+            "--source-root",
+            ".",
+            "--format",
+            "sarif",
+        ],
+    );
+    assert!(
+        deferred_sarif["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        deferred_sarif["runs"][0]["properties"]["publication"]
+            .to_string()
+            .contains("not_established")
     );
     fs::remove_dir_all(&root).unwrap();
     fs::remove_dir_all(&inventory).unwrap();
     fs::remove_dir_all(&run).unwrap();
     fs::remove_dir_all(&nonempty).unwrap();
+    fs::remove_dir_all(&deferred_run).unwrap();
 }
 
 fn cli_ok(root: &Path, args: &[&str]) -> Output {

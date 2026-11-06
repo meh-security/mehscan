@@ -5,7 +5,13 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
-For a source-bound worker task, use the compiled
+For a source assignment, use [source review](references/source-review.md): review
+the assigned original source, assess existing questions and investigate additional
+consequential relationships in the same context. The default AI controller assigns
+source even when the scanner finds no candidates. New proposals require validated
+source and ordinary finalization; examined coverage is separate from verdicts.
+
+For an exact-ID source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.
@@ -64,6 +70,8 @@ Prioritize the fact that decides the selected claim. An inspected complete contr
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
 Stop once the selected relationship is settled or its decisive gap is explicit.
+Before finalizing, apply the concise [final proof check](references/final-proof-check.md)
+within the current investigation. Workers receive it in their compiled contract.
 With explicit `"boundary_checks": true` in trusted adapter configuration,
 authorization and token-generation worker tasks include
 [boundary checks](references/boundary-review.md): concrete prerequisite tests and

@@ -1,5 +1,6 @@
 """Actual pinned Git blobs and independent old/current coordinates, not model truth."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,60 @@ import review_context as context
 
 
 class Context(unittest.TestCase):
+    def test_delivered_evidence_is_language_independent_and_hashes_exact_bytes(self):
+        # Parser support and metadata extensions do not change evidence checks.
+        for suffix in ("c", "cpp", "h", "cs", "java", "kt", "js", "ts", "tsx",
+                       "py", "go", "rs", "php", "razor", "jinja2", "svelte",
+                       "csproj", "toml", "json", "xml", "reviewdata"):
+            with self.subTest(suffix=suffix):
+                path = "source." + suffix
+                data = "first\r\ncafé λ\r\nlast\n".encode("utf8")
+                (self.root/path).write_bytes(data)
+                result = {"operation":"get_source", "results":{
+                    "location":{"path":path},
+                    "line_range":{"start_line":2,"end_line":3},
+                    "text":"café λ\r\nlast\n"}}
+                self.assertEqual(context.delivered_source_window(self.root,result),{
+                    "path":path,"start_line":2,"end_line":3,"text":"café λ\nlast",
+                    "source_sha256":hashlib.sha256(data).hexdigest()})
+
+    def test_delivered_evidence_excludes_clipped_lines_and_rejects_wrong_bytes_or_ranges(self):
+        (self.root/"context.any").write_text("one\ntwo complete\nthree\n",encoding="utf8")
+        def response(text, first=1, last=2):
+            return {"operation":"prepared_source","results":{
+                "path":"context.any","start_line":first,"end_line":last,"text":text}}
+        window=context.delivered_source_window(self.root,response("one\ntwo comp"))
+        self.assertEqual((window["start_line"],window["end_line"],window["text"]),(1,1,"one"))
+        self.assertIsNone(context.delivered_source_window(self.root,response("two comp",2,2)))
+        for result in (response("one\ninvented"),response("changed\ntwo comp"),
+                       response("one",1,2),response("one\ntwo complete",3,4)):
+            with self.subTest(result=result), self.assertRaises(ValueError):
+                context.delivered_source_window(self.root,result)
+        (self.root/"context.any").write_bytes(b"one\x00\n")
+        with self.assertRaisesRegex(ValueError,"must be text"):
+            context.delivered_source_window(self.root,response("one\x00\n",1,1))
+        self.assertIsNone(context.delivered_source_window(self.root,{
+            "operation":"get_base_source","results":{"text":"old"}}))
+
+    def test_pinned_base_reader_does_not_substitute_current_source(self):
+        (self.root/"app.js").write_text("const value = 'old';\n",encoding="utf8")
+        base=self.commit()
+        (self.root/"app.js").write_text("const value = 'current';\n",encoding="utf8")
+        result=context.read_base_source(self.root,{"base_commit":base},{"path":"app.js","start_line":1,"end_line":1},
+            {**os.environ,"GIT_NO_LAZY_FETCH":"1","GIT_TERMINAL_PROMPT":"0"},lambda:5)
+        self.assertEqual(result["operation"],"get_base_source")
+        self.assertEqual(result["results"]["text"],"const value = 'old';")
+        self.assertEqual(result["revision"],base)
+
+    def test_native_and_prepared_source_coordinates_are_normalized_without_confusing_base(self):
+        expected={"path":"app.js","start_line":3,"end_line":4,"text":"a\nb\n"}
+        prepared={"operation":"prepared_source","results":expected}
+        native={"operation":"get_source","results":{"location":{"path":"app.js","start":{"line":3},"end":{"line":5}},
+            "line_range":{"start_line":3,"end_line":4,"inclusive":True},"text":"a\nb\n"}}
+        for value in (prepared,native,{"operation":"get_definition","source":native}):
+            self.assertEqual(context.source_result_window(value),expected)
+        self.assertIsNone(context.source_result_window({"operation":"get_base_source","results":expected}))
+
     @unittest.skipIf(os.name == "nt", "POSIX source-root aliases")
     def test_source_root_alias_accepts_contained_files_and_rejects_escape(self):
         import review_workspace

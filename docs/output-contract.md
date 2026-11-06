@@ -389,6 +389,23 @@ artifacts.
 
 ## Portable scope and aggregated explanations
 
+Default AI review also writes `source-review.json`, with original-source range
+coverage, context/defer limits, incomplete assignments and source-stage call counts.
+Its `source-review/` directory retains assignments, actual reviewer turns, lookup
+requests/results and the validated-question mapping. Native IDs identify existing
+questions; the controller assigns new IDs after source validation. Model-origin
+questions are labeled as such and do not constitute native flow proof. Final
+findings still pass through the ordinary finalizer and report format. Source
+coverage, empty lead sets and vulnerability verdicts have separate meanings.
+
+Evidence validation uses the same text boundary across languages. Relevant project
+files, configuration and templates can support a review without a parser or a
+scanner rule for that file type. Citations must refer to delivered, complete lines
+of current UTF-8 repository text; clipped line fragments cannot establish unseen
+content. File hashes also bind inspected context outside the scanner index.
+Binary content, stale bytes and fabricated or unread ranges are rejected. These
+checks establish evidence provenance, not the model's interpretation of that code.
+
 `investigate review-bundles` accepts optional `--scope-label TEXT`,
 `--project NAME` and `--revision REF` labels and persists them in manifest scope.
 `report` inherits them and accepts the same options for existing runs. Supply

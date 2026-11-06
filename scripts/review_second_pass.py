@@ -12,6 +12,7 @@ import review_orchestration as orchestration
 import review_trace
 
 ROLES = ("second_pass_fast", "second_pass_compare")
+FINAL_ONLY_ROLES = ("second_pass_compare",)
 OUTCOMES = ("confirmed", "corrected", "reopened", "unresolved", "not_checked")
 PROOFS = ("supported", "unsupported", "undetermined")
 INVESTIGATIONS = ("sufficient", "missing_available_evidence", "external_blocker", "budget_limited", "execution_failed")
@@ -63,8 +64,7 @@ def checks(values, ids):
                 or row["action"] not in ("keep", "repair", "reopen", "insufficient")
                 or row["proof_status"] not in PROOFS or row["investigation_status"] not in INVESTIGATIONS
                 or not isinstance(row["claim"], str) or len(row["claim"]) > 300
-                or not isinstance(row["error_codes"], list) or any(e not in ERRORS for e in row["error_codes"])
-                or len(set(row["error_codes"])) != len(row["error_codes"])):
+                or not isinstance(row["error_codes"], list) or any(e not in ERRORS for e in row["error_codes"])):
             raise ValueError("invalid second-pass assessment")
         if row["action"] != "keep" and not row["claim"].strip():
             raise ValueError("second-pass objection needs an exact claim")
@@ -72,7 +72,9 @@ def checks(values, ids):
             raise ValueError("keeping a proof requires supported evidence without known errors")
         if row["action"] == "insufficient" and row["proof_status"] != "undetermined":
             raise ValueError("insufficient audit coverage cannot certify or refute a proof")
-    return {r["review_id"]: r for r in values}
+    # Error codes are tags, not ordered evidence. Preserve the raw response but
+    # do not discard an otherwise valid bundle for a repeated allowed tag.
+    return {r["review_id"]: {**r, "error_codes":list(dict.fromkeys(r["error_codes"]))} for r in values}
 
 
 def brief(response):
@@ -101,7 +103,7 @@ def brief(response):
 
 
 def reconcile(baseline, assessment, annotations, mode):
-    """Fast cannot install repairs; Full requires an explicit supported comparison."""
+    """Install only explicit source-supported repairs; uncertainty remains pending."""
     original = {r["review_id"]:r for r in baseline["results"]}
     proposed = {r["review_id"]:r for r in assessment["results"]}
     if len(proposed) != len(assessment["results"]) or set(proposed) != set(original):
@@ -119,14 +121,19 @@ def reconcile(baseline, assessment, annotations, mode):
             outcome = "unresolved" if old["decision"] == "needs_review" else "confirmed"
         elif action == "insufficient":
             outcome = "not_checked"
-        elif mode == "full" and action == "repair" and note["proof_status"] == "supported":
+        elif action == "repair" and note["proof_status"] == "supported":
             chosen = copy.deepcopy(candidate)
-            outcome = "unresolved" if chosen["decision"] == "needs_review" else "corrected"
+            if chosen["decision"] == "needs_review":
+                outcome = "unresolved" if old["decision"] == "needs_review" else "reopened"
+            else:
+                outcome = "corrected"
             # A repair of prose/conditions is real even if the label is unchanged.
         else:
             chosen = copy.deepcopy(candidate if candidate["decision"] == "needs_review" else old)
             chosen.update(decision="needs_review", diagnosis=None)
-            chosen["checks"] = list(dict.fromkeys([*old.get("checks", []), *chosen.get("checks", []), note["claim"]]))
+            # A new pending draft owns its remaining questions. Replaying the
+            # baseline's checks can resurrect gaps the recovery already settled.
+            chosen["checks"] = list(dict.fromkeys([*chosen.get("checks", []), note["claim"]]))
             chosen.setdefault("investigation", {})["blockers"] = list(dict.fromkeys([
                 *chosen.get("investigation", {}).get("blockers", []), note["claim"]]))
             outcome = "unresolved" if old["decision"] == "needs_review" else "reopened"
@@ -137,36 +144,67 @@ def reconcile(baseline, assessment, annotations, mode):
     return result, outcomes
 
 
-def prior_material(base, ids, byte_limit, deciding_paths=None):
-    """Bound source sharing to contributing original jobs; omit prior opinions from facts."""
-    facts, lookup_trace, fingerprints, job_ids = [], [], [], set()
+def original_jobs(base):
+    """Read the immutable first-attempt evidence once for all second-pass bundles."""
+    if base is None:
+        return []
+    result = []
+    for path in sorted((Path(base) / "jobs").glob("*.json")):
+        job = read(path)
+        if not str(job.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"):
+            result.append((path, job, context.digest(job)))
+    return result
+
+
+def prior_material(base, ids, byte_limit, deciding_paths=None, *, jobs=None, related_paths=()):
+    """Share original source results, never sibling verdicts or applicability claims."""
+    facts, peer_facts, lookup_trace, fingerprints, job_ids = [], [], [], [], set()
     if base is None:
         return {"facts":[], "omitted_facts":0}, {"history":"unavailable", "queries":[], "flags":[]}, fingerprints
     base = Path(base)
-    for path in sorted((base / "jobs").glob("*.json")):
-        job = read(path)
-        if str(job.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"):
-            continue
-        if not set(job.get("binding", {}).get("review_ids", [])) & set(ids):
-            continue
-        job_ids.add(path.stem)
-        fingerprints.append([str(path), context.digest(job)])
+    jobs = original_jobs(base) if jobs is None else jobs
+    contributing = [item for item in jobs if set(item[1].get("binding", {}).get("review_ids", [])) & set(ids)]
+    contributing_paths = {item[0] for item in contributing}
+    peers = [item for item in jobs if item[0] not in contributing_paths] if related_paths else []
+    # A relevant source file is an evidence reuse boundary, not permission to
+    # merge claims/callers. Peer material cannot crowd out original evidence.
+    peer_bytes, peer_limit = 0, min(65536, byte_limit // 4)
+    for path, job, fingerprint in [*contributing, *peers]:
+        own = path in contributing_paths
+        selected = []
         for row in job.get("results", []):
             query = row.get("query", {})
-            if deciding_paths is not None and query.get("review_id") not in ids and query.get("arguments", {}).get("path") not in deciding_paths:
+            if own:
+                if deciding_paths is not None and query.get("review_id") not in ids and query.get("arguments", {}).get("path") not in deciding_paths:
+                    continue
+            elif (query.get("tool") not in ("source", "definition", "references")
+                    or query.get("arguments", {}).get("path") not in related_paths):
                 continue
-            # Only broker-returned evidence; checkpoint prose is deliberately not carried.
             fact = {k:copy.deepcopy(row[k]) for k in ("result_id", "origin_package_id", "origin_review_id", "query", "result") if k in row}
-            if len(fact) == 5:
-                fact["query"].pop("purpose", None)
-                facts.append(fact)
-            query = row.get("query", {})
+            if len(fact) != 5:
+                continue
+            fact["query"].pop("purpose", None)
+            if not own:
+                size = len(json.dumps(fact, ensure_ascii=False).encode("utf-8"))
+                if peer_bytes + size > peer_limit:
+                    continue
+                peer_bytes += size
+            selected.append((row, fact))
+        if not selected:
+            continue
+        if own:
+            job_ids.add(path.stem)  # Sibling progress/objections are not source facts.
+        fingerprints.append([str(path), fingerprint])
+        for row, fact in selected:
+            # Only broker-returned evidence; checkpoint prose is deliberately not carried.
+            (facts if own else peer_facts).append(fact)
+            query = row.get("query", {}) if own else fact["query"]
             value = row.get("result", {})
             lookup_trace.append({"round":row.get("round"), "query":query,
                 "result_id":row.get("result_id"), "operation":value.get("operation"),
                 "source_complete":value.get("source_complete"), "truncated":value.get("truncated", False),
                 "limit":value.get("limit"), "error":value.get("error"), "empty":value.get("results") == []})
-    handoff = orchestration.source_handoff([{"source_facts":facts}], byte_limit)
+    handoff = orchestration.source_handoff([{"source_facts":peer_facts}, {"source_facts":facts}], byte_limit)
     # Bound trace text separately; no unbounded event or source replay.
     selected, used = [], 0
     for row in lookup_trace:
@@ -213,6 +251,90 @@ def comparison_context(baseline, proposed, trace):
         "scope":"Exact assigned claims; trace is navigation, not semantic proof."}
 
 
+def audit_checkpoint(draft, annotations, ids):
+    """Capture provisional objections without admitting a proposed correction."""
+    notes = checks(annotations, ids)
+    rows = draft.get("results", [])
+    if (Counter(r.get("review_id") for r in rows) != Counter(ids)
+            or any(r.get("decision") not in ("issue", "not_issue", "needs_review") for r in rows)):
+        raise ValueError("audit draft must cover exact assigned decisions once")
+    affected = [r["review_id"] for r in rows if
+        (notes[r["review_id"]]["action"] == "repair" and r["decision"] != "needs_review") or
+        notes[r["review_id"]]["investigation_status"] in ("missing_available_evidence", "budget_limited") or
+        (notes[r["review_id"]]["action"] in ("repair", "reopen") and
+         notes[r["review_id"]]["investigation_status"] == "sufficient")]
+    return {"review_ids":affected, "draft":copy.deepcopy(draft), "checks":list(notes.values()),
+        "feedback":{"reason":"fast_audit_recovery", "review_ids":affected,
+            "proposed_draft":copy.deepcopy(draft), "proposed_checks":list(notes.values()),
+            "instruction":"Resolve these concrete audit objections against the original baseline and actual source. They are unverified hypotheses, not required verdicts. Reject inapplicable objections, retrieve only deciding available facts, and preserve active branches, prior guards and reaching conditions. Keep other IDs stable. Return all final review_checks against the original baseline; leave a precise gap only when it cannot be settled.",
+            "authority":"Controller audit checkpoint, not source evidence or a certified verdict."}}
+
+
+def retain_settled_audit(draft, annotations, checkpoint, ids):
+    """Recovery cannot silently replace claims outside its objection scope."""
+    notes = checks(annotations, ids)
+    if Counter(r.get("review_id") for r in draft["results"]) != Counter(ids):
+        raise ValueError("recovery draft must cover exact assigned decisions once")
+    old = {r["review_id"]:r for r in checkpoint["draft"]["results"]}
+    old_notes = {r["review_id"]:r for r in checkpoint["checks"]}
+    affected = set(checkpoint["review_ids"])
+    result = copy.deepcopy(draft)
+    result["results"] = [r if r["review_id"] in affected else copy.deepcopy(old[r["review_id"]]) for r in result["results"]]
+    return result, [notes[rid] if rid in affected else copy.deepcopy(old_notes[rid]) for rid in ids]
+
+
+def defer_recovery(draft, annotations, ids, affected, obstacle, *, validation=False):
+    proposed, notes = copy.deepcopy(draft), list(checks(annotations, ids).values())
+    by_id = {r["review_id"]:r for r in notes}
+    for row in proposed["results"]:
+        if row["review_id"] in affected:
+            note = by_id[row["review_id"]]
+            if validation:
+                # The source question may be answered. The remaining task is
+                # validation of this proposed proof, not the old research gap.
+                question = ("Counter-check the proposed correction against active guards, alternate producers and contrary source: "
+                            + row["summary"][:180])
+                questions = [question]
+                note["claim"] = question
+                summary = "Repair validation deferred: " + row["summary"][:450]
+            else:
+                questions = row.get("checks") or [note["claim"]]
+                summary = "Review remains unresolved: " + questions[0][:450]
+            row.update(decision="needs_review", diagnosis=None,
+                summary=summary,
+                checks=questions, blockers=list(dict.fromkeys([*row.get("blockers", []), obstacle])))
+            # Keep the actual objection in the derived output as well as raw turns.
+            note.update(action="reopen", proof_status="undetermined", investigation_status="budget_limited")
+    return proposed, notes
+
+
+def repair_countercheck(draft, annotations, ids):
+    notes = checks(annotations, ids)
+    affected = [r["review_id"] for r in draft["results"] if r["decision"] != "needs_review"
+        and notes[r["review_id"]]["action"] == "repair" and notes[r["review_id"]]["proof_status"] == "supported"]
+    if not affected:
+        return None
+    return {"reason":"fast_repair_countercheck", "review_ids":affected,
+        "proposed_draft":copy.deepcopy(draft), "proposed_checks":copy.deepcopy(annotations),
+        "instruction":"Check the proposed replacement proof against the actual active branches, earlier successful guards and contrary source. Comments, disabled alternatives and hypothetical prerequisites do not establish reachable behavior. Reuse inspected evidence; retrieve only a deciding missing fact. Confirm or repair the proposal, or leave the exact gap pending. Assess final actions against the original baseline, not the proposal; keep other IDs stable and return all final review_checks.",
+        "authority":"Controller request to test a hypothesis, not source evidence or a verdict."}
+
+
+def defer_unchecked_repairs(draft, annotations, ids):
+    feedback = repair_countercheck(draft, annotations, ids)
+    if feedback is None:
+        return copy.deepcopy(draft), copy.deepcopy(annotations)
+    return defer_recovery(draft, annotations, ids, feedback["review_ids"],
+        "The proposed correction could not be counter-checked within the remaining audit allowance.", validation=True)
+
+
+def fast_research_rounds(phase, rounds_remaining, countercheck_started=False):
+    """Reserve one existing call for repair validation; never expand the allowance."""
+    if phase == "audit":
+        return 0
+    return max(0, rounds_remaining - int(phase == "recovery" and not countercheck_started))
+
+
 def run(*, mode, requests, baselines, first_directory, output, task_base, execute_stage,
         finalize, write, workers, byte_limit, outside_scope=(), scope=("issue", "not_issue", "needs_review"), archive_baselines=True):
     """Independent bundle failures preserve baseline results and exact unchecked coverage."""
@@ -222,11 +344,14 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
     if archive_baselines:
         for filename, _, _ in requests:
             write(output / "first-pass" / filename, baselines[filename])
+    jobs = original_jobs(first_directory) if requests else []
     def one(item):
         filename, request, data = item; ids = data["review_ids"]; baseline = baselines[filename]
-        deciding_paths = {a["location"]["path"] for row in baseline["results"]
-            for a in row.get("investigation", {}).get("decisive_artifacts", [])} if tuple(scope) != review_scope("all") else None
-        handoff, trace, frozen = prior_material(first_directory, ids, byte_limit, deciding_paths)
+        related_paths = {a["location"]["path"] for row in baseline["results"]
+            for a in row.get("investigation", {}).get("decisive_artifacts", [])}
+        deciding_paths = related_paths if tuple(scope) != review_scope("all") else None
+        handoff, trace, frozen = prior_material(first_directory, ids, byte_limit, deciding_paths,
+            jobs=jobs, related_paths=related_paths if mode == "fast" else ())
         task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":ids,
             "review_playbooks":data.get("review_playbooks", {}), "profile":"routine",
             "second_pass":mode, "assessment_cycle":"second_pass_" + mode, "source_handoff":handoff}
@@ -248,10 +373,16 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
                 raise ValueError("first-pass evidence changed during second review")
         combined, outcomes = reconcile(baseline, checked["response"], checked["checks"], mode)
         finalize(combined, filename, request)
+        checkpoint = checked.get("audit_checkpoint")
+        audit_notes = {r["review_id"]:r for r in checkpoint["checks"]} if checkpoint else {}
         for row in outcomes:
             row.update(mode=mode, stages=[s["receipt"] for s in stages],
                 source_handoff_omitted=handoff["omitted_facts"], trace_history=trace["history"],
                 trace_queries_omitted=trace["omitted_queries"] if "omitted_queries" in trace else 0)
+            if checkpoint:
+                row["audit"] = {**audit_notes[row["review_id"]],
+                    "recovery_requested":row["review_id"] in checkpoint["review_ids"],
+                    "authority":"model_hypothesis"}
         return outcomes
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-second-pass") as pool:
         futures = {pool.submit(one, request):request for request in requests}
@@ -329,7 +460,8 @@ def export(output, metrics, write, rates=None, original_metrics=(), original_cal
     first = [*original_metrics, *[r for r in metrics if r not in second]]
     jobs = [read(p) for p in (output / "jobs").glob("*.json")]
     second_calls = sum(j["calls"] for j in jobs if str(j.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"))
-    first_calls = sum(j["calls"] for j in jobs)-second_calls+(len(original_metrics) if original_calls is None else original_calls)
+    source_calls=read(output/"source-review.json").get("calls",0) if (output/"source-review.json").is_file() else 0
+    first_calls = sum(j["calls"] for j in jobs)-second_calls+source_calls+(len(original_metrics) if original_calls is None else original_calls)
     all_roles = {r.get("role", "investigator") for r in [*first, *second]}
     summary["accounting"] = {"first_pass":accounting(first, all_roles, rates, first_calls),
         "second_pass":accounting(second, all_roles, rates, second_calls),

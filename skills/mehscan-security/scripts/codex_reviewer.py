@@ -426,7 +426,11 @@ def run(config, task, launcher_factory=Launcher):
             raise ValueError("current-turn schema rejected response: " + str(diagnostic["error_paths"]))
     # A completed provider turn costs tokens even when its reply is rejected.
     # Persist counters/continuation before admission; never admit the bad draft.
-    accepted = workspace_protocol.envelope(response,task,packet) if workspace_mode else review_envelope(response, review_task, packet, envelope)
+    if task["kind"] == "source_review":
+        import source_review_protocol
+        accepted = source_review_protocol.envelope(response,task)
+    else:
+        accepted = workspace_protocol.envelope(response,task,packet) if workspace_mode else review_envelope(response, review_task, packet, envelope)
     if "rejected_intent_sha256" in next_state:
         del next_state["rejected_intent_sha256"]
         del next_state["rejected_response_round"]

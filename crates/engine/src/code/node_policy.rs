@@ -1086,6 +1086,23 @@ fn add_route_policy_reviews<'tree>(
                     });
             let is_metrics = call.callee == "app.get" && route == "/metrics";
             if is_index || is_metrics {
+                let mut captures = BTreeMap::from([
+                    ("route".to_string(), capture(path, &call.arguments[0])),
+                    ("registration".to_string(), capture(path, &call.node)),
+                ]);
+                if is_index {
+                    if let Some(index) = call
+                        .arguments
+                        .iter()
+                        .skip(1)
+                        .filter_map(|argument| call_site(argument.clone()))
+                        .find(|index| index.callee == "serveIndex")
+                        && let Some(directory) = index.arguments.first()
+                        && exact_quoted(directory.text().trim()).is_some()
+                    {
+                        captures.insert("directory_root".to_string(), capture(path, directory));
+                    }
+                }
                 let rule = language_rule(
                     language,
                     if is_index {
@@ -1100,10 +1117,7 @@ fn add_route_policy_reviews<'tree>(
                     capability: Capability::HttpRequestHandling,
                     location: location(path, &call.node),
                     enclosing_symbol: enclosing_symbol(&call.node),
-                    captures: BTreeMap::from([
-                        ("route".to_string(), capture(path, &call.arguments[0])),
-                        ("registration".to_string(), capture(path, &call.node)),
-                    ]),
+                    captures,
                     cwe_candidates: vec![if is_index { "CWE-548" } else { "CWE-200" }.to_string()],
                     tags: vec![
                         "route-policy".to_string(),

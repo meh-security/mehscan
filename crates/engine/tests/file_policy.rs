@@ -115,6 +115,7 @@ fn include_tests_promotes_excluded_supported_sources_into_sast() {
             jobs: Some(2),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("fixture should scan with tests");
@@ -167,6 +168,7 @@ fn generated_frontend_content_is_secret_only_unless_explicitly_included() {
             jobs: Some(1),
             scan_secrets: true,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("generated source should retain secret scanning");
@@ -184,6 +186,7 @@ fn generated_frontend_content_is_secret_only_unless_explicitly_included() {
             jobs: Some(1),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("explicit complete scan should run");
@@ -241,6 +244,7 @@ fn exact_unit_test_directories_are_excluded_without_hiding_lookalikes() {
             jobs: Some(1),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("explicit test scan should run");
@@ -297,6 +301,7 @@ fn end_to_end_and_spec_sources_do_not_supply_default_scan_evidence() {
             jobs: Some(1),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .unwrap();

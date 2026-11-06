@@ -86,7 +86,15 @@ else:
     auth = json.loads((pathlib.Path(os.environ["CODEX_HOME"]) / "auth.json").read_text())
     schema = json.loads(pathlib.Path(args[args.index("--output-schema")+1]).read_text())
     shape = schema["properties"]["draft"]["anyOf"][0]["properties"]
-    if "change_pass" in shape:
+    if "proposals" in shape:
+        packet=json.loads(prompt.split("Requested source assignment and native questions:\n")[1].split("\n")[0])
+        pending=auth.get("pending",False)
+        draft={"results":[{"review_id":q["review_id"],"decision":"needs_review" if pending else "issue","confidence":"medium",
+            "summary":"Synthetic operation verdict for Action integration.","reason":"The current code passes request.query.code into eval.",
+            "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":["Additional deployment proof required."] if pending else [],
+            "blockers":[],"diagnosis":None,"source_leads":[]} for q in packet["native_questions"]],
+            "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},"status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}
+    elif "change_pass" in shape:
         phase = json.loads(prompt.split("Current phase and available native coverage (inspect before claiming a source-only gap):\n")[1].split("\n")[0])
         ids = [q["review_id"] for q in phase["available_native_questions"]]
         draft = {"change_pass":[{"path":"app.js","status":"reviewed","summary":"Inspected changed operation.",
@@ -101,8 +109,9 @@ else:
             "reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],
             "checks":["Additional deployment proof required."] if pending else [],"blockers":[],"diagnosis":None,"source_leads":[]} for i in ids]}
-    pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps({"action":"final","research":[],
-        "draft":draft,"working_chain":"Inspected supplied source.","progress":[],"routing":[]}))
+    response={"action":"final","research":[],"draft":draft,"working_chain":"Inspected supplied source."}
+    if "proposals" not in shape:response.update(progress=[],routing=[])
+    pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps(response))
     print(json.dumps({"type":"thread.started","thread_id":"12345678-1234-1234-1234-123456789abc"}))
     print(json.dumps({"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}))
 ''',encoding="utf-8")

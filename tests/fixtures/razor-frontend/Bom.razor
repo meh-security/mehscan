@@ -1,0 +1,6 @@
+﻿@page "/bom"
+@rendermode InteractiveAuto
+@code {
+    [SupplyParameterFromQuery] public string Input { get; set; } = "界😀";
+    async System.Threading.Tasks.Task Run() => await CSharpScript.EvaluateAsync<object>(Input);
+}

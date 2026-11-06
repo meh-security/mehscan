@@ -380,6 +380,7 @@ def prepare(get=None, execute=run_command):
         plan["review"] = {"policy": mode, "skill_root": str(skill), "runtime": runtime,
                           "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
                           "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
+                          "source_controller_sha256": file_digest(Path(__file__).with_name("review_source.py")),
                           "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
                           "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
                           "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
@@ -628,6 +629,7 @@ def review_tools(plan, execute):
             raise ValueError("configured BYOK reviewer changed after preparation")
     config = plan["review"]
     for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"),
+                      ("review_source.py", "source_controller_sha256"),
                       ("review_source_profile.py", "source_profile_sha256"),
                       ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
         if file_digest(Path(__file__).with_name(name)) != config[key]:
@@ -798,8 +800,38 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
             if (directory / "bundles").exists():
                 argv += ["--run", str(directory / "bundles")]
             # The native worker owns finalization/report validation and admission.
-            execute(argv, cwd=control, env=review_environment())
+            worker_error=None
+            try:
+                execute(argv, cwd=control, env=review_environment())
+            except (RuntimeError,subprocess.SubprocessError) as error:
+                worker_error=error
+                if not (directory/"review/worker.json").is_file():raise
             worker_record = json.loads((directory / "review/worker.json").read_text(encoding="utf-8"))
+            source_summary=directory/"review/source-review/summary.json"
+            if not source_summary.is_file():source_summary=directory/"review/source-review/handoff.json"
+            if source_summary.is_file():
+                source=json.loads(source_summary.read_text(encoding="utf-8"))
+                if source["parent_work_package_id"]!=handoff["work_package_id"]:
+                    raise ValueError("source review belongs to a different parent work package")
+                derived_claim=Path(source["effective_args"]["claim"]).resolve(strict=True)
+                if not derived_claim.is_relative_to((control/"state").resolve(strict=True)):
+                    raise ValueError("source review ownership must remain in private native state")
+                derived=json.loads(derived_claim.read_text(encoding="utf-8"))["result"]
+                if derived["generation"]!=receipt["generation"]+1:
+                    raise ValueError("source review did not derive the next native generation")
+                augmented=(directory/"review/source-review/inventory").resolve(strict=True)
+                if Path(source["effective_args"]["inventory"]).resolve(strict=True)!=augmented:
+                    raise ValueError("source review inventory is outside its immutable attempt")
+                owned=state_json(plan,execute,"status",[*common,"--repository-key",key])
+                if owned["generation"]!=derived["generation"] or owned["snapshot_id"]!=derived["snapshot_id"]:
+                    raise ValueError("source review generation changed before result")
+                receipt=derived
+                if worker_record["status"]=="admitted":
+                    state_json(plan,execute,"work",[*common,"--inventory",str(augmented),"--source-root",str(Path(plan["checkout"])/plan["scan_root"]),
+                        "--generation",str(derived["generation"]),"--owner",derived["owner"],"--skill-root",plan["review"]["skill_root"],*provider_arguments(plan)])
+                record["coordination"].update(generation=receipt["generation"],native_snapshot_id=receipt["snapshot_id"])
+                record["source_review"]=worker_record.get("source_review")
+            if worker_error:raise worker_error
             if worker_record["status"] != "admitted":
                 raise ValueError("review worker did not admit a result")
             record["review_execution"] = "admitted"

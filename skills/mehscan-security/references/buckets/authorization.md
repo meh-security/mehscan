@@ -23,6 +23,15 @@ resolver member, rather than a callback merely near mutation-related text.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+Prioritize the producer of a relied-on subject or storage key before sibling
+endpoints. For a session/cache-derived subject, use
+[token review](../token-review.md) to inspect acceptance and relevant state writers;
+a cache read or equality with another field from that cache is not independent
+identity proof. Reuse that inspected acceptance chain for compatible consumers.
+For a supposedly owner-scoped compound key, check the actual encoding. Validating
+each component's characters does not prove that different owner/object pairs
+cannot map to the same stored key. Preserve applicable grants and require a
+feasible collision under the accepted component constraints.
 Rust `rust_context_*` captures can supply the actor type, extractor/guard helpers,
 imports and policy definitions. These are bounded source dependencies, not proof
 that a particular trait implementation or macro enforces this action. Bind the

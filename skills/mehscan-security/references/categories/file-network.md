@@ -10,6 +10,12 @@ Check relevant platform separators/rooted paths and symlinks only when supported
 execution conditions make them material. A fixed temporary cleanup path does not
 inherit an adjacent archive extraction weakness.
 
+For disclosure, distinguish safe path selection from sensitive contents. A sample
+or fixture label does not make served credentials harmless when an active
+consumer uses that same material. Inspect a relevant indexed file and its
+consumer when supplied evidence points to one; do not enumerate all files or
+assume every published filename is confidential.
+
 For archives, bind each member's target and extraction write. Distinguish escape
 from the upload root, escape from the repository root, overwrite and later code/HTML
 interpretation. A writer-to-consumer link needs matching paths and reaching

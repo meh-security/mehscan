@@ -42,12 +42,14 @@ use mehscan_core::{
 mod angular;
 mod caller_examples;
 mod csharp_application_context;
+mod file_content;
 mod frontend;
 mod imported_members;
 mod node_constant_admission;
 mod practical_admission;
 mod resource_helpers;
 mod review_admission;
+pub mod source_review;
 
 use crate::repository::{
     Discovery, FileClass, discover, discover_selected, discover_text, is_sast_excluded_source,
@@ -423,6 +425,8 @@ pub struct ReviewInventory {
     pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typescript_inputs: Option<crate::typescript_semantic::InputBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_inputs: Option<source_review::Binding>,
 }
 
 impl ReviewInventory {
@@ -433,7 +437,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "30";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "31";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -454,6 +458,7 @@ pub fn validate_review_inventory_for_collection(
     if let Some(scope) = &inventory.scan.impact_scope {
         crate::impact::validate_scope(root, scope)?;
     }
+    source_review::validate_binding(root, inventory)?;
     validate_inventory_source_binding(inventory, &RepositorySources::load_snapshot(root)?)
 }
 
@@ -516,6 +521,7 @@ fn validate_review_inventory_sources(
     if let Some(binding) = &inventory.typescript_inputs {
         binding.validate(root)?;
     }
+    source_review::validate_binding(root, inventory)?;
     validate_inventory_source_binding(inventory, sources)
 }
 
@@ -800,6 +806,7 @@ pub fn build_review_inventory_scoped_with_native_backends(
         scan,
         semantic_inputs,
         typescript_inputs,
+        source_inputs: None,
     })
 }
 
@@ -881,9 +888,6 @@ fn build_selected_review_jobs_internal(
     context_lines: Option<usize>,
     mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<PathReviewJob, EngineError> {
-    if review_ids.is_empty() && !inventory.entries.is_empty() {
-        return Err(EngineError("select at least one review ID".to_string()));
-    }
     let validation_started = std::time::Instant::now();
     let sources = RepositorySources::load(root)?;
     validate_review_inventory_sources(root, inventory, &sources)?;
@@ -1209,9 +1213,20 @@ pub fn get_source(
             "source range must use one-based lines with end >= start".to_string(),
         ));
     }
-    // An explicitly requested text file can be useful review evidence even
-    // when its suffix is not admitted to the scanner (for example, an Angular
-    // HTML template). Keep discovery's repository ignore and path rules.
+    let (display_root, file) = read_text_source_file(root, path)?;
+    let (slice, truncated) = source_slice(&file, start_line, end_line)?;
+    Ok(response(
+        &display_root,
+        "get_source",
+        textual_provenance("bounded-source-reader"),
+        truncated,
+        slice,
+    ))
+}
+
+// Raw review reads use repository/path/text checks, independently of scanner
+// classification. Both the read command and handoff validation use this boundary.
+fn read_text_source_file(root: &Path, path: &str) -> Result<(String, SourceFile), EngineError> {
     let discovery = discover_text(root, Some(path))?;
     let display_root = display_path(&discovery.root);
     let normalized = normalize_relative(path);
@@ -1245,19 +1260,17 @@ pub fn get_source(
             EngineError(format!("cannot read text file {normalized:?}: {error}"))
         })?,
     };
+    if source.contains('\0') {
+        return Err(EngineError(format!(
+            "cannot read text file {normalized:?}: binary content detected"
+        )));
+    }
     let file = SourceFile {
         path: normalized,
         language: None,
         source,
     };
-    let (slice, truncated) = source_slice(&file, start_line, end_line)?;
-    Ok(response(
-        &display_root,
-        "get_source",
-        textual_provenance("bounded-source-reader"),
-        truncated,
-        slice,
-    ))
+    Ok((display_root, file))
 }
 
 pub fn get_enclosing_symbol(
@@ -2522,6 +2535,7 @@ fn build_path_review_jobs_internal(
         build_observation_reviews(
             selected_groups.into_iter(),
             &sources,
+            &scan.evidence,
             &languages,
             &csharp_neighborhoods,
             context_lines,
@@ -5540,6 +5554,7 @@ fn project_investigation_facts(
         )
     });
     let mut angular_bytes = 0usize;
+    let mut file_content_bytes = 0usize;
     // A short output helper often settles the selected property. Keep its
     // actual body and bounded policy/import context instead of forcing one
     // lookup per consumer. This is source context, never a safe-helper model.
@@ -5579,6 +5594,19 @@ fn project_investigation_facts(
     }
     for index in order {
         let fact = &mut facts[index];
+        if matches!(
+            fact.role.as_str(),
+            "file_content_read_context"
+                | "possible_file_content_writer_context"
+                | "possible_sensitive_content_copy_context"
+                | "possible_sensitive_content_definition_context"
+                | "file_content_search_limit_context"
+        ) && fact.excerpt.len() <= 2_048
+            && file_content_bytes + fact.excerpt.len() <= 3_072
+        {
+            file_content_bytes += fact.excerpt.len();
+            continue;
+        }
         // Prepared Rust relationships already bound the dependency closure.
         // Keep up to 8 KiB beside the small anchor card; a per-fact limit keeps
         // large implementations as explicit locators rather than app context.
@@ -6446,6 +6474,7 @@ fn observation_review_investigation(
         lookup_symbol.as_deref(),
     );
     route_caller_examples(&mut plan, facts);
+    file_content::route_lookups(&mut plan, facts);
     plan
 }
 
@@ -7424,7 +7453,7 @@ fn observation_decision_facts(
     if let Some(policy) = resource_policy.filter(|_| resource_policy_applies) {
         established.push(match policy.state {
             ResourcePolicyState::OwnerScoped => format!(
-                "The resource selector is owner-scoped by a verified authenticated identity relationship ({}).",
+                "The resource selector has a local owner/tenant identity binding ({}). This establishes selector structure, not the authenticity or integrity of the subject supplying it.",
                 policy.basis
             ),
             ResourcePolicyState::PublicCatalog => format!(
@@ -7496,7 +7525,7 @@ fn observation_decision_facts(
         && resource_policy.is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
     {
         vec![
-            "A verified authenticated owner constraint applies to this exact resource selector."
+            "The resource selector is constrained to its supplied subject. Credential acceptance, relevant state writers and check-to-effect ordering require separate review when material."
                 .to_string(),
         ]
     } else {
@@ -9359,7 +9388,12 @@ fn observation_review_basis(
             semantics.join("; ")
         ));
     }
-    if evidence
+    if source_review::question(evidence).is_some() {
+        deterministic_facts.push(
+            "Only the cited original-source locations and bytes were validated. The operation, applicability, flow and consequence are model-proposed questions, not native syntax or flow proof."
+                .to_string(),
+        );
+    } else if evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::SensitiveOperation)
     {
@@ -9413,7 +9447,9 @@ fn observation_review_basis(
             "bounded_non_path_observation"
         }
         .to_string(),
-        security_question: if let Some(contract) = marker_contract {
+        security_question: if let Some(question) = source_review::question(evidence) {
+            question
+        } else if let Some(contract) = marker_contract {
             contract.security_question.to_string()
         } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
@@ -9670,6 +9706,7 @@ fn bounded_basis_text(name: &str, text: &str) -> String {
 fn build_observation_reviews(
     groups: impl IntoIterator<Item = ObservationGroup>,
     sources: &RepositorySources,
+    all_evidence: &[Evidence],
     languages: &BTreeMap<&str, Language>,
     csharp_neighborhoods: &[mehscan_core::ReviewNeighborhood],
     context_lines: usize,
@@ -9680,6 +9717,7 @@ fn build_observation_reviews(
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let index_started = std::time::Instant::now();
     let groups = groups.into_iter().collect::<Vec<_>>();
+    let file_content = file_content::Index::build(sources, all_evidence, &groups);
     let frontend_context = frontend::FrontendContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
     for fact in frontend_context.all_facts() {
@@ -9964,6 +10002,9 @@ fn build_observation_reviews(
         let post_origin_started = std::time::Instant::now();
         context_truncated |= origin_truncated;
         facts.append(&mut origin);
+        let (mut content_facts, content_truncated) = file_content.facts(sources, &group.evidence);
+        context_truncated |= content_truncated;
+        facts.append(&mut content_facts);
         if let Some(sink) = group
             .evidence
             .iter()
@@ -10290,6 +10331,9 @@ fn build_observation_reviews(
         let review_basis = observation_review_basis(basis_evidence, rules_by_id);
         let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        decision_facts
+            .unresolved
+            .extend(file_content::questions(&facts));
         if facts
             .iter()
             .any(|f| f.role == "frontend_imported_helper_context")
@@ -21841,7 +21885,12 @@ pub fn find_text_references(
     }
     let limit = bounded_limit(limit.or(Some(20)))?;
     let sources = if let Some(path) = path {
-        RepositorySources::from_discovery(discover_text(root, Some(path))?, true, true)?
+        let (root, file) = read_text_source_file(root, path)?;
+        RepositorySources {
+            root,
+            files: BTreeMap::from([(file.path.clone(), file)]),
+            node_modules: Default::default(),
+        }
     } else if let Some(prefix) = path_prefix {
         RepositorySources::load_directory(root, prefix)?
     } else {
@@ -21912,18 +21961,6 @@ pub fn find_source_paths(
         .files
         .into_iter()
         .filter(|file| file.relative.to_lowercase().contains(&needle))
-        .filter(|file| match file.class {
-            FileClass::Supported(_) => fs::read_to_string(&file.absolute).is_ok(),
-            FileClass::SecretOnly
-            | FileClass::EmbeddedJavascriptTemplate
-            | FileClass::Vue
-            | FileClass::Razor
-            | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
-            FileClass::Ignored if is_investigation_template(&file.relative) => {
-                crate::code::read_secret_text(&file.absolute).is_ok()
-            }
-            FileClass::UnsupportedSource | FileClass::Ignored => false,
-        })
         .map(|file| file.relative)
         .collect::<Vec<_>>();
     matches.sort();
@@ -22363,13 +22400,13 @@ fn native_expression_context(
 
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?, false, true)
+        Self::from_discovery(discover(root)?, true, true)
     }
 
     // Freshness hashes the same discovered bytes, without preparing import lookup.
     // No persistent cache: every validation still discovers and reads the source.
     fn load_snapshot(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?, false, false)
+        Self::from_discovery(discover(root)?, true, false)
     }
 
     fn load_selected(root: &Path, path: &str) -> Result<Self, EngineError> {
@@ -22418,6 +22455,9 @@ impl RepositorySources {
                         // make binary or non-UTF-8 content reviewer-visible.
                         continue;
                     };
+                    if source.contains('\0') {
+                        continue;
+                    }
                     (Some(language), source)
                 }
                 FileClass::SecretOnly

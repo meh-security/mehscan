@@ -10,6 +10,35 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
+The default worker phase (`all`) reviews the requested production-source scope.
+It supplies bounded original-source assignments alongside relevant native questions,
+including files with no scanner candidates. The reviewer can assess known questions
+and propose additional consequential relationships in the same conversation.
+The controller validates original paths, hashes, ranges and inspected citations,
+assigns identities and applies the ordinary finalizer. Source validation establishes
+the cited bytes, not a vulnerability or a native flow proof.
+
+New questions and source assessments are retained under `source-review/`. The
+controller derives a new native state generation for the augmented inventory;
+its private claim stays in the state store. Completed assessments are finalized
+without another first-pass model call. Optional Fast/Full passes can reuse the
+original source facts, keeping their attribution. Existing native local facts
+settle only their own relationship; they do not clear unrelated authority or
+workflow questions.
+
+`source-review.json` records examined, context-limited and deferred ranges, failed
+assignments and source-stage call counts. Canonical report scope includes a coverage
+summary. Empty results do not certify a file safe. A failed assignment remains
+incomplete while successful siblings are retained; it does not trigger a replacement
+native model call. Source-stage usage contributes to total input, cache and output
+accounting. A source-stage interruption before handoff is retained for diagnosis;
+automatic continuation of those interrupted source conversations is not yet supported.
+
+Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
+or `--phase change-pass` for only the existing Changed comparison. Experimental
+tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor
+generation remains optional; ordinary AI source review needs no source generator.
+
 Use `--policy value --selection policy` for ordinary AI review. Comprehensive
 selects every admitted ID. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
@@ -40,14 +69,37 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
-| `fast` | One final-only call per bundle checks the first verdict, deciding source and compact lookup trace. No new research. | Keep the original result or reopen a concrete proof gap. It cannot promote, dismiss or close a pending claim. |
+| `fast` | Records a proof audit, then resolves actionable objections with targeted lookups in the same conversation. Supported results finish in one call. | Keep or correct the verdict and proof, including resolving pending claims. A deciding fact that remains unavailable or beyond the allowance stays pending. |
 | `full` | A fresh source-backed assessment without the original verdict, using the normal research allowance, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
+
+Fast first records an audit checkpoint using the first investigation's evidence
+and trace. Supported proofs can finish in that call. Concrete objections move
+to targeted recovery in the same conversation, where an incorrect objection can
+also be rejected. These phases share the normal Fast allowance, separately from
+the first investigation. A proposed closed repair receives a
+counter-check in the same conversation within its original allowance; a repair
+that cannot be checked before the allowance is exhausted stays pending. Unchanged
+results need no extra confirmation call. Full adds an independent investigation for
+deeper audits, evaluation and training-data review. Both preserve the first results
+and use source validation; neither establishes semantic ground truth.
+
+Fast reserves a call within its existing allowance to validate a proposed repair.
+If validation cannot finish, the report separates that deferred check from source
+questions already answered. Relevant source results from sibling investigations
+in the same first attempt may be reused with their original attribution; their
+verdicts and caller conditions are not shared as facts.
 
 Fast is useful for checking an existing proof. Full is useful when the selected
 claim needs another investigation. Both add model cost and can make mistakes;
 agreement and source-valid citations do not establish correctness. They use an
 ordinary single-profile plan and can use the same configured model for both
 passes. Experimental tiered/multi-model orchestration is separate.
+
+Fast records its original per-claim audit under `audit` in `second-pass.json`,
+including whether recovery was requested. These are model hypotheses, distinct
+from the final outcome. Checkpoints and execution traces retain the current phase,
+objections and remaining allowance for recovery after interruption. Budget-limited
+results keep the deciding question alongside the reason work stopped.
 
 ### Choose which results to check
 
@@ -204,6 +256,8 @@ Create a trusted JSON argv file outside ROOT, for example:
 
 The controller sends one JSON task on stdin and reads one JSON result on stdout.
 The adapter applies the [security skill](../skills/mehscan-security/SKILL.md).
+The ordinary investigation includes a concise final proof check using its current
+context and remaining allowance; it does not require an extra model call.
 The controller prepares a bound `evidence_packet` with a versioned runtime
 contract compiled from trusted skill references, the selected work and native
 questions. `--skill-root` defaults to the installed security skill and must stay
@@ -288,7 +342,7 @@ semantic review. Flags identify work to inspect; they never certify or change a 
 
 ## Parallel execution and recovery
 
-The controller runs up to three independent native bundle investigations at once.
+The controller runs up to three independent source assignments or native bundle investigations at once.
 Use `--workers N` (1–16) to set the reviewer cap and `--query-workers N` (1–8,
 default 2) for model-requested source queries. Set both to 1 for serial execution.
 Existing bundle boundaries, review policy and admitted conversation limits stay
