@@ -9,6 +9,7 @@ pub mod evaluation;
 pub mod impact;
 pub mod investigation;
 pub mod provenance;
+pub mod razor_frontend;
 mod report_policy;
 pub mod repository;
 pub mod review_runtime;
@@ -30,6 +31,8 @@ pub struct ScanOptions {
     /// Secret detection is opt-in while its precision is being redesigned.
     pub scan_secrets: bool,
     pub impact_scope: Option<ImpactScopeRequest>,
+    /// Opt-in official SDK Razor generation; default scanning requires no SDK.
+    pub razor: Option<razor_frontend::RazorOptions>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

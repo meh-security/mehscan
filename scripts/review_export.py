@@ -81,6 +81,10 @@ def export_review(plan, directory, record, reviewer, execute, env):
     if worker["status"] != "admitted" or worker["runtime"] != plan["review"]["runtime"]:
         raise ValueError("only native-admitted review work can be exported")
     files = ["usage.json", "completion.json"]
+    source=directory/"review/source-review.json"
+    if source.is_file():
+        write(directory/"source-review.json",json.loads(source.read_text(encoding="utf-8")))
+        files.append("source-review.json")
     run = directory / "review/run"
     native_export = "rendered"
     if not run.exists():

@@ -10,6 +10,35 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
+The default worker phase (`all`) reviews the requested production-source scope.
+It supplies bounded original-source assignments alongside relevant native questions,
+including files with no scanner candidates. The reviewer can assess known questions
+and propose additional consequential relationships in the same conversation.
+The controller validates original paths, hashes, ranges and inspected citations,
+assigns identities and applies the ordinary finalizer. Source validation establishes
+the cited bytes, not a vulnerability or a native flow proof.
+
+New questions and source assessments are retained under `source-review/`. The
+controller derives a new native state generation for the augmented inventory;
+its private claim stays in the state store. Completed assessments are finalized
+without another first-pass model call. Optional Fast/Full passes can reuse the
+original source facts, keeping their attribution. Existing native local facts
+settle only their own relationship; they do not clear unrelated authority or
+workflow questions.
+
+`source-review.json` records examined, context-limited and deferred ranges, failed
+assignments and source-stage call counts. Canonical report scope includes a coverage
+summary. Empty results do not certify a file safe. A failed assignment remains
+incomplete while successful siblings are retained; it does not trigger a replacement
+native model call. Source-stage usage contributes to total input, cache and output
+accounting. A source-stage interruption before handoff is retained for diagnosis;
+automatic continuation of those interrupted source conversations is not yet supported.
+
+Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
+or `--phase change-pass` for only the existing Changed comparison. Experimental
+tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor
+generation remains optional; ordinary AI source review needs no source generator.
+
 Use `--policy value --selection policy` for ordinary AI review. Comprehensive
 selects every admitted ID. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
@@ -313,7 +342,7 @@ semantic review. Flags identify work to inspect; they never certify or change a 
 
 ## Parallel execution and recovery
 
-The controller runs up to three independent native bundle investigations at once.
+The controller runs up to three independent source assignments or native bundle investigations at once.
 Use `--workers N` (1–16) to set the reviewer cap and `--query-workers N` (1–8,
 default 2) for model-requested source queries. Set both to 1 for serial execution.
 Existing bundle boundaries, review policy and admitted conversation limits stay

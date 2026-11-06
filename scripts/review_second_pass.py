@@ -460,7 +460,8 @@ def export(output, metrics, write, rates=None, original_metrics=(), original_cal
     first = [*original_metrics, *[r for r in metrics if r not in second]]
     jobs = [read(p) for p in (output / "jobs").glob("*.json")]
     second_calls = sum(j["calls"] for j in jobs if str(j.get("binding", {}).get("assessment_cycle", "")).startswith("second_pass"))
-    first_calls = sum(j["calls"] for j in jobs)-second_calls+(len(original_metrics) if original_calls is None else original_calls)
+    source_calls=read(output/"source-review.json").get("calls",0) if (output/"source-review.json").is_file() else 0
+    first_calls = sum(j["calls"] for j in jobs)-second_calls+source_calls+(len(original_metrics) if original_calls is None else original_calls)
     all_roles = {r.get("role", "investigator") for r in [*first, *second]}
     summary["accounting"] = {"first_pass":accounting(first, all_roles, rates, first_calls),
         "second_pass":accounting(second, all_roles, rates, second_calls),

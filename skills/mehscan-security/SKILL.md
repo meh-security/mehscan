@@ -5,7 +5,13 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
-For a source-bound worker task, use the compiled
+For a source assignment, use [source review](references/source-review.md): review
+the assigned original source, assess existing questions and investigate additional
+consequential relationships in the same context. The default AI controller assigns
+source even when the scanner finds no candidates. New proposals require validated
+source and ordinary finalization; examined coverage is separate from verdicts.
+
+For an exact-ID source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.

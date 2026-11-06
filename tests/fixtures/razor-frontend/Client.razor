@@ -1,0 +1,6 @@
+@rendermode InteractiveWebAssembly
+<button @onclick="Run">Run</button>
+@code {
+    string script = "client";
+    async System.Threading.Tasks.Task Run() => await CSharpScript.EvaluateAsync<object>(script);
+}

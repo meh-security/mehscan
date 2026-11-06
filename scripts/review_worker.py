@@ -39,7 +39,7 @@ class ReplyValidationFailure(CommandFailure):
     """A receipted reply rejected by exact current-turn local validation."""
 
 
-def observed_turn(directory, turn, provider):
+def observed_turn(directory, turn, provider, *, require_complete_usage=True):
     """Read one exact paid turn, without guessing missing/invalid usage."""
     name = "provider-metrics-" + turn["conversation_id"] + ".jsonl"
     path = Path(directory) / name
@@ -50,6 +50,15 @@ def observed_turn(directory, turn, provider):
     if len(rows) != 1 or rows[0].get("provider") != provider:
         return None
     usage = rows[0].get("usage", {})
+    if not require_complete_usage:
+        # A completed receipted turn can be source-valid with unknown cache/token
+        # counters. Preserve those unknowns instead of rejecting its assessment.
+        if not isinstance(usage,dict) or any(type(value) is not int or value<0 for key,value in usage.items()
+                if key in ("input_tokens","cached_input_tokens","output_tokens")):
+            return None
+        if "cached_input_tokens" in usage and "input_tokens" in usage and usage["cached_input_tokens"]>usage["input_tokens"]:
+            return None
+        return rows[0]
     if set(rows[0].get("unknown_delta_counters",[])).intersection(("input_tokens","cached_input_tokens","output_tokens")):
         return None
     if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens","cached_input_tokens","output_tokens")):
@@ -124,10 +133,11 @@ def missing_source_result(query, error):
     if error.returncode != 2:
         return None
     path = query["arguments"].get("path")
-    if query["tool"] in ("references", "symbol", "definition", "outline", "import-targets", "export-target") and isinstance(path, str):
+    if query["tool"] in ("source", "references", "symbol", "definition", "outline", "import-targets", "export-target") and isinstance(path, str):
         expected = 'error: scannable text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
-        if error.stderr.strip() == expected:
-            operation = {"references":"reference_lookup_error", "symbol":"symbol_lookup_error",
+        raw_expected='error: text file '+json.dumps(path,ensure_ascii=False)+' was not found under the scan root'
+        if error.stderr.strip() == raw_expected or query["tool"]!="source" and error.stderr.strip() == expected:
+            operation = {"source":"source_lookup_error","references":"reference_lookup_error", "symbol":"symbol_lookup_error",
                          "definition":"symbol_lookup_error", "outline":"outline_lookup_error",
                          "import-targets":"import_target_lookup_error", "export-target":"export_target_lookup_error"}[query["tool"]]
             return {"operation":operation, "results":[], "error":{
@@ -272,10 +282,10 @@ def read(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def consolidate_metrics(directory, inherited=None):
+def consolidate_metrics(directory, inherited=None, source=None):
     """Keep observed turns even if a prior controller died before aggregation."""
     rows = {}
-    for parent in ([inherited, directory] if inherited else [directory]):
+    for parent in ([inherited] if inherited else []) + ([source] if source else []) + [directory]:
         for path in [parent / "provider-metrics.jsonl", *sorted(parent.glob("provider-metrics-*.jsonl"))]:
             if not path.exists():
                 continue
@@ -323,6 +333,23 @@ def provider_usage(rows):
             elif group["usage"][name] is not None:
                 group["usage"][name] += value
     return list(groups.values())
+
+
+def validate_provider_command(argv, expected, skill_root, root, artifact_root):
+    """Fence the provider before any source or claim conversation is purchased."""
+    if expected is None:
+        return
+    expected_adapter = (skill_root / "scripts/codex_reviewer.py").resolve(strict=True)
+    if len(argv) != 4 or Path(argv[1]).resolve(strict=True) != expected_adapter or argv[2] != "--config":
+        raise ValueError("bound Codex provider requires the bundled BYOK adapter")
+    provider_config_path = outside(argv[3], root)
+    if provider_config_path.is_relative_to(artifact_root):
+        raise ValueError("provider configuration must stay outside exported artifacts")
+    config = read(provider_config_path)
+    actual = {"schema_version": config["schema_version"], "provider": "codex-cli",
+        **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
+    if actual != expected:
+        raise ValueError("actual provider configuration differs from the native work binding")
 
 
 @contextmanager
@@ -834,6 +861,22 @@ def run(args):
     store = outside(args.store, root)
     key = context.digest([str(root), args.stream])
     with controller_lock(store / ("review-controller-" + key + ".lock")):
+        if args.phase == "all":
+            import review_source
+            try:
+                return review_source.run(args, run_locked,sys.modules[__name__])
+            except Exception as error:
+                output=outside(args.output,root,False)
+                # Retain the attempt; handoff failure must not buy a fresh call.
+                if getattr(args,"_source_attempt_created",False) and not (output/"worker.json").exists():
+                    detail=str(error)
+                    if getattr(error,"stderr",None):
+                        detail += ": " + error.stderr
+                    record={"status":"cancelled" if _cancelled else "incomplete","generation":getattr(args,"_source_generation",None),"reason":type(error).__name__,
+                        "detail":detail,"stage":"source_review","step":getattr(error,"step","source_review")}
+                    write(output/"worker.json",record)
+                    return record
+                raise
         return run_locked(args)
 
 
@@ -889,7 +932,16 @@ def run_locked(args):
         if Path(argument).is_file():
             outside(argument, root)
     output = outside(args.output, root, False)
-    output.mkdir(parents=True, exist_ok=False)  # Immutable attempt, never overwrite.
+    source_prepared = getattr(args,"_source_prepared",None)
+    if source_prepared:
+        prepared_path=outside(source_prepared,root)
+        if prepared_path.parent.parent != output and not getattr(args,"resume_from",None):
+            raise ValueError("source handoff must belong to this attempt")
+        if output.exists() and sorted(p.name for p in output.iterdir()) != ["source-review"]:
+            raise ValueError("source handoff cannot overwrite an existing attempt")
+        output.mkdir(parents=True,exist_ok=True)
+    else:
+        output.mkdir(parents=True, exist_ok=False)  # Immutable attempt, never overwrite.
     recovery = outside(args.resume_from, root) if getattr(args, "resume_from", None) else None
     if recovery and (output.is_relative_to(recovery) or recovery.is_relative_to(output)):
         raise ValueError("recovery and output attempts must be separate directories")
@@ -998,27 +1050,7 @@ def run_locked(args):
                         "prepared_artifact_id":item["artifact_id"]}
         if side == "base":
             comparison = (package["payload"]["impact_scope"] or {}).get("comparison")
-            if not comparison:
-                raise ValueError("base source requires a pinned Git comparison")
-            base = comparison.get("merge_base_commit") or comparison["base_commit"]
-            target = context.base_object(root, base, values["path"], native_env, budget())
-            size = subprocess.run(["git", "-C", str(root), "cat-file", "-s", target], env=native_env,
-                                  capture_output=True, timeout=budget())
-            if size.returncode or int(size.stdout) > context.MAX_FILE_BYTES:
-                raise ValueError("pinned base source unavailable or exceeds preparation bound")
-            blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", target], env=native_env,
-                                  capture_output=True, timeout=budget())
-            if blob.returncode:
-                raise ValueError("pinned base source unavailable")
-            lines = context.source_lines(blob.stdout.decode("utf-8"))
-            start, end = values["start_line"], min(values["end_line"], len(lines))
-            if start > end:
-                raise ValueError("base source starts after end of file")
-            text = "\n".join(lines[start - 1:end])
-            if len(text.encode("utf-8")) > 64 * 1024:
-                raise ValueError("base source window exceeds 64 KiB")
-            return {"operation":"get_base_source","provenance":{"engine":"pinned-git-blob","resolution":"textual"},
-                    "revision":base,"results":{"side":"base","path":values["path"],"start_line":start,"end_line":end,"text":text}}
+            return context.read_base_source(root, comparison, values, native_env, budget)
         return None
 
     def save_facts():
@@ -1093,6 +1125,25 @@ def run_locked(args):
     def reviewer(task, job):
         if job.state["status"] == "drafted":
             return job.state["draft"]
+        if source_prepared and task["kind"] == "native_bundle" and not task.get("second_pass") and not task.get("stage_context"):
+            prepared=read(source_prepared)
+            rows=prepared["assessments"]
+            if set(task["review_ids"]) <= set(rows):
+                draft={"results":[rows[rid] for rid in task["review_ids"]]}
+                validate_native_candidate(task,job,draft,args.timeout)
+                assignment_ids={aid for rid in task["review_ids"] for aid in prepared["question_assignments"].get(rid,[])}
+                source_plan=read(Path(source_prepared).parent/"plan.json")
+                material=[]
+                for assignment in source_plan["assignments"]:
+                    if assignment["id"] not in assignment_ids:continue
+                    result=next(r for r in prepared["results"] if r["assignment_id"]==assignment["id"])
+                    facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
+                        "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
+                        "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
+                    material.extend({**fact,"origin_package_id":prepared["plan_id"],"origin_review_id":None,
+                        "origin_kind":"source_assignment","source_assignment_id":assignment["id"]} for fact in facts)
+                job.save(results=material,source_assignment_ids=sorted(assignment_ids))
+                return job.complete(draft)
         if job.state.get("unknown_provider_calls"):
             raise ValueError("previous provider usage is unknown; reconcile before another call")
         if "candidate_draft" in job.state:
@@ -1783,21 +1834,7 @@ def run_locked(args):
         check_runtime()
         if second_mode != "off" and bound_runtime.get("orchestration"):
             raise ValueError("second-pass mode uses an ordinary single-profile plan; prepare it without tiered orchestration")
-        def validate_provider_command(argv, expected):
-            if expected is None:
-                return
-            expected_adapter = (skill_root / "scripts/codex_reviewer.py").resolve(strict=True)
-            if len(argv) != 4 or Path(argv[1]).resolve(strict=True) != expected_adapter or argv[2] != "--config":
-                raise ValueError("bound Codex provider requires the bundled BYOK adapter")
-            provider_config_path = outside(argv[3], root)
-            if provider_config_path.is_relative_to(artifact_root):
-                raise ValueError("provider configuration must stay outside exported artifacts")
-            config = read(provider_config_path)
-            actual_provider = {"schema_version": config["schema_version"], "provider": "codex-cli",
-                **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
-            if actual_provider != expected:
-                raise ValueError("actual provider configuration differs from the native work binding")
-        validate_provider_command(command, bound_runtime.get("provider"))
+        validate_provider_command(command, bound_runtime.get("provider"), skill_root, root, artifact_root)
         tiered_policy = bound_runtime.get("orchestration")
         if tiered_policy:
             if not getattr(args, "expert_command", None):
@@ -1811,7 +1848,7 @@ def run_locked(args):
             for value in expert_command:
                 if Path(value).is_file():
                     outside(value, root)
-            validate_provider_command(expert_command, tiered_policy["expert"])
+            validate_provider_command(expert_command, tiered_policy["expert"], skill_root, root, artifact_root)
         elif getattr(args, "expert_command", None) or getattr(args, "expert_review_ids", None) or collection_profile:
             raise ValueError("expert work requires a native orchestration contract")
         record["runtime"] = bound_runtime
@@ -2008,7 +2045,7 @@ def run_locked(args):
                     "options": {"--input": str(draft_path), "--expected-plan-id": payload["plan_id"],
                                 "--work-package": str(frozen_work)}}])
                 complete_change_writes(receipts)
-            if args.phase in ("all", "native") and requested:
+            if args.phase in ("all", "native") and (requested or source_prepared):
                 run_dir = outside(args.run, root)
                 manifest = read(run_dir / "manifest.json")
                 requests = []
@@ -2410,7 +2447,7 @@ def run_locked(args):
                                           "cases": [execution_cases[identity] for identity in requested]})
                 links = []
                 if args.supersede:
-                    for decision in report["decision_records"]:
+                    for decision in report.get("decision_records",[]):
                         parents = payload["expected_parents"][decision["response"]["review_id"]]
                         if parents and decision["decision_id"] not in parents:
                             links.append({"decision_id": decision["decision_id"], "parents": parents,
@@ -2429,7 +2466,7 @@ def run_locked(args):
                     record_options["--review-execution"] = str(execution_path)
                 entries = [{"operation": "record", "operation_key": "worker-record:" + attempt_key,
                             "options": record_options}]
-                for decision in report["decision_records"]:
+                for decision in report.get("decision_records",[]):
                     if decision["response"]["decision"] != "needs_review":
                         continue
                     trace = decision["response"].get("investigation") or {}
@@ -2461,19 +2498,28 @@ def run_locked(args):
         query_pool.shutdown(wait=True, cancel_futures=True)
         if shared_budget:
             shared_budget.close()
-    record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000)
+    if source_prepared:
+        source=read(source_prepared)
+        record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
+        if source["completed_assignments"] != source["assignments"]:
+            record["status"]="incomplete"
+            record["detail"]="Native results retained; some assigned source ranges were not reviewed."
+        record["source_review"]["calls"]=source["calls"]
+        record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"]!="complete"]
+        write(output/"source-review.json",record["source_review"])
+    record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000) + (source["elapsed_ms"] if source_prepared else 0)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
-    record["unknown_provider_calls"] = sum(job["unknown_provider_calls"] for job in checkpoints)
+    record["unknown_provider_calls"] = sum(job["unknown_provider_calls"] for job in checkpoints)+(source["unknown_provider_calls"] if source_prepared else 0)
     # Per-conversation append files have no concurrent writers. Consolidate
     # only after workers stop, retaining prior-attempt actual counters.
     try:
-        metrics = consolidate_metrics(output, recovery)
+        metrics = consolidate_metrics(output, recovery,Path(source_prepared).parent if source_prepared else None)
         record["provider_usage"] = provider_usage(metrics)
         record["cache_write_usage_complete"] = bool(metrics) and all(
             "cache_write_tokens" not in row["unknown_counters"] for row in record["provider_usage"])
         record["provider_retries"] = sum(job.get("provider_retries", 0) for job in checkpoints)
         record["usage_complete"] = (record["unknown_provider_calls"] == 0
-            and len(metrics) == sum(job["calls"] for job in checkpoints)
+            and len(metrics) == sum(job["calls"] for job in checkpoints)+(source["calls"] if source_prepared else 0)
             and all(not set(row["unknown_counters"]) & {"input_tokens", "cached_input_tokens", "output_tokens"}
                     for row in record["provider_usage"]))
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -2483,7 +2529,8 @@ def run_locked(args):
             second_pass.export(output, metrics if "metrics" in locals() else [], write,
                 read(rates_path) if rates_path else None,
                 read(output / "first-pass-metrics.json") if (output / "first-pass-metrics.json").exists() else [],
-                sum(read(p)["calls"] for p in (first_directory / "jobs").glob("*.json")) if first_directory else None)
+                (sum(read(p)["calls"] for p in (first_directory / "jobs").glob("*.json"))+
+                 (read(first_directory/"source-review.json").get("calls",0) if (first_directory/"source-review.json").is_file() else 0)) if first_directory else None)
         except (OSError, ValueError, KeyError, TypeError) as error:
             record["second_pass_export_error"] = type(error).__name__
             record["status"] = "incomplete"

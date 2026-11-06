@@ -111,6 +111,16 @@ pub(crate) fn scan_profiled(
     options: ScanOptions,
 ) -> Result<(ScanResult, ScanProfile), EngineError> {
     let total_started = Instant::now();
+    if options.razor.is_some()
+        && options
+            .impact_scope
+            .as_ref()
+            .is_some_and(|s| s.diff_mode != crate::ImpactDiffMode::Full)
+    {
+        return Err(EngineError(
+            "Razor SDK analysis requires full scan context; use --diff-mode full".into(),
+        ));
+    }
     let discovery_started = Instant::now();
     let discovery = discover_with_options(root, options.include_tests)?;
     let impact_plan =
@@ -294,6 +304,7 @@ pub(crate) fn scan_profiled(
         result
     };
     let mut prepared = Vec::new();
+    let mut razor_sources = BTreeMap::new();
     let mut specialized_files = 0usize;
     let single_file_scan = discovery.root.is_file();
     let explicitly_changed = options
@@ -502,6 +513,9 @@ pub(crate) fn scan_profiled(
             }
             FileClass::Razor => match read_secret_source(&file.absolute) {
                 Ok(source) => {
+                    if options.razor.is_some() {
+                        razor_sources.insert(file.relative.clone(), source.clone());
+                    }
                     let mut razor_evidence =
                         crate::code::razor::scan_escape_hatches(&file.relative, &source);
                     crate::code::csharp_sinks::annotate_decision_critical_origins(
@@ -891,6 +905,14 @@ pub(crate) fn scan_profiled(
         })
         .collect();
     let mut analysis_prepared = Vec::new();
+    if options.razor.is_some() && !razor_sources.is_empty() {
+        razor_sources.extend(
+            prepared
+                .iter()
+                .filter(|f| f.language == Language::Csharp)
+                .map(|f| (f.relative.clone(), f.source.clone())),
+        );
+    }
     for file in prepared {
         if impact_plan.includes(&file.relative) {
             analysis_prepared.push(file);
@@ -1009,6 +1031,120 @@ pub(crate) fn scan_profiled(
             }
         }
     }
+    if let Some(razor) = options.razor.as_ref().filter(|_| !razor_sources.is_empty()) {
+        match crate::razor_frontend::collect(
+            &discovery.root,
+            razor,
+            &razor_sources,
+            &dotnet_project_sources,
+        ) {
+            Ok(output) => {
+                for message in output.diagnostics {
+                    diagnostics.push(Diagnostic {
+                        level: DiagnosticLevel::Warning,
+                        message,
+                        path: None,
+                    });
+                }
+                let projected_files: Vec<_> = output
+                    .projections
+                    .iter()
+                    .map(|projection| PreparedFile {
+                        relative: projection.path.clone(),
+                        language: Language::Csharp,
+                        source: projection.code.clone(),
+                        rust_original: None,
+                        build_symbols: BTreeMap::new(),
+                        vue: None,
+                    })
+                    .collect();
+                let outcomes = analyze_prepared_files(
+                    &projected_files,
+                    &compiled,
+                    &project_symbols,
+                    &secret_allowlist,
+                    relations,
+                    &node_context,
+                    &object_input_context,
+                    &csharp_model_context,
+                    csharp_model_context.handoff_context(),
+                    &csharp_rpc_context,
+                    &java_project_context,
+                    &go_project_context,
+                    &drogon_project_context,
+                    &native_invalidation_context,
+                    &native_copy_context,
+                    &python_project_context,
+                    &rust_project_context,
+                    &php_project_context,
+                    &dotnet_project_context,
+                    false,
+                    resolve_worker_count(options.jobs, projected_files.len())?,
+                )?;
+                for (projection, outcome) in output.projections.into_iter().zip(outcomes) {
+                    evidence.retain(|e| {
+                        !e.provenance
+                            .engine
+                            .starts_with("mehscan razor-escape-hatch")
+                            || !projection.is_non_code(&e.location)
+                    });
+                    let (mut items, incomplete) = match outcome {
+                        ParseOutcome::Parsed {
+                            evidence, timing, ..
+                        } => {
+                            add_file_timing(&mut file_analysis, timing);
+                            (evidence, None)
+                        }
+                        ParseOutcome::Recovered {
+                            evidence,
+                            reason,
+                            timing,
+                            ..
+                        }
+                        | ParseOutcome::Failed {
+                            evidence,
+                            reason,
+                            timing,
+                            ..
+                        } => {
+                            add_file_timing(&mut file_analysis, timing);
+                            (evidence, Some(reason))
+                        }
+                    };
+                    let original = &razor_sources[&projection.path];
+                    items.retain_mut(|e| projection.restore(e, original));
+                    // Generated wiring is navigation, never a native source-to-sink proof.
+                    // Paths derived from the generated scaffold are intentionally not exported.
+                    evidence.extend(items);
+                    if let Some(coverage) = coverage
+                        .files
+                        .iter_mut()
+                        .find(|f| f.path == projection.path)
+                    {
+                        coverage.reason = Some("Opt-in SDK Razor C# analysis with original-source mappings; package binding, project imports and inherited execution context may be incomplete".into());
+                    }
+                    if let Some(reason) = incomplete {
+                        diagnostics.push(Diagnostic {
+                            level: DiagnosticLevel::Warning,
+                            message: format!("Razor generated C# analysis is partial: {reason}"),
+                            path: Some(projection.path),
+                        });
+                    }
+                }
+            }
+            Err(error) => {
+                diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, message: format!("Expanded Razor analysis unavailable; specialized markup-only coverage retained: {error}"), path: None });
+                for file in coverage.files.iter_mut().filter(|f| {
+                    razor_sources.contains_key(&f.path)
+                        && (f.path.ends_with(".razor") || f.path.ends_with(".cshtml"))
+                }) {
+                    file.reason = Some("Requested SDK Razor analysis unavailable; specialized markup-only coverage retained".into());
+                }
+            }
+        }
+    }
+    evidence.sort_by(|a, b| a.id.cmp(&b.id));
+    evidence.dedup_by(|a, b| a.id == b.id);
     file_analysis.total_microseconds = file_analysis_started.elapsed().as_micros();
     trace_scan_phase("file_analysis", file_analysis.total_microseconds);
 

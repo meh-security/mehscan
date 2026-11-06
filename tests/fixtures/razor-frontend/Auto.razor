@@ -1,0 +1,6 @@
+@rendermode InteractiveAuto
+<button @onclick="Run">Run</button>
+@code {
+    string script = "auto";
+    async System.Threading.Tasks.Task Run() => await CSharpScript.EvaluateAsync<object>(script);
+}

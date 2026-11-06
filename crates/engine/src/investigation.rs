@@ -49,6 +49,7 @@ mod node_constant_admission;
 mod practical_admission;
 mod resource_helpers;
 mod review_admission;
+pub mod source_review;
 
 use crate::repository::{
     Discovery, FileClass, discover, discover_selected, discover_text, is_sast_excluded_source,
@@ -424,6 +425,8 @@ pub struct ReviewInventory {
     pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typescript_inputs: Option<crate::typescript_semantic::InputBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_inputs: Option<source_review::Binding>,
 }
 
 impl ReviewInventory {
@@ -455,6 +458,7 @@ pub fn validate_review_inventory_for_collection(
     if let Some(scope) = &inventory.scan.impact_scope {
         crate::impact::validate_scope(root, scope)?;
     }
+    source_review::validate_binding(root, inventory)?;
     validate_inventory_source_binding(inventory, &RepositorySources::load_snapshot(root)?)
 }
 
@@ -517,6 +521,7 @@ fn validate_review_inventory_sources(
     if let Some(binding) = &inventory.typescript_inputs {
         binding.validate(root)?;
     }
+    source_review::validate_binding(root, inventory)?;
     validate_inventory_source_binding(inventory, sources)
 }
 
@@ -801,6 +806,7 @@ pub fn build_review_inventory_scoped_with_native_backends(
         scan,
         semantic_inputs,
         typescript_inputs,
+        source_inputs: None,
     })
 }
 
@@ -882,9 +888,6 @@ fn build_selected_review_jobs_internal(
     context_lines: Option<usize>,
     mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<PathReviewJob, EngineError> {
-    if review_ids.is_empty() && !inventory.entries.is_empty() {
-        return Err(EngineError("select at least one review ID".to_string()));
-    }
     let validation_started = std::time::Instant::now();
     let sources = RepositorySources::load(root)?;
     validate_review_inventory_sources(root, inventory, &sources)?;
@@ -1210,9 +1213,20 @@ pub fn get_source(
             "source range must use one-based lines with end >= start".to_string(),
         ));
     }
-    // An explicitly requested text file can be useful review evidence even
-    // when its suffix is not admitted to the scanner (for example, an Angular
-    // HTML template). Keep discovery's repository ignore and path rules.
+    let (display_root, file) = read_text_source_file(root, path)?;
+    let (slice, truncated) = source_slice(&file, start_line, end_line)?;
+    Ok(response(
+        &display_root,
+        "get_source",
+        textual_provenance("bounded-source-reader"),
+        truncated,
+        slice,
+    ))
+}
+
+// Raw review reads use repository/path/text checks, independently of scanner
+// classification. Both the read command and handoff validation use this boundary.
+fn read_text_source_file(root: &Path, path: &str) -> Result<(String, SourceFile), EngineError> {
     let discovery = discover_text(root, Some(path))?;
     let display_root = display_path(&discovery.root);
     let normalized = normalize_relative(path);
@@ -1246,19 +1260,17 @@ pub fn get_source(
             EngineError(format!("cannot read text file {normalized:?}: {error}"))
         })?,
     };
+    if source.contains('\0') {
+        return Err(EngineError(format!(
+            "cannot read text file {normalized:?}: binary content detected"
+        )));
+    }
     let file = SourceFile {
         path: normalized,
         language: None,
         source,
     };
-    let (slice, truncated) = source_slice(&file, start_line, end_line)?;
-    Ok(response(
-        &display_root,
-        "get_source",
-        textual_provenance("bounded-source-reader"),
-        truncated,
-        slice,
-    ))
+    Ok((display_root, file))
 }
 
 pub fn get_enclosing_symbol(
@@ -9376,7 +9388,12 @@ fn observation_review_basis(
             semantics.join("; ")
         ));
     }
-    if evidence
+    if source_review::question(evidence).is_some() {
+        deterministic_facts.push(
+            "Only the cited original-source locations and bytes were validated. The operation, applicability, flow and consequence are model-proposed questions, not native syntax or flow proof."
+                .to_string(),
+        );
+    } else if evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::SensitiveOperation)
     {
@@ -9430,7 +9447,9 @@ fn observation_review_basis(
             "bounded_non_path_observation"
         }
         .to_string(),
-        security_question: if let Some(contract) = marker_contract {
+        security_question: if let Some(question) = source_review::question(evidence) {
+            question
+        } else if let Some(contract) = marker_contract {
             contract.security_question.to_string()
         } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
@@ -21866,7 +21885,12 @@ pub fn find_text_references(
     }
     let limit = bounded_limit(limit.or(Some(20)))?;
     let sources = if let Some(path) = path {
-        RepositorySources::from_discovery(discover_text(root, Some(path))?, true, true)?
+        let (root, file) = read_text_source_file(root, path)?;
+        RepositorySources {
+            root,
+            files: BTreeMap::from([(file.path.clone(), file)]),
+            node_modules: Default::default(),
+        }
     } else if let Some(prefix) = path_prefix {
         RepositorySources::load_directory(root, prefix)?
     } else {
@@ -21937,18 +21961,6 @@ pub fn find_source_paths(
         .files
         .into_iter()
         .filter(|file| file.relative.to_lowercase().contains(&needle))
-        .filter(|file| match file.class {
-            FileClass::Supported(_) => fs::read_to_string(&file.absolute).is_ok(),
-            FileClass::SecretOnly
-            | FileClass::EmbeddedJavascriptTemplate
-            | FileClass::Vue
-            | FileClass::Razor
-            | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
-            FileClass::Ignored if is_investigation_template(&file.relative) => {
-                crate::code::read_secret_text(&file.absolute).is_ok()
-            }
-            FileClass::UnsupportedSource | FileClass::Ignored => false,
-        })
         .map(|file| file.relative)
         .collect::<Vec<_>>();
     matches.sort();
@@ -22388,13 +22400,13 @@ fn native_expression_context(
 
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?, false, true)
+        Self::from_discovery(discover(root)?, true, true)
     }
 
     // Freshness hashes the same discovered bytes, without preparing import lookup.
     // No persistent cache: every validation still discovers and reads the source.
     fn load_snapshot(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?, false, false)
+        Self::from_discovery(discover(root)?, true, false)
     }
 
     fn load_selected(root: &Path, path: &str) -> Result<Self, EngineError> {
@@ -22443,6 +22455,9 @@ impl RepositorySources {
                         // make binary or non-UTF-8 content reviewer-visible.
                         continue;
                     };
+                    if source.contains('\0') {
+                        continue;
+                    }
                     (Some(language), source)
                 }
                 FileClass::SecretOnly

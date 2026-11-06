@@ -1,5 +1,11 @@
 # Plan a repository review
 
+Repository AI review covers the requested original-source scope, including files
+without native candidates. Use [source review](source-review.md) for those
+assignments. Known native questions guide the investigation; they do not define
+all security relationships in a file. Reuse the current context to assess new
+source-backed questions, retaining separate verdicts and explicit coverage limits.
+
 For local changes, a PR or release delta, start with [Changed review](changed-review.md).
 Its scoped inventory replaces whole-repository preassessment; Value and
 Comprehensive still select review depth within that scope.

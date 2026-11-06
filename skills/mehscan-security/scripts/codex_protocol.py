@@ -141,6 +141,11 @@ def review_id_schema(ids, *, bound_handles=True):
 
 
 def build_schema(task, *, bound_handles=True):
+    if task["kind"] == "source_review":
+        import source_review_protocol
+        base_task={**task,"kind":"native_bundle"}
+        if not base_task.get("review_ids"):base_task["review_ids"]=["source-assignment-no-native-claims"]
+        return source_review_protocol.schema(task,build_schema(base_task,bound_handles=bound_handles),API,GUIDANCE,bound_handles)
     text = {"type":"string"}
     integer = {"type":"integer", "minimum":1}
     strings = {"type":"array","items":text}
@@ -304,6 +309,9 @@ Change-pass drafts cover every changed path. Reviewed has questions=[]; needs_re
 
 
 def build_prompt(task, packet, facts, state, *, source_presentation="raw"):
+    if task["kind"] == "source_review":
+        import source_review_protocol
+        return source_review_protocol.prompt(task,packet,facts,state,source_presentation=source_presentation)
     new_facts = [value for value in facts if value["result_id"] not in (state or {}).get("sent_facts", [])]
     new_guidance = [value["result"] for value in new_facts if value.get("result", {}).get("operation") == "review_guidance"]
     new_facts = [value for value in new_facts if value.get("result", {}).get("operation") != "review_guidance"]

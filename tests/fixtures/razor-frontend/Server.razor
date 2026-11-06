@@ -1,0 +1,13 @@
+@page "/server"
+@rendermode InteractiveServer
+<input @bind="script" />
+<button @onclick="Run">Run</button>
+<p>CSharpScript.EvaluateAsync&lt;object&gt;(documentationOnly)</p>
+@code {
+    string script = "界😀";
+    string Example = "CSharpScript.EvaluateAsync<object>(quotedOnly)";
+    string MarkupExample = "@Html.Raw(quotedOnly)";
+    async System.Threading.Tasks.Task Run() {
+        await CSharpScript.EvaluateAsync<object>(script);
+    }
+}

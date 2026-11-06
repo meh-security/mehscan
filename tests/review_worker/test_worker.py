@@ -118,6 +118,16 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_raw_text_missing_file_is_navigation_feedback_and_other_read_errors_remain_fatal(self):
+        query={"tool":"source","arguments":{"path":"module.policy"}}
+        message='error: text file "module.policy" was not found under the scan root'
+        result=worker.missing_source_result(query,worker.CommandFailure(2,message))
+        self.assertEqual(result["operation"],"source_lookup_error")
+        self.assertEqual(result["error"]["code"],"not_found")
+        for text in (message.replace('module.policy','other.policy'),message+'\npermission denied',
+                     'error: cannot read text file "module.policy": denied'):
+            self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,text)))
+
     def test_missing_symbol_prefix_is_navigation_feedback_not_absence_proof(self):
         for tool in ("symbol", "definition", "references"):
             query = {"tool":tool,"arguments":{"path_prefix":"src/missing"}}
@@ -390,6 +400,14 @@ class Worker(unittest.TestCase):
 from pathlib import Path
 task=json.load(sys.stdin)
 package=json.loads(Path(task["work_package"]).read_text())["payload"]
+if task["kind"]=="source_review":
+    packet=json.loads(Path(task["evidence_packet"]).read_text())
+    print(json.dumps({"draft":{"results":[{"review_id":i,"decision":"issue","confidence":"medium",
+        "summary":"Synthetic operation issue for controller acceptance.","reason":"The current code passes request.query.code into eval.",
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for i in task["review_ids"]],
+        "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},
+            "status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}}))
+    sys.exit()
 if task["kind"]=="change_pass":
     print(json.dumps({"change_pass":[{"path":"app.js","status":"reviewed","summary":"Inspected the changed operation and its previous source.",
         "questions":[],"native_review_ids":package["review_ids"],"evidence":[{"side":"base","path":"app.js","start_line":1,"end_line":1},
@@ -1694,6 +1712,7 @@ sys.exit(2)
             phase="all", supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
             research_rounds=None, research_queries=None, research_bytes=None, workers=2, query_workers=2,
             expert_command=None, expert_workers=1, expert_review_ids=None, resume_from=None)
+        # Test the Changed/native component used after source handoff.
         original, calls, crash = worker.execute, [], ["plan"]
         def interrupted(command, *rest, **kwargs):
             result = original(command, *rest, **kwargs)
@@ -1706,19 +1725,19 @@ sys.exit(2)
                 raise TimeoutError("lost native response after commit")
             return result
         with patch.object(worker, "execute", interrupted):
-            first = worker.run(args)
+            first = worker.run_locked(args)
         self.assertEqual(first["status"], "incomplete", first)
         self.assertEqual(calls, ["change_pass"])
         args.resume_from, args.output = args.output, str(self.base / "change-question-crash")
         crash[0] = "pending"
         with patch.object(worker, "execute", interrupted):
-            second = worker.run(args)
+            second = worker.run_locked(args)
         self.assertEqual(second["status"], "incomplete", second)
         self.assertEqual(calls, ["change_pass"])
         args.resume_from, args.output = args.output, str(self.base / "change-resumed")
         crash[0] = "never"
         with patch.object(worker, "execute", interrupted):
-            final = worker.run(args)
+            final = worker.run_locked(args)
         self.assertEqual(final["status"], "admitted", final)
         self.assertEqual(calls.count("change_pass"), 1)
         self.assertEqual(calls.count("native_bundle"), 1)
@@ -1886,7 +1905,7 @@ else:
     def test_model_directed_queries_are_source_bound_and_journaled_only_to_prompting_native_id(self):
         self.research_reviewer('[{"tool":"source", "review_id":task["review_ids"][0] if task["kind"] == "native_bundle" else None, '
                               '"arguments":{"path":"app.js","start_line":1,"end_line":1}}]')
-        result = self.invoke()
+        result = self.invoke(extra=["--phase", "native"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         directory = self.base / "worker"
         audit = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
@@ -2053,7 +2072,7 @@ else:
             'handle=next(iter(task["research"]["artifact_handles"]))\n'
             'print(json.dumps({"draft":draft,"working_chain":"Inspected supplied exact source.","progress":['
             '{"edge":"Exact source evidence","status":"inspected","cause":None,"artifacts":[handle]}]}))\n')
-        result = self.invoke()
+        result = self.invoke(extra=["--phase", "native"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for path in (self.base / "worker").glob("progress-*.json"):
             value = json.loads(path.read_text())
@@ -2342,7 +2361,7 @@ else:
             ' assert all(task["research"]["artifact_handles"][key] == value for key,value in initial.items())\n'
             ' assert "fact1" in task["research"]["artifact_handles"]\n'
             ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
-        result = self.invoke()
+        result = self.invoke(extra=["--phase", "native"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_progress_rejects_unknown_proof_and_open_final_local_edges(self):
@@ -2351,7 +2370,7 @@ else:
                 {"edge":"Named available consumer","status":"open","cause":None,"artifacts":[]})):
             self.reviewer.write_text('import json,sys\ntask=json.load(sys.stdin)\nprint(json.dumps({"draft":{"change_pass":[]},'
                 '"working_chain":"Incomplete", "progress":[' + repr(edge) + ']}))\n')
-            result = self.invoke("bad-progress-" + str(index))
+            result = self.invoke("bad-progress-" + str(index), extra=["--phase", "native"])
             self.assertNotEqual(result.returncode, 0)
             self.assert_no_decisions()
 
@@ -2364,7 +2383,7 @@ else:
             ' result=task["research"]["results"][0]["result"]\n'
             ' assert result["results"]["side"] == "base" and "harmless" in result["results"]["text"]\n'
             ' print("invalid final draft")\n')
-        result = self.invoke()
+        result = self.invoke(extra=["--phase", "change-pass"])
         self.assertNotEqual(result.returncode, 0)
         audit = json.loads((self.base / "worker/research.jsonl").read_text().splitlines()[0])
         self.assertEqual(audit["query"]["tool"], "base_source")
@@ -2411,7 +2430,7 @@ else:
             plan.write_text(json.dumps(draft))
             self.native("state", "plan", *self.common, "--input", str(plan), "--expected-plan-id", current["payload"]["plan_id"], "--operation-key", name + "-plan")
             self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
-            result = self.invoke(name)
+            result = self.invoke(name, extra=["--phase", "native"])
             self.assertNotEqual(result.returncode, 0)
             record = json.loads((self.base / name / "worker.json").read_text())
             self.assertEqual(record["status"], "incomplete")

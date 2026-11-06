@@ -19,8 +19,9 @@ internal static partial class Program
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static int Main()
+    public static int Main(string[] args)
     {
+        if (args is ["--razor"]) return RazorFrontend.Run();
         try
         {
             var timed = Environment.GetEnvironmentVariable("MEHSCAN_ROSLYN_TIMING") == "1";

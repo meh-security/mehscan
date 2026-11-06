@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -30,8 +30,179 @@ pub(crate) fn add_output_policy_observations<'tree>(
         return;
     }
     classify_non_browser_writes(root, evidence);
+    add_html_file_responses(path, root, comments, conditional, literals, evidence);
     add_header_observations(path, root, comments, conditional, literals, evidence);
     add_logging_observations(path, root, comments, conditional, literals, evidence);
+}
+
+fn add_html_file_responses<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let mut imported = BTreeSet::new();
+    let mut shadowed = BTreeSet::new();
+    for node in root.dfs() {
+        if node.kind().as_ref() == "using_directive" {
+            imported.insert(compact(&node.text()));
+        }
+        if matches!(
+            node.kind().as_ref(),
+            "class_declaration"
+                | "struct_declaration"
+                | "variable_declarator"
+                | "parameter"
+                | "using_directive"
+        ) && let Some(name) = node.field("name")
+        {
+            shadowed.insert(name.text().into_owned());
+        }
+    }
+    let imports = |namespace: &str| {
+        imported.contains(&format!("using{namespace};"))
+            || imported.contains(&format!("globalusing{namespace};"))
+    };
+    let shadows = |name: &str| shadowed.contains(name);
+    for call in invocations(root) {
+        let Some(function) = call.field("function") else {
+            continue;
+        };
+        let name = compact(&function.text());
+        let controller = if matches!(name.as_str(), "File" | "base.File" | "this.File") {
+            call.ancestors()
+                .find(|n| n.kind().as_ref() == "class_declaration")
+                .is_some_and(|owner| {
+                    let base_type = owner.children().find(|n| n.kind().as_ref() == "base_list");
+                    let framework_base = base_type.is_some_and(|n| {
+                        n.children().any(|base_type| {
+                            let ty = compact(&base_type.text());
+                            matches!(
+                                ty.as_str(),
+                                "Microsoft.AspNetCore.Mvc.Controller"
+                                    | "Microsoft.AspNetCore.Mvc.ControllerBase"
+                                    | "global::Microsoft.AspNetCore.Mvc.Controller"
+                                    | "global::Microsoft.AspNetCore.Mvc.ControllerBase"
+                            ) || matches!(ty.as_str(), "Controller" | "ControllerBase")
+                                && imports("Microsoft.AspNetCore.Mvc")
+                                && !shadows(&ty)
+                        })
+                    });
+                    framework_base
+                        && !owner
+                            .children()
+                            .filter(|n| n.kind().as_ref() == "declaration_list")
+                            .flat_map(|n| n.children().collect::<Vec<_>>())
+                            .any(|n| {
+                                n.kind().as_ref() == "method_declaration"
+                                    && n.field("name").is_some_and(|n| n.text() == "File")
+                            })
+                })
+        } else {
+            false
+        };
+        let minimal = ["Results", "TypedResults"].iter().any(|ty| {
+            name == format!("Microsoft.AspNetCore.Http.{ty}.File")
+                || name == format!("global::Microsoft.AspNetCore.Http.{ty}.File")
+                || name == format!("{ty}.File")
+                    && imports("Microsoft.AspNetCore.Http")
+                    && !shadows(ty)
+        });
+        if !controller && !minimal {
+            continue;
+        }
+        let args = arguments(&call);
+        let argument = |position: usize, names: &[&str]| {
+            args.iter()
+                .find(|arg| {
+                    arg.field("name")
+                        .is_some_and(|n| names.iter().any(|name| n.text() == *name))
+                        || arg.children().any(|n| {
+                            n.kind().as_ref() == "name_colon"
+                                && names
+                                    .iter()
+                                    .any(|name| compact(&n.text()) == format!("{name}:"))
+                        })
+                })
+                .or_else(|| {
+                    args.get(position).filter(|arg| {
+                        arg.field("name").is_none()
+                            && !arg.children().any(|n| n.kind().as_ref() == "name_colon")
+                    })
+                })
+                .and_then(|arg| {
+                    arg.children()
+                        .filter(|n| n.is_named() && n.kind().as_ref() != "name_colon")
+                        .last()
+                })
+        };
+        let (Some(payload), Some(mime)) = (
+            argument(0, &["fileContents", "fileStream", "virtualPath", "path"]),
+            argument(1, &["contentType"]),
+        ) else {
+            continue;
+        };
+        let Some(mime_value) = string_literal_value(mime.text().as_ref()) else {
+            continue;
+        };
+        if !mime_value
+            .split(';')
+            .next()
+            .is_some_and(|s| s.trim().eq_ignore_ascii_case("text/html"))
+        {
+            continue;
+        }
+        let download = argument(2, &["fileDownloadName"]);
+        // A nonempty literal filename requests an attachment. Unknown disposition
+        // remains reviewable; null/empty uses the normal inline response behavior.
+        if download
+            .as_ref()
+            .and_then(|n| string_literal_value(n.text().as_ref()))
+            .is_some_and(|s| !s.is_empty())
+        {
+            continue;
+        }
+        push(
+            path,
+            &payload,
+            &call,
+            EvidenceKind::Sink,
+            Capability::HtmlOutput,
+            "csharp-aspnet-html-file-response",
+            "content",
+            &["CWE-79"],
+            &[
+                "http",
+                "response",
+                "html",
+                "file-response",
+                "disposition-review",
+                "aspnet-core",
+            ],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+        if let Some(item) = evidence
+            .last_mut()
+            .filter(|e| e.rule_id == "csharp-aspnet-html-file-response")
+        {
+            for (role, node) in [("content_type", Some(mime)), ("download_name", download)] {
+                if let Some(node) = node {
+                    item.captures.insert(
+                        role.into(),
+                        Capture {
+                            text: node.text().into_owned(),
+                            location: location(path, &node),
+                        },
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn classify_non_browser_writes(root: &Node<'_, StrDoc<SupportLang>>, evidence: &mut [Evidence]) {

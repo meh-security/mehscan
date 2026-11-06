@@ -50,6 +50,17 @@ security fix could change the decision; otherwise do not require exact-version
 implementation proof for every standard call. A familiar helper name alone proves
 nothing. Keep a genuinely unknown deciding contract unresolved. An empty or
 truncated search is not absence of a control.
+
+Before ruling out a mechanism on platform defaults, deprecation, API removal or
+compile-time inaccessibility, check the effective implementation selected by
+declared packages, compatibility/replacement layers, wrappers and explicit
+opt-ins. A framework version or default alone does not refute an operation when
+the inspected project supplies a potentially different implementation. Resolve
+that specific binding using available manifests/source and established contract
+knowledge. If it remains uncertain, preserve the consequential question as
+needs_review rather than suppressing the lead or claiming the operation cannot
+execute. Do not require dependency source or runtime attestation for an ordinary
+documented contract with matching bindings.
 <!-- /runtime:api_semantics -->
 
 Reuse inspected source; shared facts need each caller's own applicability. Batch

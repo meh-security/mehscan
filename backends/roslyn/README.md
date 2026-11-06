@@ -27,7 +27,7 @@ runtime, then explicitly supply the backend executable and source context below.
 
 ## Developer build (optional)
 
-Build this helper with the .NET 10 SDK. The helper uses pinned Roslyn 5.0.0;
+Build this helper with the .NET 10 SDK. The helper uses pinned Roslyn 5.9.0;
 the scanned application's target framework is independent of the helper runtime.
 
 ```sh
@@ -37,6 +37,44 @@ dotnet build backends/roslyn/Mehscan.Roslyn.csproj
 The apphost is `backends/roslyn/bin/Debug/net10.0/Mehscan.Roslyn` (`.exe` on
 Windows). It needs the .NET 10 runtime. Neither scanning nor ordinary Mehscan
 investigation requires this backend.
+
+## Optional Razor and Blazor SDK backend
+
+Default native scans include specialized Razor HTML checks, and default AI review
+examines original `.razor` and `.cshtml` source without this backend.
+
+Additional generated C# analysis uses this helper and an explicitly
+selected, installed official .NET SDK. It feeds executable C# into the existing
+rules and reports evidence at original Razor source locations. It is disabled
+by default; ordinary scanning still checks specialized raw-HTML escape hatches.
+
+```sh
+mehscan scan ./app --razor-backend /path/to/Mehscan.Roslyn --razor-sdk /path/to/dotnet/sdk/10.0.402
+mehscan investigate review-inventory ./app --output ./inventory --razor-backend /path/to/Mehscan.Roslyn --razor-sdk /path/to/dotnet/sdk/10.0.402
+```
+
+On Windows, use the helper's `.exe` apphost. Both flags are required. Choose the
+SDK appropriate to the project, including its `global.json` requirements; this
+explicit SDK selection does not automatically install or resolve an SDK. The
+helper must host a Roslyn version compatible with that SDK's Razor generator.
+An unavailable or incompatible backend leaves markup-only coverage and a warning.
+The initial integration supports full scan context (`--diff-mode full`). Saved
+inventory continuation reuses its scan; omit these flags when continuing it.
+
+The frontend runs once per project within a scan. It loads only the selected
+SDK's official generator and installed framework reference packs. It does not
+restore packages, build the application, evaluate MSBuild targets, or load target
+analyzers or package generators. Supply a trusted SDK and helper executable.
+Project namespace/language settings and source imports are read directly;
+conditional/imported project settings, unavailable package components and custom
+item configurations can leave coverage incomplete. Warnings remain in the scan.
+
+Mapped evidence includes source navigation for directives and framework event
+wiring. Reviewers must establish the effective render mode (Server, WebAssembly,
+Auto or unknown), prerender versus callback execution, bound inputs, validation
+and state lifetime. A binding or callback reference alone is not attacker-flow
+proof. Generated rendering glue is not exported as a native security path, and
+generated or unmappable locations cannot become original-source evidence.
 
 ## Supply context
 
@@ -299,7 +337,7 @@ models are reused per file; collected errors are reused for
 local completeness checks. The backend does not resolve filesystem links,
 build caller trust models. Primitive normalization uses framework types rather
 than a global sink-independent sanitizer catalog.
-Razor, missing generated source/options and full DI/reflection resolution remain
+Missing generated source/options and full DI/reflection resolution remain
 outside the explicit context unless already supplied.
 
 For compiler-bound `DbCommand` receivers, the helper locates one initialized

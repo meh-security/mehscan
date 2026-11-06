@@ -88,6 +88,7 @@ fn parallel_file_analysis_matches_single_worker_output() {
             jobs: Some(1),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("single-worker scan should work");
@@ -98,6 +99,7 @@ fn parallel_file_analysis_matches_single_worker_output() {
             jobs: Some(4),
             scan_secrets: false,
             impact_scope: None,
+            razor: None,
         },
     )
     .expect("parallel scan should work");
