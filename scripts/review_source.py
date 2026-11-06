@@ -98,7 +98,7 @@ def run(args, legacy, worker):
     payload = package["payload"]
     runtime = payload.get("runtime")
     if not runtime or runtime["worker_protocol"] != 2:
-        raise ValueError("source review requires a native runtime contract")
+        raise ValueError("AI source review requires a native runtime-bound plan; use plan-template --skill-root")
     if (
         runtime["skill_bundle_id"] != context.skill_bundle_id(skill)
         or runtime["engine_sha256"] != scanner_sha

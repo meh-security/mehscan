@@ -1814,7 +1814,7 @@ for question in packet['native_questions']:
         'evidence':[{'path':'Actions.cs','start_line':line,'end_line':line}],'checks':[],'blockers':[]})
 print(json.dumps({'results':results}))
 ''')
-        result = self.invoke()
+        result = self.invoke(extra=["--phase", "native"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         record = json.loads((self.base / 'worker/worker.json').read_text())
         self.assertEqual(record['status'], 'admitted', record)
@@ -2089,14 +2089,18 @@ else:
             'else:\n'
             ' assert "not admitted" in task["research"]["feedback"]["instruction"]\n'
             ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
-        result = self.invoke()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        record = json.loads((self.base / "worker/worker.json").read_text())
-        self.assertEqual(record["protocol_corrections"], 2)  # One conditional repair per bound conversation.
-        feedback = [json.loads(line) for line in (self.base / "worker/review-feedback.jsonl").read_text().splitlines()]
-        self.assertEqual(len(feedback), 2)
-        self.assertTrue(all(item["round"] == 0 for item in feedback))
-        self.assertEqual(record["status"], "admitted")
+        for phase in ("change-pass", "native"):
+            self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+            name = "repair-" + phase
+            result = self.invoke(name, extra=["--phase", phase])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            record = json.loads((self.base / name / "worker.json").read_text())
+            self.assertEqual(record["protocol_corrections"], 1)
+            feedback = [json.loads(line) for line in
+                (self.base / name / "review-feedback.jsonl").read_text().splitlines()]
+            self.assertEqual(len(feedback), 1)
+            self.assertEqual(feedback[0]["round"], 0)
+            self.assertEqual(record["status"], "admitted")
 
     def test_invalid_source_window_gets_one_repair_and_never_executes_its_batch(self):
         normal = self.base / "normal.py"
