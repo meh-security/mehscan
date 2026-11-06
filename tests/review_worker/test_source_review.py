@@ -603,6 +603,14 @@ print(json.dumps({'draft':{'results':rows,
         self.assertEqual(summary["accounting"]["first_pass"]["calls"], 1)
         self.assertEqual(summary["accounting"]["second_pass"]["calls"], 1)
         self.assertEqual(summary["accounting"]["combined"]["calls"], 2)
+        turns = list((output / "training-turns").glob("*/*-input.json"))
+        self.assertEqual(len(turns), 2)
+        source_turn = next(p for p in turns if json.loads(p.read_text())["kind"] == "source_review")
+        captured = next((output / "source-review/jobs").glob("*/*-input.json"))
+        self.assertEqual(source_turn.read_bytes(), captured.read_bytes())
+        self.assertTrue(source_turn.with_name("0-facts.json").is_file())
+        self.assertTrue(source_turn.with_name("0-response.json").is_file())
+        self.assertTrue(source_turn.with_name("context.json").is_file())
 
 
 if __name__ == "__main__":

@@ -2526,6 +2526,9 @@ def run_locked(args):
         record.update(status="incomplete", usage_error=type(error).__name__)
     if second_mode != "off":
         try:
+            if source_prepared:
+                import review_source
+                review_source.retain_training_turns(source_prepared, output)
             second_pass.export(output, metrics if "metrics" in locals() else [], write,
                 read(rates_path) if rates_path else None,
                 read(output / "first-pass-metrics.json") if (output / "first-pass-metrics.json").exists() else [],

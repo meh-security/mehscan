@@ -3,9 +3,49 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
+import re
+import shutil
 import time
 
 import review_context as context
+
+
+def retain_training_turns(summary, output):
+    """Copy observed source turns without rewriting inputs or replaying models."""
+    stage = Path(summary).parent
+    for path in (stage / "jobs").glob("*/*-input.json"):
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError("source training inputs require regular files")
+        frame = json.loads(path.read_text(encoding="utf8"))
+        conversation = frame.get("conversation_id", "")
+        if frame.get("kind") != "source_review" or not re.fullmatch(
+            r"[0-9a-f]{64}", conversation
+        ):
+            raise ValueError("invalid source training conversation")
+        turn = path.name.removesuffix("-input.json")
+        if not turn.isdigit():
+            raise ValueError("invalid source training turn")
+        destination = Path(output) / "training-turns" / conversation
+        destination.mkdir(parents=True, exist_ok=True)
+        files = [
+            path,
+            path.with_name(turn + "-facts.json"),
+            path.with_name("context.json"),
+        ]
+        response = path.with_name(turn + "-response.json")
+        if response.exists():
+            files.append(response)
+        for source in files:
+            if source.is_symlink() or not source.is_file():
+                raise ValueError("source trajectory lacks captured reviewer inputs")
+            target = destination / source.name
+            if target.exists():
+                if target.is_symlink() or target.read_bytes() != source.read_bytes():
+                    raise ValueError(
+                        "recovered source trajectory differs from captured inputs"
+                    )
+            else:
+                shutil.copyfile(source, target)
 
 
 def run(args, legacy, worker):
@@ -82,7 +122,9 @@ def run(args, legacy, worker):
         if worker.digest_file(scanner) != scanner_sha:
             raise ValueError("trusted scanner changed during source review")
         try:
-            return worker.execute([str(scanner), *map(str, arguments)], stage, env, timeout)
+            return worker.execute(
+                [str(scanner), *map(str, arguments)], stage, env, timeout
+            )
         except worker.CommandFailure as error:
             error.step = "native/" + "/".join(map(str, arguments[:2]))
             raise
@@ -98,7 +140,9 @@ def run(args, legacy, worker):
     payload = package["payload"]
     runtime = payload.get("runtime")
     if not runtime or runtime["worker_protocol"] != 2:
-        raise ValueError("AI source review requires a native runtime-bound plan; use plan-template --skill-root")
+        raise ValueError(
+            "AI source review requires a native runtime-bound plan; use plan-template --skill-root"
+        )
     if (
         runtime["skill_bundle_id"] != context.skill_bundle_id(skill)
         or runtime["engine_sha256"] != scanner_sha
@@ -361,6 +405,7 @@ def run(args, legacy, worker):
                     },
                 }
                 worker.write(directory / (str(turn) + "-input.json"), frame)
+                worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 calls += 1
                 unknown_calls += 1
                 response = worker.execute(

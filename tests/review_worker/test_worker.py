@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("mehscan_review_worker", ROOT / "scripts/review_worker.py")
 worker = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = worker
 spec.loader.exec_module(worker)
 
 
@@ -437,6 +438,31 @@ else:
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
+    def follow_source_handoff(self, name="worker"):
+        """Use the controller's new generation; never weaken native owner checks."""
+        handoff = json.loads((self.base / name / "source-review/summary.json").read_text(encoding="utf8"))
+        effective = handoff["effective_args"]
+        previous = json.loads(self.claim.read_text(encoding="utf8"))["result"]
+        self.inventory, self.claim, self.package, self.run = [Path(effective[key]) for key in
+            ("inventory", "claim", "work_package", "run")]
+        claim = json.loads(self.claim.read_text(encoding="utf8"))["result"]
+        self.assertGreater(claim["generation"], previous["generation"])
+        self.owner = claim["owner"]
+        self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--generation", str(claim["generation"]), "--owner", self.owner]
+
+    def invoke_native_component(self, name="worker"):
+        """Exercise Changed/native context sharing after the source-stage boundary."""
+        from argparse import Namespace
+        args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
+            output=str(self.base / name), provider_contract=None, artifact_root=None, phase="all",
+            supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
+            research_rounds=None, research_queries=None, research_bytes=None, workers=3, query_workers=2,
+            expert_command=None, expert_workers=1, expert_review_ids=None, resume_from=None)
+        return worker.run_locked(args)
+
     def second_pass_provider(self, fail=False, objection=True):
         original=self.base/"first-reviewer.py"
         shutil.copyfile(self.reviewer,original)
@@ -702,6 +728,7 @@ else:
         result=self.invoke()
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         saved=(self.base/"worker/findings.json").read_bytes()
+        self.follow_source_handoff()
         self.package.write_text(json.dumps(self.native("state","work",*self.common)))
         self.second_pass_provider()
         result=self.invoke(name="second",extra=["--phase","native","--first-pass",str(self.base/"worker"),"--second-pass","full","--supersede"])
@@ -1858,6 +1885,7 @@ print(json.dumps({'results':results}))
         record = json.loads((self.base / "worker/worker.json").read_text())
         self.assertEqual(record["completion"]["pending_review_ids"], self.ids)
         self.assertTrue(list((self.base / "worker").glob("pending-*.json")))
+        self.follow_source_handoff()
         current = self.native("state", "work", *self.common)
         self.assertEqual(len(current["payload"]["pending_questions"]), 2 * len(self.ids))
         self.assertEqual(current["payload"]["evidence_updates"], [])
@@ -1885,6 +1913,7 @@ print(json.dumps({'results':results}))
         record = json.loads((self.base / "worker/worker.json").read_text())
         self.assertEqual(record["completion"]["selected_review_count"], 0)
         self.assertEqual(len(record["completion"]["pending_changed_effects"]), 1)
+        self.follow_source_handoff()
         current = self.native("state", "work", *self.common)
         self.assertEqual(len(current["payload"]["pending_questions"]), 1)
 
@@ -1905,8 +1934,8 @@ else:
     def test_model_directed_queries_are_source_bound_and_journaled_only_to_prompting_native_id(self):
         self.research_reviewer('[{"tool":"source", "review_id":task["review_ids"][0] if task["kind"] == "native_bundle" else None, '
                               '"arguments":{"path":"app.js","start_line":1,"end_line":1}}]')
-        result = self.invoke(extra=["--phase", "native"])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.invoke_native_component()
+        self.assertEqual(record["status"], "admitted", record)
         directory = self.base / "worker"
         audit = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
         self.assertEqual([entry["kind"] for entry in audit], ["change_pass", "native_bundle"])
@@ -2365,8 +2394,8 @@ else:
             ' assert all(task["research"]["artifact_handles"][key] == value for key,value in initial.items())\n'
             ' assert "fact1" in task["research"]["artifact_handles"]\n'
             ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
-        result = self.invoke(extra=["--phase", "native"])
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.invoke_native_component()
+        self.assertEqual(record["status"], "admitted", record)
 
     def test_progress_rejects_unknown_proof_and_open_final_local_edges(self):
         for index, edge in enumerate((
@@ -2652,7 +2681,18 @@ else:
     prompt = sys.stdin.read()
     schema = json.loads(pathlib.Path(args[args.index("--output-schema")+1]).read_text())
     shape = schema["properties"]["draft"]["anyOf"][0]["properties"]
-    if "change_pass" in shape:
+    if "coverage" in shape:
+        packet = json.JSONDecoder().raw_decode(prompt.split("Requested source assignment and native questions:\n",1)[1])[0]
+        ids = [row["review_id"] for row in packet["native_questions"]]
+        draft = {"results":[{"review_id":i,"decision":"issue","confidence":"medium",
+            "summary":"Synthetic operation issue for BYOK integration acceptance.",
+            "reason":"The current code passes request.query.code into eval.",
+            "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
+            "diagnosis":None,"source_leads":[]} for i in ids],"proposals":[],"coverage":[{
+            **{key:window[key] for key in ("path","start_line","end_line")},
+            "status":"examined","summary":"Inspected the supplied original source."}
+            for window in packet["primary"]["windows"]]}
+    elif "change_pass" in shape:
         phase = json.loads(prompt.split("Current phase and available native coverage (inspect before claiming a source-only gap):\n")[1].split("\n")[0])
         ids = [q["review_id"] for q in phase["available_native_questions"]]
         draft = {"change_pass":[{"path":"app.js","status":"reviewed","summary":"Inspected changed operation.",
@@ -2665,10 +2705,12 @@ else:
             "summary":"Synthetic operation issue for BYOK integration acceptance.",
             "reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],"diagnosis":None,"source_leads":[]} for i in ids]}
-    pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps({"action":"final","research":[],
-        "draft":draft,"working_chain":"Inspected supplied source.","progress":[],"routing":[]}))
+    response = {"action":"final","research":[],"draft":draft,"working_chain":"Inspected supplied source."}
+    if "coverage" not in shape:
+        response.update(progress=[],routing=[])
+    pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps(response))
     print(json.dumps({"type":"thread.started","thread_id":"12345678-1234-1234-1234-123456789abc"}))
-    print(json.dumps({"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}))
+    print(json.dumps({"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20}}))
 ''')
         executable.chmod(0o700)
         auth = self.base / "provider-auth.json"
