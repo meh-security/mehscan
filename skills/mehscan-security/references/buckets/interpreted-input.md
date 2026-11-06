@@ -125,10 +125,14 @@ alone does not establish what a browser will execute.
   Once the producer, anchored sink, and exact behavior test settle the same
   path, stop querying. Keep a distinct interpreter
   weakness as a separate lead.
-  For a file-backed template or script value, trace writers of the selected
-  file, including uploads and archive extraction, before treating the file as
-  repository-owned. Search a feature or challenge identifier for a behavior
-  test when the write path is not obvious.
+  For file-backed interpreter input, including serialized data, a known filename
+  or allowlisted key constrains selection, not contents. Establish the relevant
+  content-authority boundary; follow supplied upload/extraction leads and compare
+  their actual destination with this read before treating its bytes as trusted.
+  If that boundary decides the verdict and remains unknown, retain the question
+  instead of closing on filename selection alone. Use
+  [parser/resource guidance](../categories/parser-resource.md) when constructed
+  values, coercion or later resource effects decide the selected interpretation.
   A sanitizer or validator matters only when it constrains that same value
   before that parse.
 

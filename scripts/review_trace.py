@@ -125,6 +125,9 @@ def summarize(run, review_id=None):
             "calls":job.get("calls"), "query_units":job.get("queries"), "bytes":job.get("bytes"),
             "elapsed_seconds":job.get("elapsed_seconds"), "unknown_provider_calls":job.get("unknown_provider_calls",0),
             "latest_progress":progress, "working_chain":chain,
+            "fast_phase":job.get("fast_phase"),
+            "audit_objections":(job.get("fast_audit") or {}).get("checks"),
+            "recovery_ids":(job.get("fast_audit") or {}).get("review_ids"),
             "decisions":decisions, "attention_flags":flags, "events":own,
             "queries":[{k:r.get(k) for k in ("round","query","result_id","reused")} for r in lookups]})
     if review_id is not None and not jobs:

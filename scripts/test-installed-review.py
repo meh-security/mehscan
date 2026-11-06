@@ -110,6 +110,7 @@ else:
         "evidence":[{"path":"app.js", "start_line":1, "end_line":1}],
         "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[]} for value in task["review_ids"]]}
     if task.get("review_role") == "second_pass_fast":
+        assert task["fast_phase"] == "audit"
         assert task["research"]["queries_remaining"] == 0
         result = {"draft":result, "working_chain":"", "progress":[], "review_checks":[{
             "review_id":value, "action":"keep", "claim":"", "proof_status":"supported",

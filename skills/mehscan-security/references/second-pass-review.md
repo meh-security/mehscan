@@ -19,6 +19,13 @@ Use the current source/runtime/provider binding and a new output directory.
 Select scope with the normal work package/bundles, including clean and pending
 claims. A partial second pass never becomes complete coverage.
 
+Fast records an audit checkpoint against the first result and its actual evidence,
+then resolves concrete objections in the same conversation when necessary.
+It uses the normal bounded research allowance and can finish immediately when
+the evidence already settles the question. Full additionally performs a blind
+independent investigation and a separate comparison; use it for deeper audits,
+evaluation and training-data review. Neither mode approves training labels.
+
 Read `second-pass.md` and `second-pass.json`: first/final decisions, confirmed,
 corrected, reopened, unresolved and not-checked outcomes, objections and receipts.
 `findings.json` is the native final report. First responses remain in `first-pass/`;
@@ -34,29 +41,77 @@ corrected first-pass history using evidence retrieved in the second pass.
 
 <!-- runtime:second_pass_fast -->
 Audit stage_context.baseline against supplied actual source and the compact
-lookup_trace. Check whether decisive questions were answered by the returned
-evidence, whether the relied-on guard was read, and whether the claimed caller,
-platform, condition and effect actually match. A loaded guide, complete range,
-successful lookup or valid citation does not establish a correct proof.
-This is one final-only assessment. Do not request new research. For each assigned
-ID return the baseline decision or a needs_review draft with decisive source.
-You cannot promote, dismiss or close a pending claim. Do not repair prose into a
-new accepted conclusion: the controller retains the baseline or reopens it.
-Return review_checks covering every ID exactly once. action=keep means the
-original material claims are supported, including justified uncertainty; use
-proof_status=supported and no error_codes. action=repair or reopen needs a
-specific contradicted claim or missing decisive relationship in claim. An
-unread necessary implementation is missing_available_evidence; a genuine
-unavailable contract is external_blocker. Do not invent caller searches for
-locally complete SQL grammar or numeric-count checks. action=insufficient with
-proof_status=undetermined means this audit packet cannot check the conclusion;
-it does not refute the first result. Missing trace history alone need not block
-a source-backed assessment. Give only source-supported error_codes.
-For each proposed bypass, follow a concrete input through the actual transforms
-and API semantics; a prefix alone does not prove base replacement. For helper
-findings check earlier successful application constraints. Preserve relevant
-read/write ordering and conditional prerequisites. Adjacent concerns belong in
-separate source leads, not a substituted verdict for this property.
+lookup_trace. Treat its verdict and rationale as hypotheses. Before keeping a
+result, identify the invariant that decides this exact question and challenge
+its weakest material premise against the actual source. Agreement with the
+baseline, repeated citations or a complete lookup is not a counter-check.
+
+The controller supplies fast_phase. In audit, return a provisional draft and
+review_checks for all selected IDs using supplied evidence, without new research.
+Name the exact failing premise or deciding missing fact. Proposed corrections
+are hypotheses at this checkpoint. Use missing_available_evidence for a decisive
+unread implementation and external_blocker only for a genuinely unavailable fact.
+Keep supported local closures and justified external uncertainty. The controller
+finishes those cases or opens recovery for actionable objections; a full draft
+at the audit checkpoint does not mean that the investigation is complete.
+
+In recovery, research only the recorded actionable objections and test their
+applicability. The audit may be wrong: reject an inapplicable objection rather
+than promote it. Keep settled sibling IDs stable, return every final review_check,
+and assess actions against the original baseline. In repair_check, challenge the
+proposed replacement proof before admitting a closed correction. All phases use
+one bounded conversation allowance, separate from the first investigation.
+
+For authority or persisted-state claims, separate a correct local predicate from
+the integrity of the value it trusts. Reading a session, cached subject, tenant
+key or workflow flag does not prove who can change it. A legitimate issuer is
+one producer, not coverage of alternate writers. Use supplied registrations or
+returned references to inspect a relevant write/acceptance path when it could
+change the selected effect; do not enumerate every caller. An earlier request
+or lifecycle transition that changes the same relied-on state belongs to this
+claim even when its weakness has another category. Check persistence and actual
+read/write order; an independently captured value need not change with the state.
+Keep unrelated effects as separate source leads.
+
+For a locally complete grammar, transformation or numeric control, test the
+actual operands and API sequence. Do not invent an identity or caller audit that
+cannot change that property. If the evidence settles the counter-check, finish
+immediately. Otherwise name the deciding fact, retrieve it through the offered
+API and follow the result to a supported correction or precise remaining gap.
+Keep settled IDs stable; reuse facts and do not repeat the entire investigation.
+Do not stop merely because you found a repairable gap.
+Before installing a closed repair the controller may request a counter-check in
+this same conversation. Test the replacement proof against active code, earlier
+guards and contrary evidence; comments or disabled alternatives do not establish
+the invoked behavior. Confirm, amend or reopen the proposal using the remaining
+allowance. A new unproved premise is a question, not a replacement finding.
+
+Refuting one proposed source of a trusted value does not refute alternate
+producers already supported by the supplied source. Match a negative's scope to
+the property actually established. Helper names, sample/repository labels and
+configuration intent cannot replace a deciding implementation or contents check.
+Reuse relevant source facts from sibling reviews without adopting their verdicts
+or transferring their caller conditions. Local closure still needs no caller hunt.
+
+The recovery budget reserves an existing call for repair validation. When no
+research rounds remain, finish from inspected evidence or name the actual gap;
+do not spend the validation slot on another lookup. If a closed repair is deferred,
+distinguish its pending validation from source questions the recovery answered.
+
+During research return review_checks=[]; on the final draft cover every ID once.
+action=keep retains the original material proof, including justified uncertainty,
+with proof_status=supported and no error_codes. action=repair with
+proof_status=supported can correct a verdict, proof, conditions or severity,
+including closing pending. Name the old claim that fails and the evidence that
+settles it. Confidence alone cannot support an opposite verdict.
+If the deciding fact remains unavailable or the actual allowance is exhausted,
+return needs_review with that question; action=reopen preserves uncertainty.
+An unread necessary implementation is missing_available_evidence; an unavailable
+contract is external_blocker. action=insufficient with proof_status=undetermined
+means the check did not complete, not that the first result was refuted. Use
+targeted lookups first when they can recover an available fact. Missing trace
+history alone need not block a source-backed assessment. Preserve actual caller,
+platform, activation and effect conditions and give source-supported error_codes.
 <!-- /runtime:second_pass_fast -->
 
 <!-- runtime:second_pass_compare -->

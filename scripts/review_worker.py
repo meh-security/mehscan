@@ -960,6 +960,12 @@ def run_locked(args):
             execution_trace.emit("native_completed", operation=operation, **trace_subject)
         except Exception as error:
             execution_trace.emit("native_failed", operation=operation, error=type(error).__name__, **trace_subject)
+            if isinstance(error, CommandFailure):
+                # Native diagnostics explain a rejected source/report binding;
+                # provider stderr follows a separate path and is not exported here.
+                with shared_lock:
+                    record.setdefault("native_failures", []).append({"operation":operation,
+                        "returncode":error.returncode, "stderr":error.stderr[-4096:]})
             raise
         finally:
             with shared_lock:
@@ -1098,7 +1104,7 @@ def run_locked(args):
                     validate_native_candidate(task, job, draft, max(0, args.timeout - job.prior_elapsed))
             except CommandFailure as error:
                 message = finalization_feedback(error, task.get("review_ids", []))
-                if (message is None or task.get("review_role") in second_pass.ROLES or job.state.get("citation_feedback") or job.state.get("unknown_provider_calls")
+                if (message is None or task.get("review_role") in second_pass.FINAL_ONLY_ROLES or job.state.get("citation_feedback") or job.state.get("unknown_provider_calls")
                         or job.state["calls"] >= args.research_rounds + 1):
                     raise
                 job.state.pop("candidate_draft")
@@ -1106,6 +1112,8 @@ def run_locked(args):
                 # Legacy checkpoint key also covers narrowly allowlisted CWE syntax.
                 job.save(citation_feedback=finalization_correction(message, draft))
             else:
+                if task.get("review_role") == "second_pass_fast":
+                    job.save(fast_phase="complete")
                 return job.complete(draft)
         deadline = job.deadline
         results = list(job.state["results"])
@@ -1147,6 +1155,8 @@ def run_locked(args):
             packet["assessment_cycle"] = task["assessment_cycle"]
         if task.get("stage_context") is not None:
             packet["stage_context"] = task["stage_context"]
+        if role == "second_pass_fast" and job.state.get("fast_audit"):
+            packet["fast_audit"] = job.state["fast_audit"]
         if task.get("second_pass"):
             packet["second_pass"] = task["second_pass"]
         if task.get("source_handoff") is not None:
@@ -1199,7 +1209,8 @@ def run_locked(args):
                                                               "contract_id": packet["contract"]["contract_id"]})
         facts_path = output / ("facts-" + conversation_id + ".json")
         working_chain, progress = job.state.get("working_chain", ""), job.state.get("progress", [])
-        feedback, corrections = job.state.get("research_budget_feedback"), 0
+        feedback, corrections = (job.state.get("repair_countercheck") or job.state.get("research_budget_feedback")
+            or (job.state.get("fast_audit") or {}).get("feedback")), 0
         lookup_api = context.research_api(skill_root)
 
         def artifact_handles():
@@ -1259,7 +1270,7 @@ def run_locked(args):
 
         calls_left = args.research_rounds + 1 - job.state["calls"]
         calls_left = remaining_count("model_calls", calls_left)
-        if role in second_pass.ROLES:
+        if role in second_pass.FINAL_ONLY_ROLES:
             calls_left = min(calls_left, max(0, 1 - job.state["calls"]))
         if task.get("assessment_cycle") == "revalidation":
             calls_left = min(calls_left, 1)  # Assess already recovered source, no new research loop.
@@ -1323,8 +1334,19 @@ def run_locked(args):
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
-            if role in second_pass.ROLES:
+            if role in second_pass.FINAL_ONLY_ROLES:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
+            if role == "second_pass_fast":
+                frame["fast_phase"] = job.state.get("fast_phase", "audit")
+                frame["research"]["rounds_remaining"] = second_pass.fast_research_rounds(
+                    frame["fast_phase"], frame["research"]["rounds_remaining"], bool(job.state.get("repair_countercheck")))
+                frame["research"]["repair_check_reserved"] = (frame["fast_phase"] == "recovery"
+                    and not job.state.get("repair_countercheck") and round_index < calls_left - 1)
+                if frame["research"]["rounds_remaining"] == 0:
+                    frame["research"]["queries_remaining"] = 0
+                if frame["fast_phase"] == "audit":
+                    # Audit first; these are phase limits, not spent query units.
+                    frame["research"].update(rounds_remaining=0, queries_remaining=0)
             if second_mode != "off":
                 turn_directory = output / "training-turns" / conversation_id
                 turn_directory.mkdir(parents=True, exist_ok=True)
@@ -1450,12 +1472,43 @@ def run_locked(args):
                                 task["stage_context"]["baseline"], set(task["stage_context"].get("assigned_ids", ids)))
                             job.save(qa_actions=value["qa_actions"])
                         if role in second_pass.ROLES:
-                            second_pass.checks(value.get("review_checks"), ids)
+                            normalized_checks = second_pass.checks(value.get("review_checks"), ids)
                             if role == "second_pass_fast":
-                                before = {r["review_id"]:r["decision"] for r in task["stage_context"]["baseline"]["results"]}
-                                if any(r["decision"] not in (before.get(r["review_id"]), "needs_review") for r in value["draft"].get("results", [])):
-                                    raise ValueError("Fast second pass cannot install an opposing verdict")
-                            job.save(review_checks=value["review_checks"])
+                                checkpoint = job.state.get("fast_audit")
+                                if checkpoint is None:
+                                    checkpoint = second_pass.audit_checkpoint(value["draft"], list(normalized_checks.values()), ids)
+                                    job.save(fast_audit=checkpoint, fast_phase="recovery" if checkpoint["review_ids"] else "finalizing")
+                                    execution_trace.emit("fast_audit_completed", job_id=job.path.stem,
+                                        conversation_id=conversation_id, round=round_index,
+                                        recovery_ids=checkpoint["review_ids"])
+                                    if checkpoint["review_ids"]:
+                                        if round_index < calls_left - 1:
+                                            feedback = checkpoint["feedback"]
+                                            execution_trace.emit("fast_recovery_requested", job_id=job.path.stem,
+                                                conversation_id=conversation_id, review_ids=checkpoint["review_ids"])
+                                            continue
+                                        value["draft"], deferred = second_pass.defer_recovery(value["draft"],
+                                            list(normalized_checks.values()), ids, checkpoint["review_ids"],
+                                            "The audit identified an actionable objection but no recovery turn remains.")
+                                        normalized_checks = second_pass.checks(deferred, ids)
+                                else:
+                                    value["draft"], retained = second_pass.retain_settled_audit(value["draft"],
+                                        list(normalized_checks.values()), checkpoint, ids)
+                                    normalized_checks = second_pass.checks(retained, ids)
+                            if role == "second_pass_fast" and not job.state.get("repair_countercheck"):
+                                countercheck = second_pass.repair_countercheck(value["draft"], list(normalized_checks.values()), ids)
+                                if countercheck is not None:
+                                    if round_index < calls_left - 1:
+                                        feedback = countercheck
+                                        job.save(repair_countercheck=feedback, fast_phase="repair_check")
+                                        execution_trace.emit("repair_countercheck_requested", job_id=job.path.stem,
+                                            conversation_id=conversation_id, round=round_index,
+                                            review_ids=countercheck["review_ids"])
+                                        continue
+                                    value["draft"], normalized = second_pass.defer_unchecked_repairs(
+                                        value["draft"], list(normalized_checks.values()), ids)
+                                    normalized_checks = second_pass.checks(normalized, ids)
+                            job.save(review_checks=list(normalized_checks.values()))
                         elif value.get("review_checks"):
                             raise ValueError("review checks require a second-pass audit role")
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
@@ -1485,6 +1538,8 @@ def run_locked(args):
                                 feedback = finalization_correction(message, value["draft"])
                                 job.save(citation_feedback=feedback)
                                 continue
+                        if role == "second_pass_fast":
+                            job.save(fast_phase="complete")
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
@@ -1494,11 +1549,14 @@ def run_locked(args):
                         raise ValueError("research tasks return scoped knowledge, not verdicts")
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
                 queries = value["research"]
+                if role == "second_pass_fast" and frame["fast_phase"] == "audit":
+                    raise ValueError("Fast requires an annotated audit checkpoint before research")
                 if task.get("assessment_cycle") == "dependency_resume":
                     raise ValueError("dependency resumption cannot start another research loop")
                 if set(value) != {"research"} or not isinstance(queries, list) or not queries:
                     raise ValueError("research response must be a nonempty query batch only")
-                if round_index >= calls_left - 1 or job.state.get("citation_feedback"):
+                if (round_index >= calls_left - 1 or job.state.get("citation_feedback")
+                        or (role == "second_pass_fast" and frame["research"]["rounds_remaining"] == 0)):
                     raise ValueError("reviewer exhausted its research budget without a final draft")
                 # Validate the entire batch before running any lookup.
                 queries, commands, budget_feedback = research_batch_plan(queries, root,
@@ -2224,6 +2282,7 @@ def run_locked(args):
                         job = job_for(task)
                         stage = finalize_stage(task, job, execute_job(task, job), Path(task["bundle"]))
                         stage["checks"] = job.state.get("review_checks")
+                        stage["audit_checkpoint"] = job.state.get("fast_audit")
                         stage["receipt"]["trajectory_id"] = job.state.get("conversation_id")
                         return stage
                     summary = second_pass.run(mode=second_mode, requests=review_requests, baselines=review_baselines,
@@ -2447,7 +2506,7 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
-    parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional final evidence/trace audit or independent review")
+    parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
     parser.add_argument("--second-pass-scope", default="all", help="all or comma-separated issues,dismissals,pending from the first pass; filter before bundling")
     parser.add_argument("--first-pass", help="completed worker attempt to review instead of buying a new first pass")
     parser.add_argument("--second-pass-rates", help="optional JSON model token rates for first/second/combined price accounting")

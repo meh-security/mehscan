@@ -69,6 +69,18 @@ Conversely, retain a separate database password check, owner predicate, IP rule
 or other applicable rejection; weakening one verifier does not bypass all guards.
 An owner-scoped predicate can refute direct parameter substitution while leaving
 identity authenticity unresolved. State those two conclusions separately.
+Rejecting a suspected cache writer or token branch establishes only that path's
+behavior. Preserve a different evidenced issuer or writer of the same relied-on
+subject. A deny-all wrapper implemented through token verification needs the
+effective rejection contract where acceptance semantics decide the verdict;
+an unpredictable secret alone does not establish permitted algorithms or claims.
+For mutable sessions, check a concrete earlier writer of the consumed subject,
+including an evaluator or merge that can modify the same request/session object.
+Distinguish a value captured before mutation, a later read in the same request,
+and a later request requiring session persistence. Established middleware save
+semantics can settle the latter under its inspected configuration; an unused
+authorization helper is not an active effect. Do not demand a store internals
+audit when no relevant custom persistence behavior is shown.
 
 ## Preserve the selected question
 

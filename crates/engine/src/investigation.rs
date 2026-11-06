@@ -42,6 +42,7 @@ use mehscan_core::{
 mod angular;
 mod caller_examples;
 mod csharp_application_context;
+mod file_content;
 mod frontend;
 mod imported_members;
 mod node_constant_admission;
@@ -433,7 +434,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "30";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "31";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -2522,6 +2523,7 @@ fn build_path_review_jobs_internal(
         build_observation_reviews(
             selected_groups.into_iter(),
             &sources,
+            &scan.evidence,
             &languages,
             &csharp_neighborhoods,
             context_lines,
@@ -5540,6 +5542,7 @@ fn project_investigation_facts(
         )
     });
     let mut angular_bytes = 0usize;
+    let mut file_content_bytes = 0usize;
     // A short output helper often settles the selected property. Keep its
     // actual body and bounded policy/import context instead of forcing one
     // lookup per consumer. This is source context, never a safe-helper model.
@@ -5579,6 +5582,19 @@ fn project_investigation_facts(
     }
     for index in order {
         let fact = &mut facts[index];
+        if matches!(
+            fact.role.as_str(),
+            "file_content_read_context"
+                | "possible_file_content_writer_context"
+                | "possible_sensitive_content_copy_context"
+                | "possible_sensitive_content_definition_context"
+                | "file_content_search_limit_context"
+        ) && fact.excerpt.len() <= 2_048
+            && file_content_bytes + fact.excerpt.len() <= 3_072
+        {
+            file_content_bytes += fact.excerpt.len();
+            continue;
+        }
         // Prepared Rust relationships already bound the dependency closure.
         // Keep up to 8 KiB beside the small anchor card; a per-fact limit keeps
         // large implementations as explicit locators rather than app context.
@@ -6446,6 +6462,7 @@ fn observation_review_investigation(
         lookup_symbol.as_deref(),
     );
     route_caller_examples(&mut plan, facts);
+    file_content::route_lookups(&mut plan, facts);
     plan
 }
 
@@ -7424,7 +7441,7 @@ fn observation_decision_facts(
     if let Some(policy) = resource_policy.filter(|_| resource_policy_applies) {
         established.push(match policy.state {
             ResourcePolicyState::OwnerScoped => format!(
-                "The resource selector is owner-scoped by a verified authenticated identity relationship ({}).",
+                "The resource selector has a local owner/tenant identity binding ({}). This establishes selector structure, not the authenticity or integrity of the subject supplying it.",
                 policy.basis
             ),
             ResourcePolicyState::PublicCatalog => format!(
@@ -7496,7 +7513,7 @@ fn observation_decision_facts(
         && resource_policy.is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
     {
         vec![
-            "A verified authenticated owner constraint applies to this exact resource selector."
+            "The resource selector is constrained to its supplied subject. Credential acceptance, relevant state writers and check-to-effect ordering require separate review when material."
                 .to_string(),
         ]
     } else {
@@ -9670,6 +9687,7 @@ fn bounded_basis_text(name: &str, text: &str) -> String {
 fn build_observation_reviews(
     groups: impl IntoIterator<Item = ObservationGroup>,
     sources: &RepositorySources,
+    all_evidence: &[Evidence],
     languages: &BTreeMap<&str, Language>,
     csharp_neighborhoods: &[mehscan_core::ReviewNeighborhood],
     context_lines: usize,
@@ -9680,6 +9698,7 @@ fn build_observation_reviews(
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let index_started = std::time::Instant::now();
     let groups = groups.into_iter().collect::<Vec<_>>();
+    let file_content = file_content::Index::build(sources, all_evidence, &groups);
     let frontend_context = frontend::FrontendContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
     for fact in frontend_context.all_facts() {
@@ -9964,6 +9983,9 @@ fn build_observation_reviews(
         let post_origin_started = std::time::Instant::now();
         context_truncated |= origin_truncated;
         facts.append(&mut origin);
+        let (mut content_facts, content_truncated) = file_content.facts(sources, &group.evidence);
+        context_truncated |= content_truncated;
+        facts.append(&mut content_facts);
         if let Some(sink) = group
             .evidence
             .iter()
@@ -10290,6 +10312,9 @@ fn build_observation_reviews(
         let review_basis = observation_review_basis(basis_evidence, rules_by_id);
         let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        decision_facts
+            .unresolved
+            .extend(file_content::questions(&facts));
         if facts
             .iter()
             .any(|f| f.role == "frontend_imported_helper_context")

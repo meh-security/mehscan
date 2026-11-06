@@ -57,6 +57,17 @@ fn separates_deterministic_node_policy_paths_from_route_review_context() {
         })
         .collect::<Vec<_>>();
     assert_eq!(reviews.len(), 3, "{reviews:#?}");
+    let index = reviews
+        .iter()
+        .find(|e| e.tags.iter().any(|t| t == "directory-index"))
+        .unwrap();
+    assert_eq!(index.captures["directory_root"].text, "'downloads'");
+    let source = std::fs::read_to_string(fixture_root().join(&index.location.path)).unwrap();
+    let directory = &index.captures["directory_root"];
+    assert_eq!(
+        &source[directory.location.start.byte_offset..directory.location.end.byte_offset],
+        directory.text
+    );
     assert!(reviews.iter().all(|item| {
         item.location.path == "positive/routes.ts"
             && item.tags.iter().any(|tag| tag == "needs-verification")

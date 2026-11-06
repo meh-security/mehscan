@@ -134,6 +134,8 @@ def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="inv
         result.append(sections(skill_root / "references/second-pass-review.md", [role]))
     elif role not in ("investigator", "research", "collection"):
         raise ValueError("unknown reviewer role")
+    if role == "investigator":
+        result.append(sections(skill_root / "references/final-proof-check.md", ["final_proof"]))
     if any(entry.get("capability") == "html_output" for entry in entries) or any(
             Path(path).suffix.lower() in (".html", ".htm", ".vue", ".jsx", ".tsx") for path in paths):
         result.append(sections(skill_root / "references/html-output-review.md", ["chain", "frontend", "dom", "writers", "decisions"]))

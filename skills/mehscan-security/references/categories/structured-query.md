@@ -17,6 +17,10 @@ Object-shaped input is a lead, not a vulnerability by itself.
 - Examine ownership/tenant constraints and update options on the selected call.
   A permissive selector combined with a destructive multi-record update differs
   from a selector that still has a separately enforced owner condition.
+  A preliminary single-object lookup does not establish the cardinality of a
+  later write using that selector. Check the invoked wrapper's update options
+  and default when that distinction decides the effect; do not borrow another
+  driver's single/multiple-record behavior.
 
 Use a documented matching API contract or inspected local implementation/test
 when interpretation decides the claim. If only selector construction is known,

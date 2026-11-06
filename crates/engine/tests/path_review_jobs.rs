@@ -1616,6 +1616,54 @@ fn scopes_python_owner_control_to_resource_access_in_mixed_observations() {
 }
 
 #[test]
+fn owner_selector_control_does_not_certify_subject_integrity() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/v2-resource-access");
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
+        .expect("owner selector reviews should build");
+    let reviews = jobs
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.evidence.iter().any(|item| {
+                item.location.path.ends_with("token-derived-owner.ts")
+                    && item.context.resource_policy.as_ref().is_some_and(|policy| {
+                        policy.state == mehscan_core::ResourcePolicyState::OwnerScoped
+                    })
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !reviews.is_empty(),
+        "the local owner binding must remain reviewable"
+    );
+    for review in reviews {
+        assert!(
+            review
+                .decision_facts
+                .established
+                .iter()
+                .any(|fact| { fact.contains("not the authenticity or integrity of the subject") })
+        );
+        assert!(
+            review
+                .decision_facts
+                .effective_controls
+                .iter()
+                .any(|control| { control.contains("constrained to its supplied subject") })
+        );
+        assert!(
+            review
+                .decision_facts
+                .established
+                .iter()
+                .all(|fact| { !fact.contains("verified authenticated identity") })
+        );
+    }
+}
+
+#[test]
 fn observed_conditional_encoding_and_quoting_are_not_proven_controls() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

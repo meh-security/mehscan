@@ -9,6 +9,11 @@ recursion and ordinary data decoding. A safe-type schema can close executable
 deserialization while leaving a separately supported resource effect open.
 Likewise, a parser default may be safe unless the application enables a loader,
 filesystem provider, entity substitution or custom construction hook.
+For file-backed input, repository location alone does not establish trusted
+contents. Inspect a supplied or referenced upload/extraction writer when it can
+replace that file. Follow parsed values through the first consequential consumer:
+validation may recurse before rejecting, and coercion or an overridden method
+can execute hooks even when the parser call itself appears to return data.
 
 For expansion, inspect what materializes the result. Shared references may remain
 compact until a later stringify, traversal or render duplicates the data. Check

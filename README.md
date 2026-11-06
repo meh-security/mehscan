@@ -72,7 +72,7 @@ Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your cod
 
 **Value** is the default review mode. It prioritizes useful security leads and keeps deferred work visible. **Comprehensive** uses conservative eligibility and reviews every admitted item, including broader unresolved security questions. Findings include supporting evidence; unresolved items identify what still needs investigation. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the scope of each mode.
 
-An optional [second pass](docs/review-worker.md#optional-second-pass) can check all results or just findings, dismissals or unresolved items. **Fast** checks the evidence and investigation trace, keeping supported results or reopening a proof gap. **Full** makes an independent assessment and compares it with the first review. Second pass is off by default; neither mode certifies a result as correct.
+An optional [second pass](docs/review-worker.md#optional-second-pass) can check all results or just findings, dismissals or unresolved items. **Fast** checks the evidence and investigation trace, investigates specific gaps and corrects results where the evidence supports it. **Full** adds an independent assessment for deeper audits. Second pass is off by default; neither mode certifies a result as correct.
 
 For manual bundle review:
 

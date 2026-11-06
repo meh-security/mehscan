@@ -419,7 +419,7 @@ else:
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
-    def second_pass_provider(self, fail=False):
+    def second_pass_provider(self, fail=False, objection=True):
         original=self.base/"first-reviewer.py"
         shutil.copyfile(self.reviewer,original)
         self.reviewer.write_text('''import json,sys,subprocess
@@ -435,23 +435,112 @@ if role=="verification":
     assert not packet["work"]["pending_questions"]
     decision="issue"
 else:
-    assert task["research"]["queries_remaining"]==0
-    assert task["research"]["rounds_remaining"]==0
+    if role=="second_pass_compare":
+        assert task["research"]["queries_remaining"]==0
+        assert task["research"]["rounds_remaining"]==0
+    elif task["fast_phase"]=="audit":
+        assert task["research"]["queries_remaining"]==0
+        assert task["research"]["rounds_remaining"]==0
+    else:
+        assert task["research"]["queries_remaining"]>0
     assert packet["stage_context"]["lookup_trace"]["history"] in ("recorded","legacy_reconstruction")
     if FAIL:raise RuntimeError("Rejected audit fixture")
-    decision="needs_review" if role=="second_pass_fast" else "not_issue"
+    decision=("needs_review" if OBJECTION else "issue") if role=="second_pass_fast" else "not_issue"
 draft={"results":[{"review_id":rid,"decision":decision,"confidence":"medium",
     "summary":"Scoped source-backed second assessment.","reason":"The selected expression and caller binding are the disputed property.",
     "checks":["Inspect the applicable caller guard."] if decision=="needs_review" else [],"blockers":[],
     "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for rid in task["review_ids"]]}
 value={"draft":draft,"working_chain":"","progress":[]}
 if role!="verification":
-    value["review_checks"]=[{"review_id":rid,"action":"reopen" if role=="second_pass_fast" else "repair",
-        "claim":"The prior material claim needs correction.","proof_status":"unsupported" if role=="second_pass_fast" else "supported",
-        "investigation_status":"missing_available_evidence" if role=="second_pass_fast" else "sufficient","error_codes":[]}
+    value["review_checks"]=[{"review_id":rid,"action":("reopen" if OBJECTION else "keep") if role=="second_pass_fast" else "repair",
+        "claim":"The prior material claim needs correction.","proof_status":"unsupported" if role=="second_pass_fast" and OBJECTION else "supported",
+        "investigation_status":"missing_available_evidence" if role=="second_pass_fast" and OBJECTION else "sufficient","error_codes":[]}
         for rid in task["review_ids"]]
 print(json.dumps(value))
-'''.replace("ORIGINAL",repr(str(original))).replace("FAIL",repr(fail)),encoding="utf-8")
+'''.replace("ORIGINAL",repr(str(original))).replace("FAIL",repr(fail)).replace("OBJECTION",repr(objection)),encoding="utf-8")
+
+    def test_fast_supported_proof_finishes_in_one_audit_call_without_queries(self):
+        self.second_pass_provider(objection=False)
+        result=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["outcomes"]["confirmed"],len(self.ids))
+        jobs=[json.loads(p.read_text()) for p in (output/"jobs").glob("*.json")]
+        audits=[j for j in jobs if j["binding"]["role"]=="second_pass_fast"]
+        self.assertTrue(audits)
+        self.assertTrue(all(j["calls"]==1 and j["queries"]==0 and j["fast_phase"]=="complete" for j in audits))
+
+    def test_fast_audit_exhaustion_preserves_the_deciding_question(self):
+        plan=self.native("state","plan-template","--inventory",str(self.inventory),
+            "--source-root",str(self.root),"--skill-root",str(ROOT/"skills/mehscan-security"),
+            "--policy","comprehensive","--research-rounds","0")
+        plan_path=self.base/"audit-only-plan.json";plan_path.write_text(json.dumps(plan))
+        parent=json.loads(self.package.read_text())["payload"]["plan_id"]
+        self.native("state","plan",*self.common,"--input",str(plan_path),
+            "--expected-plan-id",parent,"--operation-key","audit-only-plan")
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        self.second_pass_provider()
+        result=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        report=json.loads((self.base/"worker/findings.json").read_text())
+        for row in report["decision_records"]:
+            response=row["response"]
+            self.assertEqual(response["decision"],"needs_review")
+            self.assertIn("Inspect the applicable caller guard.",response["checks"])
+        summary=json.loads((self.base/"worker/second-pass.json").read_text())
+        self.assertTrue(all(r["claim"]=="The prior material claim needs correction." for r in summary["results"]))
+
+    def test_fast_two_call_allowance_does_not_claim_a_nonexistent_validation_slot(self):
+        plan=self.native("state","plan-template","--inventory",str(self.inventory),
+            "--source-root",str(self.root),"--skill-root",str(ROOT/"skills/mehscan-security"),
+            "--policy","comprehensive","--research-rounds","1")
+        plan_path=self.base/"two-call-plan.json";plan_path.write_text(json.dumps(plan))
+        parent=json.loads(self.package.read_text())["payload"]["plan_id"]
+        self.native("state","plan",*self.common,"--input",str(plan_path),
+            "--expected-plan-id",parent,"--operation-key","two-call-plan")
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        self.second_pass_provider()
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        frames=[json.loads(f.read_text()) for f in (self.base/"worker/training-turns").glob("*/*-input.json")]
+        recovery=[f for f in frames if f.get("fast_phase")=="recovery"]
+        self.assertTrue(recovery)
+        self.assertTrue(all(not f["research"]["repair_check_reserved"] for f in recovery))
+        self.assertTrue(all(f["research"]["rounds_remaining"]==0 for f in recovery))
+        jobs=[json.loads(f.read_text()) for f in (self.base/"worker/jobs").glob("*.json")]
+        self.assertTrue(all(j["calls"]==2 for j in jobs if j['binding'].get('role')=='second_pass_fast'))
+
+    def test_fast_checkpoint_recovery_does_not_repeat_the_audit_or_reset_calls(self):
+        from argparse import Namespace
+        self.second_pass_provider()
+        args=Namespace(scanner=str(self.scanner),source_root=str(self.root),inventory=str(self.inventory),
+            store=str(self.store),stream="local-review",claim=str(self.claim),work_package=str(self.package),
+            reviewer_command=str(self.command),reviewer_label="deterministic/medium",run=str(self.run),
+            output=str(self.base/"audit-interrupted"),skill_root=str(ROOT/"skills/mehscan-security"),
+            provider_contract=None,source_profile=None,artifact_root=None,phase="native",supersede=False,
+            timeout=None,research_rounds=None,research_queries=None,research_bytes=None,
+            workers=1,query_workers=1,resume_from=None,second_pass="fast",second_pass_scope="all")
+        class Interrupted(BaseException):pass
+        emit=worker.ReviewTrace.emit
+        def interrupted(trace,event,**data):
+            emit(trace,event,**data)
+            if event=="fast_recovery_requested":raise Interrupted()
+        with patch.object(worker.ReviewTrace,"emit",interrupted),self.assertRaises(Interrupted):worker.run(args)
+        first=Path(args.output)
+        saved=[json.loads(f.read_text()) for f in (first/"jobs").glob("*.json")]
+        checkpoint=next(j for j in saved if j.get("fast_audit"))
+        self.assertEqual(checkpoint["calls"],1)
+        self.assertEqual(checkpoint["fast_phase"],"recovery")
+        args.resume_from=str(first);args.output=str(self.base/"audit-resumed")
+        recovered=worker.run(args)
+        self.assertEqual(recovered["status"],"admitted",recovered)
+        jobs=[json.loads(f.read_text()) for f in (Path(args.output)/"jobs").glob("*.json")]
+        resumed=next(j for j in jobs if j.get("fast_audit"))
+        self.assertEqual(resumed["calls"],2)
+        self.assertEqual(resumed["fast_audit"],checkpoint["fast_audit"])
+        frames=[json.loads(f.read_text()) for f in (Path(args.output)/"training-turns").glob("*/*-input.json")]
+        self.assertEqual(sum(f.get("fast_phase")=="audit" for f in frames),1)
 
     def test_second_pass_fast_reopens_with_native_report_and_training_provenance(self):
         self.second_pass_provider()
@@ -470,6 +559,88 @@ print(json.dumps(value))
         self.assertTrue(all(r["training_status"]=="excluded" for r in labels["labels"]))
         self.assertTrue(list((output/"training-turns").glob("*/*-response.json")))
 
+    def test_fast_research_repairs_a_dismissal_in_one_audit_conversation(self):
+        self.fast_research_repair()
+
+    def test_fast_finishes_recovery_before_its_reserved_validation_call(self):
+        self.fast_research_repair(exhaust_research=True)
+
+    def fast_research_repair(self, exhaust_research=False):
+        if exhaust_research:
+            # Bind the boundary case explicitly to the ordinary six-call allowance.
+            plan=self.native("state","plan-template","--inventory",str(self.inventory),
+                "--source-root",str(self.root),"--skill-root",str(ROOT/"skills/mehscan-security"),
+                "--policy","comprehensive","--research-rounds","5")
+            plan_path=self.base/"six-call-plan.json";plan_path.write_text(json.dumps(plan))
+            parent=json.loads(self.package.read_text())["payload"]["plan_id"]
+            self.native("state","plan",*self.common,"--input",str(plan_path),
+                "--expected-plan-id",parent,"--operation-key","six-call-plan")
+            self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        original=self.base/"original-reviewer.py"
+        original.write_text(self.reviewer.read_text().replace('"decision":"issue"','"decision":"not_issue"'))
+        self.reviewer.write_text('''import json,sys,subprocess
+from pathlib import Path
+task=json.load(sys.stdin)
+if task.get("review_role")!="second_pass_fast":
+    print(subprocess.check_output([sys.executable,ORIGINAL],input=json.dumps(task),text=True));sys.exit()
+assert task["second_pass"]=="fast"
+packet=json.loads(Path(task["evidence_packet"]).read_text())
+assert all(r["decision"]=="not_issue" for r in packet["stage_context"]["baseline"]["results"])
+if task["research"]["round"]==0:
+    assert task["fast_phase"]=="audit"
+    assert task["research"]["queries_remaining"]==0
+    draft={"results":[{"review_id":rid,"decision":"needs_review","confidence":"medium",
+        "summary":"The earlier dismissal leaves the evaluator operand unread.","reason":"Inspect the request operand.",
+        "checks":["Does request-controlled code reach the selected evaluator?"],"blockers":[],
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for rid in task["review_ids"]]}
+    print(json.dumps({"draft":draft,"working_chain":"Audit identified an unread deciding operand.","progress":[],
+        "review_checks":[{"review_id":rid,"action":"reopen","claim":"The old dismissal omits the evaluator operand.",
+            "proof_status":"undetermined","investigation_status":"missing_available_evidence","error_codes":[]}
+            for rid in task["review_ids"]]}))
+elif task["research"]["round"]==1 or (EXHAUST and task["fast_phase"]=="recovery" and task["research"]["rounds_remaining"]>0):
+    assert task["fast_phase"]=="recovery"
+    if task["research"]["round"]==1:
+        assert task["research"]["feedback"]["reason"]=="fast_audit_recovery"
+    print(json.dumps({"research":[{"tool":"source","review_id":task["review_ids"][0],
+        "purpose":"Does request-controlled code reach the selected evaluator?",
+        "arguments":{"path":"app.js","start_line":1,"end_line":1}}],
+        "working_chain":"The earlier dismissal omitted the selected code operand.",
+        "progress":[],"review_checks":[]}))
+else:
+    assert task["research"]["round"] in ((4,5) if EXHAUST else (2,3))
+    if EXHAUST and task["fast_phase"]=="recovery":
+        assert task["research"]["rounds_remaining"]==0
+        assert task["research"]["queries_remaining"]==0
+        assert task["research"]["repair_check_reserved"]
+    if task["fast_phase"]=="repair_check":
+        assert task["fast_phase"]=="repair_check"
+        assert task["research"]["feedback"]["reason"]=="fast_repair_countercheck"
+    assert task["research"]["results"]
+    draft={"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
+        "summary":"Request-selected code reaches the evaluator.","reason":"The returned handler passes request.query.code to eval.",
+        "checks":[],"blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}]}
+        for rid in task["review_ids"]]}
+    print(json.dumps({"draft":draft,"working_chain":"The returned source settles the operand relationship.","progress":[],
+        "review_checks":[{"review_id":rid,"action":"repair","claim":"The old dismissal overlooks the request-selected evaluator operand.",
+        "proof_status":"supported","investigation_status":"sufficient","error_codes":["wrong_property"]}
+        for rid in task["review_ids"]]}))
+'''.replace('ORIGINAL',repr(str(original))).replace('EXHAUST',repr(exhaust_research)),encoding="utf-8")
+        result=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        output=self.base/"worker";summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["checked"],len(self.ids),summary)
+        self.assertTrue(all(r["first_decision"]=="not_issue" and r["final_decision"]=="issue"
+                            and r["outcome"]=="corrected" for r in summary["results"]))
+        jobs=[json.loads(p.read_text()) for p in (output/"jobs").glob("*.json")]
+        audits=[j for j in jobs if j["binding"]["role"]=="second_pass_fast"]
+        self.assertTrue(audits)
+        expected_calls,expected_queries=(6,3) if exhaust_research else (4,1)
+        self.assertTrue(all(j["calls"]==expected_calls and j["queries"]==expected_queries
+                            and j.get("repair_countercheck") and j.get("fast_audit") for j in audits))
+        self.assertFalse(any(j["binding"]["role"] in ("verification","second_pass_compare") for j in jobs))
+        labels=json.loads((output/"training-labels.json").read_text())
+        self.assertFalse(labels["auto_approved"])
+
     def test_second_pass_full_blind_assessment_and_explicit_correction(self):
         self.second_pass_provider()
         result=self.invoke(extra=["--second-pass","full"])
@@ -487,6 +658,27 @@ print(json.dumps(value))
         self.assertEqual(summary["status"],"partial")
         self.assertEqual(summary["checked"],0)
         self.assertTrue(all(r["final_decision"]=="issue" for r in summary["results"]))
+
+    def test_report_rejection_retains_native_reason_and_completed_claims(self):
+        from argparse import Namespace
+        args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
+            output=str(self.base/"report-rejected"), skill_root=str(ROOT/"skills/mehscan-security"),
+            provider_contract=None, source_profile=None, artifact_root=None, phase="native", supersede=False,
+            timeout=None, research_rounds=None, research_queries=None, research_bytes=None,
+            workers=2, query_workers=2, resume_from=None, second_pass="off", second_pass_scope="all")
+        original=worker.execute
+        def execute(command,*rest,**kwargs):
+            if command[1:3]==["report","--run"]:
+                raise worker.CommandFailure(2,"conflicting classification or severity; reconcile the assessments")
+            return original(command,*rest,**kwargs)
+        with patch.object(worker,"execute",side_effect=execute):record=worker.run(args)
+        self.assertEqual(record["status"],"incomplete")
+        self.assertEqual(record["native_failures"][-1]["operation"],"report/--run")
+        self.assertIn("conflicting classification",record["native_failures"][-1]["stderr"])
+        self.assertEqual(record["partial_results"]["completed"],len(self.ids))
+        self.assertFalse(record["partial_results"]["native_admission"])
 
     def test_second_pass_completed_attempt_preserves_native_lineage(self):
         result=self.invoke()

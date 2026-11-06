@@ -40,14 +40,37 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
-| `fast` | One final-only call per bundle checks the first verdict, deciding source and compact lookup trace. No new research. | Keep the original result or reopen a concrete proof gap. It cannot promote, dismiss or close a pending claim. |
+| `fast` | Records a proof audit, then resolves actionable objections with targeted lookups in the same conversation. Supported results finish in one call. | Keep or correct the verdict and proof, including resolving pending claims. A deciding fact that remains unavailable or beyond the allowance stays pending. |
 | `full` | A fresh source-backed assessment without the original verdict, using the normal research allowance, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
+
+Fast first records an audit checkpoint using the first investigation's evidence
+and trace. Supported proofs can finish in that call. Concrete objections move
+to targeted recovery in the same conversation, where an incorrect objection can
+also be rejected. These phases share the normal Fast allowance, separately from
+the first investigation. A proposed closed repair receives a
+counter-check in the same conversation within its original allowance; a repair
+that cannot be checked before the allowance is exhausted stays pending. Unchanged
+results need no extra confirmation call. Full adds an independent investigation for
+deeper audits, evaluation and training-data review. Both preserve the first results
+and use source validation; neither establishes semantic ground truth.
+
+Fast reserves a call within its existing allowance to validate a proposed repair.
+If validation cannot finish, the report separates that deferred check from source
+questions already answered. Relevant source results from sibling investigations
+in the same first attempt may be reused with their original attribution; their
+verdicts and caller conditions are not shared as facts.
 
 Fast is useful for checking an existing proof. Full is useful when the selected
 claim needs another investigation. Both add model cost and can make mistakes;
 agreement and source-valid citations do not establish correctness. They use an
 ordinary single-profile plan and can use the same configured model for both
 passes. Experimental tiered/multi-model orchestration is separate.
+
+Fast records its original per-claim audit under `audit` in `second-pass.json`,
+including whether recovery was requested. These are model hypotheses, distinct
+from the final outcome. Checkpoints and execution traces retain the current phase,
+objections and remaining allowance for recovery after interruption. Budget-limited
+results keep the deciding question alongside the reason work stopped.
 
 ### Choose which results to check
 
@@ -204,6 +227,8 @@ Create a trusted JSON argv file outside ROOT, for example:
 
 The controller sends one JSON task on stdin and reads one JSON result on stdout.
 The adapter applies the [security skill](../skills/mehscan-security/SKILL.md).
+The ordinary investigation includes a concise final proof check using its current
+context and remaining allowance; it does not require an extra model call.
 The controller prepares a bound `evidence_packet` with a versioned runtime
 contract compiled from trusted skill references, the selected work and native
 questions. `--skill-root` defaults to the installed security skill and must stay

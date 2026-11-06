@@ -135,6 +135,12 @@ Otherwise trace who writes the exact rendered value. Inspect relevant normal
 and alternate writers, their actual callers/registration, and controls on those
 paths. A sanitizer setting on an editor does not protect a different direct
 writer. A shared field name or receiver spelling does not prove the same object.
+For server templates, resolve a shared layout/configuration producer once and
+reuse its inspected values for the bound render calls. Prioritize a value actually
+interpreted by the selected template; do not make unrelated locals a prerequisite
+for an otherwise settled operand. Error objects also have producers: a reachable
+throw or forwarded error can carry request-selected text into an error renderer.
+Bind the registration and effective error handler before claiming that delivery.
 For API-backed values, follow the service URL into local server routes and
 persistence setters/validators. Match alternate writers to the exact returned
 records: joins, filters, tenant keys and cache population can separate values

@@ -26,7 +26,7 @@ class AssignmentSchemas(unittest.TestCase):
         self.f.task.update(kind='native_bundle',review_ids=['one','two'])
 
     def test_native_roles_keep_one_wire_schema_for_different_assignments(self):
-        for role in ['investigator','verification','adjudication','final_qa']:
+        for role in ['investigator','verification','adjudication','final_qa','second_pass_fast','second_pass_compare']:
             before=copy.deepcopy(self.f.task)
             before.update(review_role=role,adjudicate_ids=['one'],routing_allowed=True)
             after=copy.deepcopy(before)
@@ -36,6 +36,20 @@ class AssignmentSchemas(unittest.TestCase):
                 self.assertEqual(fixtures.protocol.build_schema(before,bound_handles=False),
                                  fixtures.protocol.build_schema(after,bound_handles=False))
                 self.assertNotEqual(fixtures.protocol.build_schema(before),fixtures.protocol.build_schema(after))
+
+    def test_fast_phases_keep_the_wire_schema_but_audit_disallows_queries_locally(self):
+        audit=copy.deepcopy(self.f.task)
+        audit.update(review_role='second_pass_fast',fast_phase='audit')
+        audit['research'].update(rounds_remaining=0,queries_remaining=0)
+        recovery=copy.deepcopy(audit);recovery['fast_phase']='recovery'
+        recovery['research'].update(rounds_remaining=3,queries_remaining=24)
+        self.assertEqual(fixtures.protocol.build_schema(audit,bound_handles=False),
+                         fixtures.protocol.build_schema(recovery,bound_handles=False))
+        self.assertEqual(fixtures.protocol.build_schema(audit)['properties']['action']['enum'],['final'])
+        self.assertIn('research',fixtures.protocol.build_schema(recovery)['properties']['action']['enum'])
+        prompt=fixtures.protocol.build_prompt(audit,self.f.body,[],None)
+        self.assertIn('Fast audit checkpoint',prompt)
+        self.assertNotIn('Research is finished.',prompt)
 
     def test_local_native_rejects_foreign_verdict_after_recording_usage(self):
         f=self.f

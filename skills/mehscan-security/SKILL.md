@@ -64,6 +64,8 @@ Prioritize the fact that decides the selected claim. An inspected complete contr
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
 Stop once the selected relationship is settled or its decisive gap is explicit.
+Before finalizing, apply the concise [final proof check](references/final-proof-check.md)
+within the current investigation. Workers receive it in their compiled contract.
 With explicit `"boundary_checks": true` in trusted adapter configuration,
 authorization and token-generation worker tasks include
 [boundary checks](references/boundary-review.md): concrete prerequisite tests and
