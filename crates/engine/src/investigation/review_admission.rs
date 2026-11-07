@@ -15,6 +15,9 @@ mod rust_memory_boundaries;
 mod rust_module_bindings;
 mod rust_panic_cleanup;
 mod rust_panic_cleanup_helpers;
+mod rust_parser_callers;
+mod rust_parser_chains;
+mod rust_parser_provenance;
 mod rust_parser_resource;
 mod rust_protocol_credentials;
 mod rust_raw_memory;
@@ -701,6 +704,16 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             relationship: "bounded_rust_extent_arithmetic_review",
             title: "Review allocation extent arithmetic",
             security_question: "Can caller-influenced size arithmetic wrap, narrow or produce a mismatched extent before allocation? Inspect operand types, element counts versus bytes, arithmetic order, checked/saturating/wrapping behavior and guards before computation. Debug overflow panic and release wrapping differ; allocation failure or a later bounds check does not repair prior arithmetic. Checked arithmetic with a rejecting error path and valid small extents are controls. Establish consequential use and caller constraints before claiming memory corruption or denial of service.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.rule_id == rust_parser_chains::RULE)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_input_chain_growth_review",
+            title: "Review parser traversal and cumulative growth",
+            security_question: "Can input choose a repeated cursor while the loop keeps appending to the same buffer? Trace the decoded link, sentinel, rejecting bounds, visited state and iteration or cumulative output budget. A bound on each index does not establish progress. Check whether each step adds data, whether the limit is tied to actual input size and what a caller observes.",
         });
     }
     if evidence

@@ -203,7 +203,14 @@ impl<'a> Project<'a> {
                     path = literal;
                 } else if !matches!(
                     head,
-                    "cfg" | "doc" | "allow" | "deny" | "warn" | "forbid" | "deprecated"
+                    "cfg"
+                        | "doc"
+                        | "allow"
+                        | "deny"
+                        | "warn"
+                        | "forbid"
+                        | "deprecated"
+                        | "macro_use"
                 ) {
                     opaque = true;
                 }
