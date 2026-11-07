@@ -42,6 +42,21 @@ compressed-input cap does not bound decompressed output, recursion or CPU work.
 [calamine RUSTSEC-2026-0436](https://rustsec.org/advisories/RUSTSEC-2026-0436.html)
 includes a malformed chain that grows storage without a useful iteration bound.
 
+## Compressed request bodies
+
+Trace the enabled codec from content-encoding selection to the first output
+buffer and the consumer's limit. Identify which bytes each limit counts and
+where it rejects. A wire-size check, a decoded chunk-size bound, and a total
+decoded-byte budget cover different effects. For a writer-backed decoder, check
+the budget before each output append, across buffer drains and at stream finish.
+For a pull-based decoder, check the size of the output buffer passed to each read.
+[Actix Web extractor limits](https://rustsec.org/advisories/RUSTSEC-2026-0447.html)
+
+Check codec workspace separately. A limit on emitted bytes can leave an
+input-selected window or dictionary allocation inside the codec. Verify the
+actual decoder options and the supported codec branches before closing that
+question. [Actix HTTP Brotli workspace](https://rustsec.org/advisories/RUSTSEC-2026-0455.html)
+
 ## Parser panic and algorithmic amplification
 
 ```rust
