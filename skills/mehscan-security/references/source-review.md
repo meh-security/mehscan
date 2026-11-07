@@ -32,6 +32,13 @@ additional category guidance through the broker when relevant. Avoid exhaustive
 caller discovery or reconstructing a whole application to close an ordinary
 construction. Retain a concrete missing relationship when it remains unresolved.
 
+For Rust assignments, apply the supplied Rust router and use `rust-security`,
+`rust-memory` or `rust-boundaries` guidance when the actual relationship needs it.
+Use [Rust attack scenarios](rust-attack-surfaces.md) to select a source-backed
+scenario and verify it against existing candidate IDs or an anchored proposal.
+Safe-call soundness, input-driven availability and dependency metadata need their
+own evidence; a zero-candidate assignment can still contain these mechanisms.
+
 Proposals require an anchor in an assigned original source range, a precise
 question, mechanism, consequence, CWE/capability and inspected supporting source.
 Choose Value for shown mechanisms or promising consequential gaps; Comprehensive

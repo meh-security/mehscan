@@ -1,5 +1,46 @@
 # Resource boundary
 
+For HTTP framing reviews, connect the captured header reads to the actual raw
+bytes and both parser peers. Establish rejection before forwarding, duplicate
+header handling, connection reuse and canonical reserialization. Co-occurring
+Content-Length/Transfer-Encoding reads alone do not prove request smuggling.
+
+For Rust allocation extents, trace the selected capacity back through decoded
+lengths or caller parameters. Establish attacker influence and effective limits
+before allocation, including element size, casts and overflow. Preserve bounded
+callers and rejecting guards as controls. Separate capacity-overflow panic,
+allocation-error abort, memory actually touched and recoverable allocation
+failure; catch_unwind does not catch allocation-error abort. A fallible reserve
+does not itself impose a resource quota. A dynamic capacity is a review question,
+not proof of denial of service.
+
+Allocation receiver support preserves selected field declarations, type/import
+aliases and explicit free-helper returns. Across files, check the captured Cargo
+target, module declaration and reexport route for the actual receiver. A helper's
+declared return type does not establish its value semantics or the caller's
+resource budget. Ambiguous module ownership, unknown trait dispatch, generic
+substitution and custom dereferencing remain lookup targets.
+
+Input-backed byte indexing and get(...).unwrap questions concern parser panic,
+not Rust memory unsafety. Establish the input contract, endpoint arithmetic,
+prior rejection, panic configuration and embedding before claiming service
+denial. A short-input precondition or fallible parser can be a clean control.
+
+For typed Rust tar/zip operations, inspect the effective crate version and
+extraction options before alleging traversal. Entry-name provenance into a manual
+write preserves a separate containment question. Check guards on the actual
+destination before the write, including absolute paths, parent components,
+symlinks, overwrites and platform semantics. A lexical prefix or a later check
+does not establish containment. Do not equate a reviewed library extraction API
+with a hand-written unchecked join.
+
+For a tar loop, distinguish the entry's archive path from the destination passed
+to extraction. `Entry::unpack` takes an explicit output path; `unpack_in` takes
+a root and applies library handling to the archive path. Inspect the captured
+method and any pre-write component checks. Unknown iterator adapters, replaced
+entries or missing version-specific behavior remain questions, not borrowed
+containment guarantees.
+
 Keep the verdict on its selected operation. An unsafe archive extraction does
 not turn temporary-file cleanup into an unsafe deletion. Use the engine's
 extraction sink and destination for ZIP traversal; retain an uncovered adjacent

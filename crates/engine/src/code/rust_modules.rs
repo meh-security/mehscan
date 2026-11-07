@@ -355,48 +355,35 @@ impl RustModules {
         if sources.is_empty() {
             return Self::default();
         }
-        let mut builder = Builder::default();
-        builder.files = sources
-            .keys()
-            .map(|path| (path.clone(), File::default()))
-            .collect();
-        let manifests: Vec<_> = manifests
-            .iter()
-            .filter_map(|(path, source)| {
-                let doc = toml_edit::Document::parse(source.as_str()).ok()?;
-                doc.as_table().get("package")?.as_table()?;
-                Some((path.as_str(), source.as_str(), doc))
-            })
-            .collect();
-        builder.packages = manifests
-            .iter()
-            .map(|(path, _, _)| parent(path).to_string())
-            .collect();
-        let mut owned = BTreeMap::<String, Vec<String>>::new();
-        for path in sources.keys() {
-            if let Some(owner) = nearest_package(path, &builder.packages) {
-                builder.owners.insert(path.clone(), owner);
-            }
-        }
-        for (path, owner) in &builder.owners {
-            owned.entry(owner.clone()).or_default().push(path.clone());
-        }
-        for (path, source, doc) in &manifests {
-            builder.manifest(
-                path,
-                source,
-                doc,
-                owned
-                    .get(parent(path))
-                    .map(Vec::as_slice)
-                    .unwrap_or_default(),
-                include_tests,
-            );
-        }
+        let mut builder =
+            Builder::targets(sources.keys().cloned().collect(), manifests, include_tests);
         for (path, source) in &sources {
             builder.source(path, source, include_tests);
         }
         builder.finish()
+    }
+
+    /// The same source-owned target roots used by configuration analysis.
+    pub(crate) fn target_roots(
+        paths: BTreeSet<String>,
+        manifests: &[(String, String)],
+        include_tests: bool,
+    ) -> BTreeMap<String, Vec<mehscan_core::Capture>> {
+        let builder = Builder::targets(paths, manifests, include_tests);
+        builder
+            .roots
+            .iter()
+            .map(|(path, state)| {
+                (
+                    path.clone(),
+                    state
+                        .dependencies
+                        .iter()
+                        .map(|i| builder.dependencies[*i].declaration.clone())
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn excluded(&self, path: &str) -> bool {
@@ -419,6 +406,52 @@ impl RustModules {
 }
 
 impl Builder {
+    fn targets(
+        paths: BTreeSet<String>,
+        manifests: &[(String, String)],
+        include_tests: bool,
+    ) -> Self {
+        let mut builder = Self::default();
+        builder.files = paths
+            .iter()
+            .map(|path| (path.clone(), File::default()))
+            .collect();
+        let manifests: Vec<_> = manifests
+            .iter()
+            .filter_map(|(path, source)| {
+                let doc = toml_edit::Document::parse(source.as_str()).ok()?;
+                doc.as_table().get("package")?.as_table()?;
+                Some((path.as_str(), source.as_str(), doc))
+            })
+            .collect();
+        builder.packages = manifests
+            .iter()
+            .map(|(path, _, _)| parent(path).to_string())
+            .collect();
+        let mut owned = BTreeMap::<String, Vec<String>>::new();
+        for path in &paths {
+            if let Some(owner) = nearest_package(path, &builder.packages) {
+                builder.owners.insert(path.clone(), owner);
+            }
+        }
+        for (path, owner) in &builder.owners {
+            owned.entry(owner.clone()).or_default().push(path.clone());
+        }
+        for (path, source, doc) in &manifests {
+            builder.manifest(
+                path,
+                source,
+                doc,
+                owned
+                    .get(parent(path))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                include_tests,
+            );
+        }
+        builder
+    }
+
     fn dependency(&mut self, value: ConfigurationDependency) -> usize {
         let id = self.dependencies.len();
         self.dependencies.push(value);
@@ -1145,7 +1178,7 @@ fn join(base: &str, relative: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-fn literal(value: &str) -> Option<String> {
+pub(crate) fn literal(value: &str) -> Option<String> {
     if let Some(inner) = value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         return (!inner.contains('\\')).then(|| inner.into());
     }

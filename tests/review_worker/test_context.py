@@ -200,6 +200,49 @@ class Context(unittest.TestCase):
         self.assertIn("separate lead", direct["sources"][0]["text"])
         self.assertNotEqual(direct["contract_id"], tiered["contract_id"])
 
+    def test_rust_router_is_bound_once_for_native_or_changed_source(self):
+        skill = PRODUCT / "skills/mehscan-security"
+        path = skill / "references/rust-security.md"
+        expected = context.sections(path, ["routing"])
+        for entries, paths in (([{"path":"src/lib.rs"}], []),
+                               ([], ["src/lib.rs"]),
+                               ([], ["Cargo.toml"]),
+                               ([], ["workspace/Cargo.lock"]),
+                               ([{"path":"src/lib.rs"}], ["src/lib.rs", "src/other.RS"])):
+            with self.subTest(entries=entries, paths=paths):
+                contract = context.compile_contract(skill, "native_bundle", entries, paths)
+                routers = [s for s in contract["sources"] if s["path"] == str(path)]
+                self.assertEqual(routers, [expected])
+                self.assertEqual(routers[0]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+                # Full examples stay on demand, rather than filling every task.
+                self.assertNotIn("## Pattern index", routers[0]["text"])
+                self.assertIn("rust-attack-surfaces", routers[0]["text"])
+                self.assertNotIn("rust-attack-surfaces.md", [Path(s["path"]).name for s in contract["sources"]])
+        self.assertEqual(context.language_contracts(skill, ["lib.rs.txt", "lib.ts", "Cargo.toml.txt"]), [])
+
+    def test_native_memory_contracts_load_the_selected_language_playbook(self):
+        skill = PRODUCT / "skills/mehscan-security"
+        for path, bucket, expected, excluded in (
+            ("src/lib.rs", "rust_memory", "rust-memory.md", "native-memory.md"),
+            ("source.cpp", "native_memory", "native-memory.md", "rust-memory.md"),
+            ("source.c", "native_memory", "native-memory.md", "rust-memory.md"),
+        ):
+            with self.subTest(path=path):
+                contract = context.compile_contract(skill, "native_bundle", [{"path": path}], [], {"id": {"bucket": bucket}})
+                guides = {Path(source["path"]).name for source in contract["sources"]}
+                self.assertIn(expected, guides)
+                self.assertNotIn(excluded, guides)
+
+    def test_rust_references_are_allowlisted_hash_bound_guidance(self):
+        skill = PRODUCT / "skills/mehscan-security"
+        for name in ("rust-security", "rust-memory", "rust-boundaries", "rust-attack-surfaces"):
+            with self.subTest(name=name):
+                guide = context.load_guidance(skill, name)
+                raw = (skill / "references" / guide["path"]).read_bytes()
+                self.assertEqual(guide["text"], raw.decode("utf-8"))
+                self.assertEqual(guide["sha256"], hashlib.sha256(raw).hexdigest())
+                self.assertEqual(guide["authority"], "trusted_skill_guidance_not_application_evidence")
+
     def test_source_coordinates_preserve_lone_cr_and_non_newline_separators(self):
         self.assertEqual(context.source_lines("a\r\nb\rc\vlast\r"), ["a", "b\rc\vlast\r"])
         self.assertEqual(context.source_lines("a\n\n"), ["a", ""])

@@ -438,7 +438,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "31";
-const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v10";
+const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v20";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
@@ -5713,15 +5713,35 @@ fn review_playbook_bucket(
     language: Option<Language>,
     tags: impl IntoIterator<Item = String>,
 ) -> &'static str {
+    if matches!(
+        capability,
+        Capability::RustAllocationReview
+            | Capability::RustArchiveExtractionReview
+            | Capability::RustParserResourceReview
+    ) {
+        return "resource_boundary";
+    }
     let tags = tags.into_iter().collect::<BTreeSet<_>>();
     let has = |name: &str| tags.contains(name);
+    if has("rust-protocol-credential-obligation") {
+        return if capability == Capability::ResourceAccess {
+            "resource_boundary"
+        } else {
+            "credential_state"
+        };
+    }
+    if matches!(
+        capability,
+        Capability::RustRawSliceConstruction | Capability::RustRawMemoryReview
+    ) || (language == Some(Language::Rust) && capability == Capability::BufferLengthPublication)
+    {
+        return "rust_memory";
+    }
     if matches!(
         capability,
         Capability::BufferLengthPublication
-            | Capability::RustRawSliceConstruction
             | Capability::ContainerBorrowLifetime
             | Capability::ExceptionalOwnershipCleanup
-            | Capability::RustRawMemoryReview
     ) {
         return "native_memory";
     }
@@ -5751,7 +5771,6 @@ fn review_playbook_bucket(
         && matches!(
             capability,
             Capability::BufferWrite
-                | Capability::RustRawSliceConstruction
                 | Capability::SignedSizeMemoryOperation
                 | Capability::SubtractedMemoryExtent
                 | Capability::LocalHeapAllocation

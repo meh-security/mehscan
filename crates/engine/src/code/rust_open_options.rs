@@ -110,6 +110,17 @@ struct Names {
 }
 
 impl Names {
+    fn unix_mode_in_scope(&self, at: &RustNode<'_>) -> bool {
+        at.ancestors().filter(scope).any(|owner| {
+            let owner = scope_id(&owner);
+            self.names.iter().any(|((scope, name), value)| {
+                *scope == owner
+                    && value.as_deref() == Some("std::os::unix::fs::OpenOptionsExt")
+                    && self.canonical(at, name).as_deref() == value.as_deref()
+            })
+        })
+    }
+
     fn new(root: &RustNode<'_>) -> Self {
         let mut result = Self::default();
         let mut functions = BTreeMap::<_, Vec<_>>::new();
@@ -262,6 +273,7 @@ impl Names {
 #[derive(Clone)]
 struct Options {
     flags: [Option<bool>; 6],
+    standard: bool,
     origin: usize,
     generation: usize,
 }
@@ -283,6 +295,7 @@ impl<'a> Walker<'a, '_> {
     fn allocate(&mut self, origin: usize, flags: [Option<bool>; 6]) -> usize {
         let id = self.objects.len();
         self.objects.push(Options {
+            standard: false,
             flags,
             origin,
             generation: self.generation,
@@ -488,20 +501,18 @@ impl<'a> Walker<'a, '_> {
             .filter(|n| n.is_named() && !n.kind().as_ref().contains("comment"))
             .collect::<Vec<_>>();
         if args.is_empty()
-            && self
-                .names
-                .canonical(call, function.text().as_ref())
-                .is_some_and(|name| {
-                    matches!(
-                        name.as_str(),
-                        "std::fs::OpenOptions::new"
-                            | "std::fs::File::options"
-                            | "tokio::fs::OpenOptions::new"
-                            | "tokio::fs::File::options"
-                    )
-                })
+            && let Some(name) = self.names.canonical(call, function.text().as_ref())
+            && matches!(
+                name.as_str(),
+                "std::fs::OpenOptions::new"
+                    | "std::fs::File::options"
+                    | "tokio::fs::OpenOptions::new"
+                    | "tokio::fs::File::options"
+            )
         {
-            return Some(self.allocate(call.range().start, [Some(false); 6]));
+            let id = self.allocate(call.range().start, [Some(false); 6]);
+            self.objects[id].standard = name.starts_with("std::");
+            return Some(id);
         }
         let receiver = if function.kind().as_ref() == "field_expression" {
             function
@@ -535,6 +546,13 @@ impl<'a> Walker<'a, '_> {
                 self.push(call, &args[0], id);
                 return None;
             }
+            if method == "mode"
+                && args.len() == 1
+                && self.objects[id].standard
+                && self.names.unix_mode_in_scope(call)
+            {
+                return Some(id);
+            }
             if let Some(flag) = FLAGS.iter().position(|name| *name == method)
                 && args.len() == 1
             {
@@ -554,7 +572,9 @@ impl<'a> Walker<'a, '_> {
                 return Some(id);
             }
             if method == "clone" && args.is_empty() {
-                return Some(self.allocate(call.range().start, self.objects[id].flags));
+                let clone = self.allocate(call.range().start, self.objects[id].flags);
+                self.objects[clone].standard = self.objects[id].standard;
+                return Some(clone);
             }
             self.invalidate(id);
         }

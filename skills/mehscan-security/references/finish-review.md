@@ -113,6 +113,13 @@ Run `mehscan report --run CHUNK --responses CHUNK/responses --source-root ROOT
 State the root, selected-source limits and whether every manifest ID was reviewed.
 Only confirmed issues are findings; retain unresolved reviews.
 
+For reports covering multiple operations or revisions, give the issue verdict
+count and the distinct defect count separately. Group confirmed rows only when
+they show the same failed control at the same repair point. Keep review IDs,
+affected revisions, entry points and authority boundaries with the group. Two
+callers of the same faulty dependency can share a defect while exposing
+different effects. Similar effects with independent fixes count separately.
+
 When an inventory ledger is requested, run `mehscan investigate review-ledger
 --inventory RUN/inventory --history CHUNK --output RUN/review-ledger.json`.
 History roots need their matching `inventory/overview.json` and input binding.

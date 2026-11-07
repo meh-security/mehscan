@@ -520,6 +520,20 @@ work left outside it. For comprehensive work, continue until every admitted ID
 has a verdict, or name the remaining IDs and why work stopped. Do not equate
 one chunk or a capped manifest with a whole-repository assessment.
 
+### Reopen unresolved reviews
+
+Group pending IDs by the fact that could change their decisions, such as a
+shared input producer, dependency contract, or deployment control. Record the
+fact to check, where to check it, and each affected ID. Keep each ID's verdict
+and citations in its own response. A route that shares a sink can still have a
+different actor, guard, or effect.
+
+On a fresh scan, compare inventory evidence before applying prior research.
+Across revisions, check the operation and each decisive caller, control, and
+dependency in the new source before reusing the conclusion. Reopen affected
+IDs when supporting evidence changes, even if the operation retains its ID.
+Separate unselected IDs from finalized `needs_review` decisions in the counts.
+
 ## Follow up on reviewer-origin leads
 
 The report's `reviewer_origin_leads` are source-backed questions found beside
