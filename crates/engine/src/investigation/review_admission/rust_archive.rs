@@ -83,7 +83,12 @@ fn zip_entry<'a>(root: &N<'a>, expression: &N<'a>, function: &N<'a>, depth: usiz
         && receiver_type(root, &archive, function, 0).as_deref() == Some("zip::ZipArchive")
 }
 
-fn tar_entries<'a>(root: &N<'a>, expression: &N<'a>, function: &N<'a>, depth: usize) -> bool {
+pub(super) fn tar_entries<'a>(
+    root: &N<'a>,
+    expression: &N<'a>,
+    function: &N<'a>,
+    depth: usize,
+) -> bool {
     if depth > 8 {
         return false;
     }
@@ -101,12 +106,20 @@ fn tar_entries<'a>(root: &N<'a>, expression: &N<'a>, function: &N<'a>, depth: us
     if matches!(name.as_str(), "unwrap" | "expect") {
         return tar_entries(root, &archive, function, depth + 1);
     }
+    if name == "map_err" {
+        return tar_entries(root, &archive, function, depth + 1);
+    }
     matches!(name.as_str(), "entries" | "entries_with_seek")
         && receiver_type(root, &archive, function, 0).as_deref() == Some("tar::Archive")
 }
 
 // Resolve a tar iterator's loop binding or a selected `Some` result of `next`.
-fn tar_entry<'a>(root: &N<'a>, expression: &N<'a>, function: &N<'a>, depth: usize) -> bool {
+pub(super) fn tar_entry<'a>(
+    root: &N<'a>,
+    expression: &N<'a>,
+    function: &N<'a>,
+    depth: usize,
+) -> bool {
     if depth > 8 {
         return false;
     }
@@ -114,7 +127,7 @@ fn tar_entry<'a>(root: &N<'a>, expression: &N<'a>, function: &N<'a>, depth: usiz
         return false;
     };
     if let Some((receiver, name)) = method(&value)
-        && matches!(name.as_str(), "unwrap" | "expect")
+        && matches!(name.as_str(), "unwrap" | "expect" | "map_err")
     {
         return tar_entry(root, &receiver, function, depth + 1);
     }

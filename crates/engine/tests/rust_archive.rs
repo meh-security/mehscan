@@ -6,7 +6,7 @@ fn reviews(source: &str) -> Vec<(String, String)> {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname=\"archive_relationships\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+        "[package]\nname=\"archive_relationships\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
     )
     .unwrap();
     fs::write(root.join("src/lib.rs"), source).unwrap();
@@ -180,4 +180,110 @@ pub fn foreign(mut entries:impl Iterator<Item=Other>,root:&std::path::Path) {
             ),
         ]
     );
+}
+
+#[test]
+fn directory_permissions_bind_the_following_check_to_the_same_path() {
+    let source = r#"
+use std::fs as disk;
+use std::io::{self, ErrorKind};
+use std::path::Path;
+fn allow_existing(path: &Path) -> io::Result<()> {
+    disk::create_dir(path).or_else(|error| {
+        if error.kind() == ErrorKind::AlreadyExists {
+            let previous = disk::metadata(path);
+            if previous.map(|meta| meta.is_dir()).unwrap_or(false) {
+                return Ok(());
+            }
+        }
+        Err(error)
+    })
+}
+fn apply(path: &Path, permissions: disk::Permissions) -> io::Result<()> {
+    allow_existing(path)?;
+    disk::set_permissions(path, permissions)
+}
+fn unrelated(path: &Path, other: &Path, permissions: disk::Permissions) -> io::Result<()> {
+    allow_existing(other)?;
+    disk::set_permissions(path, permissions)
+}
+fn via_handle(path: &Path, file: &disk::File, permissions: disk::Permissions) -> io::Result<()> {
+    allow_existing(path)?;
+    file.set_permissions(permissions)
+}
+"#;
+    assert_eq!(
+        reviews(source),
+        [(
+            "allow_existing".into(),
+            "rust-directory-symlink-permissions-review".into()
+        )],
+    );
+    assert!(
+        reviews(&source.replace("disk::metadata(path)", "disk::symlink_metadata(path)")).is_empty()
+    );
+}
+
+#[test]
+fn archive_parent_symlink_requires_a_link_and_later_write_under_the_same_root() {
+    let source = r#"
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read};
+use std::os::unix::fs::{symlink, OpenOptionsExt as Mode};
+use std::path::Path;
+use tar::{Archive, Entry, EntryType};
+fn prepare(path: &Path, base: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() && parent != base {
+        match fs::create_dir_all(parent) {
+            Ok(_) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+fn copy_data<R: Read>(path: &Path, entry: &mut Entry<'_, R>) -> io::Result<()> {
+    let mut file = OpenOptions::new().write(true).create(true).mode(0o600).open(path)?;
+    io::copy(entry, &mut file)?;
+    Ok(())
+}
+pub fn restore<R: Read>(reader: R, root: &Path, other: &Path) -> io::Result<()> {
+    let mut archive = Archive::new(reader);
+    for item in archive.entries().map_err(|error| error)? {
+        let mut record = item.map_err(|error| error)?;
+        let kind = record.header().entry_type();
+        let output = root.join(record.path()?);
+        prepare(&output, root)?;
+        match kind {
+            EntryType::Regular => copy_data(&output, &mut record)?,
+            EntryType::Symlink => {
+                let target = record.link_name()?.ok_or_else(|| io::Error::other("missing target"))?;
+                symlink(&target, &output)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+"#;
+    let link_count = |source: &str| {
+        reviews(source)
+            .into_iter()
+            .filter(|(_, rule)| rule == "rust-archive-parent-symlink-write-review")
+            .count()
+    };
+    assert_eq!(link_count(source), 1);
+    assert_eq!(
+        link_count(&source.replace("symlink(&target, &output)", "symlink(&target, other)")),
+        0
+    );
+    assert_eq!(
+        link_count(&source.replace("prepare(&output, root)", "prepare(other, root)")),
+        0
+    );
+    assert_eq!(
+        link_count(&source.replace("symlink, OpenOptionsExt as Mode", "symlink")),
+        0
+    );
+    let confined = source.replace("match fs::create_dir_all(parent)", "if fs::canonicalize(parent)?.strip_prefix(base).is_err() { return Err(io::Error::other(\"outside\")); }\n        match fs::create_dir_all(parent)");
+    assert_eq!(link_count(&confined), 0);
 }

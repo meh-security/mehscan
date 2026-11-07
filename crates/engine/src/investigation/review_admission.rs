@@ -4,6 +4,7 @@ mod javascript_boundaries;
 mod python_credentials;
 mod rust_allocation;
 mod rust_archive;
+mod rust_archive_links;
 mod rust_back_reference;
 mod rust_buffer_initialization;
 mod rust_capacity_reuse;
@@ -99,6 +100,13 @@ fn server_mutation_review_marker_groups(
     );
     groups.extend(allocation_groups);
     groups.extend(rust_archive::groups(sources, scope, &selection, &parsed));
+    groups.extend(rust_archive_links::groups(
+        sources,
+        existing_evidence,
+        scope,
+        &selection,
+        &parsed,
+    ));
     groups.extend(rust_protocol_credentials::groups(
         sources, scope, &selection, &parsed,
     ));
