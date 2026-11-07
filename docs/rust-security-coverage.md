@@ -13,6 +13,7 @@ relationships beyond these native models.
 | Thread safety | Unsafe standard Send/Sync assertions connected to the same local struct's generic or recognized interior-mutability storage, with actual bounds retained. |
 | Panic cleanup | Raw element destruction connected to the same owner's scalar metadata and local Drop implementation. Also follows local drop guards in helpers and bounded same-owner callers that update live-element metadata after the helper returns. Metadata-before-drop and nonpanicking elements can be controls. |
 | Parser availability | Input-backed byte-slice indexing and selected get(...).unwrap operations. Short-input panic is distinct from memory unsafety or deployed service denial. |
+| Decoder history | Selected byte-decoded offsets that are clamped or saturated before copying from the same output buffer. Review the initialized prefix, usable dictionary, zero distance and overlap. |
 | HTTP framing | Content-Length and Transfer-Encoding reads from one typed header source together with raw input forwarding to a typed TCP stream. Actual peer disagreement and input association need assessment. |
 | Credentials | Authentication-like default headers in recognized reqwest builders, signature-disabled Validation objects consumed by jsonwebtoken decode, and generated tokens passed directly to selected output macros. |
 

@@ -4,6 +4,7 @@ mod javascript_boundaries;
 mod python_credentials;
 mod rust_allocation;
 mod rust_archive;
+mod rust_back_reference;
 mod rust_buffer_initialization;
 mod rust_capacity_reuse;
 mod rust_configuration;
@@ -102,6 +103,9 @@ fn server_mutation_review_marker_groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_capacity_reuse::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_back_reference::groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_parser_resource::groups(
@@ -677,6 +681,16 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             relationship: "bounded_rust_capacity_reuse_review",
             title: "Review offset-adjusted capacity reuse",
             security_question: "Can the requested extent plus the view offset wrap before the backing capacity comparison and let the true branch publish an extent larger than the available allocation? Check the same live allocation, offset direction and units, prior rejecting bounds, overflow settings, and later uses of the published field. A checked addition with rejection or a sufficient prior bound can settle the arithmetic obligation. Review caller reachability and subsequent memory access separately.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "rust-back-reference-obligation"))
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_decoder_back_reference_review",
+            title: "Review decoder reads from output history",
+            security_question: "Can an encoded back-reference be clamped or saturated into a copy from outside the initialized output prefix or usable dictionary? Trace the original distance, cursor, available history and exact copy source. Check zero distance, dictionary selection, overlap and rejection before copying. Determine whether a safe caller can observe stale or uninitialized bytes.",
         });
     }
     if evidence

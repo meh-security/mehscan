@@ -53,6 +53,25 @@ pub(super) fn local_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>
 }
 
 pub(super) fn local_pattern_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
+    let binding = lexical_binding(value, function)?;
+    let name = value.text();
+    if binding.kind().as_ref() == "let_declaration"
+        && function.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "assignment_expression" | "compound_assignment_expr"
+            ) && n.range().start >= binding.range().end
+                && n.range().start < value.range().start
+                && n.field("left").is_some_and(|n| n.text() == name)
+        })
+    {
+        return None;
+    }
+    Some(binding)
+}
+
+// Identify the declaration without making a claim about its current value.
+pub(super) fn lexical_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
     if value.kind().as_ref() != "identifier" {
         return None;
     }
@@ -79,16 +98,6 @@ pub(super) fn local_pattern_binding<'a>(value: &N<'a>, function: &N<'a>) -> Opti
             })
             .last();
         if let Some(binding) = binding {
-            if function.dfs().any(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "assignment_expression" | "compound_assignment_expr"
-                ) && n.range().start >= binding.range().end
-                    && n.range().start < value.range().start
-                    && n.field("left").is_some_and(|n| n.text() == name)
-            }) {
-                return None;
-            }
             return Some(binding);
         }
     }
