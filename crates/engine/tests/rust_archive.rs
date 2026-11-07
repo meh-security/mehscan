@@ -78,9 +78,9 @@ pub fn dead<R:std::io::Read>(input:R,root:&std::path::Path){if false{Tar::new(in
 #[test]
 fn zip_entry_names_connect_to_writes_without_assuming_missing_guards() {
     let source = r#"
-use std::fs::File;
+use std::fs::{File, write as store};
 pub fn raw<R:std::io::Read+std::io::Seek>(input:R,root:&std::path::Path){let mut zip=zip::ZipArchive::new(input).unwrap();let file=zip.by_index(0).unwrap();let path=root.join(file.name());File::create(path);}
-pub fn guarded<R:std::io::Read+std::io::Seek>(zip:&mut zip::ZipArchive<R>,root:&std::path::Path){let file=zip.by_index(0).unwrap();let path=root.join(file.name());if !path.starts_with(root){return;}std::fs::write(path,b"marker");}
+pub fn guarded<R:std::io::Read+std::io::Seek>(zip:&mut zip::ZipArchive<R>,root:&std::path::Path){let file=zip.by_index(0).unwrap();let path=root.join(file.name());if !path.starts_with(root){return;}store(path,b"marker");}
 pub fn fixed<R:std::io::Read+std::io::Seek>(zip:&mut zip::ZipArchive<R>,root:&std::path::Path){let file=zip.by_index(0).unwrap();std::fs::File::create(root.join("fixed"));}
 pub fn foreign(zip:&mut Foreign,root:&std::path::Path){let file=zip.by_index(0);std::fs::File::create(root.join(file.name()));}
 struct Foreign;impl Foreign{fn by_index(&self,_:usize)->Self{Foreign}fn name(&self)->&str{"fixed"}}

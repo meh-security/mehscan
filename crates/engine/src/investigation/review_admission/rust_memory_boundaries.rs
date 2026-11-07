@@ -159,6 +159,7 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        let api = rust_raw_memory::ApiNames::new(&root, &["transmute", "transmute_copy"]);
         for call in root.dfs().filter(|n| {
             n.kind().as_ref() == "call_expression" && !selection.excluded(&file.path, n.range())
         }) {
@@ -178,7 +179,7 @@ pub(super) fn groups(
                         | "assume_init_drop"
                 )
             } else {
-                rust_raw_memory::api(&root, &call).is_some_and(|s| {
+                api.resolve(&root, &call).is_some_and(|s| {
                     matches!(
                         s.as_str(),
                         "std::mem::transmute"

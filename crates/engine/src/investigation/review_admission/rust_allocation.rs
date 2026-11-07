@@ -206,6 +206,20 @@ pub(super) fn receiver_type<'a>(
 }
 
 fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<N<'a>> {
+    let tokens = call
+        .children()
+        .find(|n| n.kind().as_ref() == "token_tree")?;
+    let children = tokens.children().collect::<Vec<_>>();
+    let semicolon = children.iter().position(|n| n.text() == ";")?;
+    let count = children.get(semicolon + 1)?;
+    // Only a single identifier count is interpreted; this is not macro expansion.
+    if !(count.kind().as_ref() == "identifier"
+        && children
+            .get(semicolon + 2)
+            .is_some_and(|n| n.text() == "]" || n.text() == ")" || n.text() == "}"))
+    {
+        return None;
+    }
     let name = call.field("macro")?;
     let (identity, _) = crate::code::rust_http::canonical(root, &name, &name.text())?;
     if !matches!(identity.as_str(), "vec" | "std::vec" | "alloc::vec") {
@@ -232,18 +246,7 @@ fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<N<'a>> {
     {
         return None;
     }
-    let tokens = call
-        .children()
-        .find(|n| n.kind().as_ref() == "token_tree")?;
-    let children = tokens.children().collect::<Vec<_>>();
-    let semicolon = children.iter().position(|n| n.text() == ";")?;
-    let count = children.get(semicolon + 1)?;
-    // Only a single identifier count is interpreted; this is not macro expansion.
-    (count.kind().as_ref() == "identifier"
-        && children
-            .get(semicolon + 2)
-            .is_some_and(|n| n.text() == "]" || n.text() == ")" || n.text() == "}"))
-    .then(|| count.clone())
+    Some(count.clone())
 }
 
 pub(super) fn groups(
@@ -263,16 +266,39 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        let api = rust_raw_memory::ApiNames::new(&root, &["with_capacity"]);
         for call in root.dfs().filter(|n| {
             matches!(n.kind().as_ref(), "call_expression" | "macro_invocation")
                 && !selection.excluded(&file.path, n.range())
         }) {
-            let constructor = rust_raw_memory::api(&root, &call).is_some_and(|s| {
+            let repeated = if call.kind().as_ref() == "macro_invocation" {
+                repeat_extent(&root, &call)
+            } else {
+                None
+            };
+            let vector_receiver = method(&call).and_then(|(receiver, name)| {
                 matches!(
-                    s.as_str(),
+                    name.as_str(),
+                    "reserve"
+                        | "reserve_exact"
+                        | "try_reserve"
+                        | "try_reserve_exact"
+                        | "resize"
+                        | "resize_with"
+                )
+                .then_some(receiver)
+            });
+            // Reject unrelated syntax before resolving a call through lexical
+            // imports or walking its entire enclosing function for errors.
+            let constructor = api.resolve(&root, &call).is_some_and(|name| {
+                matches!(
+                    name.as_str(),
                     "std::vec::Vec::with_capacity" | "alloc::vec::Vec::with_capacity"
                 )
             });
+            if !constructor && repeated.is_none() && vector_receiver.is_none() {
+                continue;
+            }
             let Some(function) = call
                 .ancestors()
                 .find(|n| matches!(n.kind().as_ref(), "function_item" | "closure_expression"))
@@ -288,18 +314,7 @@ pub(super) fn groups(
             }
             let mut receiver_support = Vec::new();
             let mut receiver_capture = None;
-            let vector_method = method(&call).is_some_and(|(receiver, name)| {
-                if !matches!(
-                    name.as_str(),
-                    "reserve"
-                        | "reserve_exact"
-                        | "try_reserve"
-                        | "try_reserve_exact"
-                        | "resize"
-                        | "resize_with"
-                ) {
-                    return false;
-                }
+            let vector_method = vector_receiver.is_some_and(|receiver| {
                 let project = module_bindings.get_or_init(|| {
                     rust_module_bindings::Project::build(sources, parsed, selection)
                 });
@@ -315,10 +330,8 @@ pub(super) fn groups(
             let extent = if constructor || vector_method {
                 call.field("arguments")
                     .and_then(|a| named(&a).into_iter().next())
-            } else if call.kind().as_ref() == "macro_invocation" {
-                repeat_extent(&root, &call)
             } else {
-                None
+                repeated
             };
             let Some(extent) = extent else {
                 continue;

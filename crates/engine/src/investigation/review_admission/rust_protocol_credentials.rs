@@ -326,6 +326,8 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        let jwt = file.source.contains("jsonwebtoken");
+        let decode = jwt.then(|| rust_raw_memory::ApiNames::new(&root, &["decode"]));
         for function in root.dfs().filter(|n| {
             n.kind().as_ref() == "function_item" && !selection.excluded(&file.path, n.range())
         }) {
@@ -338,6 +340,13 @@ pub(super) fn groups(
                 .dfs()
                 .filter(|n| {
                     n.kind().as_ref() == "call_expression"
+                        && (decode.as_ref().is_some_and(|api| api.matches(n))
+                            || method(n).is_some_and(|(_, name)| {
+                                matches!(
+                                    name.as_str(),
+                                    "get" | "default_headers" | "insert" | "write_all"
+                                ) || (jwt && name == "insecure_disable_signature_validation")
+                            }))
                         && rust_shared_state::owns(n, &function)
                         && !selection.excluded(&file.path, n.range())
                         && rust_buffer_initialization::runtime_path(n, &function)
@@ -345,7 +354,12 @@ pub(super) fn groups(
                 .collect::<Vec<_>>();
             let mut framing = BTreeMap::<usize, (Option<N<'_>>, Option<N<'_>>)>::new();
             for call in &calls {
-                if rust_raw_memory::api(&root, call).as_deref() == Some("jsonwebtoken::decode") {
+                if decode
+                    .as_ref()
+                    .and_then(|api| api.resolve(&root, call))
+                    .as_deref()
+                    == Some("jsonwebtoken::decode")
+                {
                     let arguments = call
                         .field("arguments")
                         .map(|n| named(&n))
@@ -507,7 +521,7 @@ pub(super) fn groups(
                 }
             }
             for call in function.dfs().filter(|n| {
-                n.kind().as_ref() == "macro_invocation"
+                jwt && n.kind().as_ref() == "macro_invocation"
                     && rust_shared_state::owns(n, &function)
                     && !selection.excluded(&file.path, n.range())
                     && rust_buffer_initialization::runtime_path(n, &function)

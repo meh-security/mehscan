@@ -106,7 +106,8 @@ pub fn ordinary(token:&str){println!("{}",token);}
 #[test]
 fn signature_policy_must_reach_the_same_consuming_verifier() {
     let source = r#"
-pub fn insecure(token:&str){let mut validation=jsonwebtoken::Validation::default();validation.insecure_disable_signature_validation();jsonwebtoken::decode::<Claims>(token,&key,&validation);}
+use jsonwebtoken::decode as verify;
+pub fn insecure(token:&str){let mut validation=jsonwebtoken::Validation::default();validation.insecure_disable_signature_validation();verify::<Claims>(token,&key,&validation);}
 pub fn secure(token:&str){let validation=jsonwebtoken::Validation::default();jsonwebtoken::decode::<Claims>(token,&key,&validation);}
 pub fn different(token:&str){let mut first=jsonwebtoken::Validation::default();first.insecure_disable_signature_validation();let second=jsonwebtoken::Validation::default();jsonwebtoken::decode::<Claims>(token,&key,&second);}
 pub fn blocking(){let mut headers=reqwest::header::HeaderMap::new();headers.insert("x-api-key",reqwest::header::HeaderValue::from_static("marker"));reqwest::blocking::Client::builder().default_headers(headers).build();}

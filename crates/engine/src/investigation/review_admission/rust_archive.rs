@@ -266,9 +266,29 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        let api = rust_raw_memory::ApiNames::new(&root, &["create", "write", "create_dir_all"]);
         for call in root.dfs().filter(|n| {
             n.kind().as_ref() == "call_expression" && !selection.excluded(&file.path, n.range())
         }) {
+            let extraction_method = method(&call).filter(|(_, name)| {
+                matches!(
+                    name.as_str(),
+                    "unpack"
+                        | "unpack_in"
+                        | "extract"
+                        | "extract_with_options"
+                        | "extract_unwrapped_root_dir"
+                )
+            });
+            let write = api.resolve(&root, &call).is_some_and(|s| {
+                matches!(
+                    s.as_str(),
+                    "std::fs::File::create" | "std::fs::write" | "std::fs::create_dir_all"
+                )
+            });
+            if extraction_method.is_none() && !write {
+                continue;
+            }
             let Some(function) = call
                 .ancestors()
                 .find(|n| matches!(n.kind().as_ref(), "function_item" | "closure_expression"))
@@ -288,8 +308,8 @@ pub(super) fn groups(
             else {
                 continue;
             };
-            let extraction = method(&call).is_some_and(|(receiver, name)| {
-                let owner = receiver_type(&root, &receiver, &function, 0);
+            let extraction = extraction_method.as_ref().is_some_and(|(receiver, name)| {
+                let owner = receiver_type(&root, receiver, &function, 0);
                 matches!(
                     (owner.as_deref(), name.as_str()),
                     (Some("tar::Archive"), "unpack")
@@ -299,15 +319,9 @@ pub(super) fn groups(
                         )
                 )
             });
-            let entry_extraction = method(&call).is_some_and(|(receiver, name)| {
+            let entry_extraction = extraction_method.as_ref().is_some_and(|(receiver, name)| {
                 matches!(name.as_str(), "unpack" | "unpack_in")
-                    && tar_entry(&root, &receiver, &function, 0)
-            });
-            let write = rust_raw_memory::api(&root, &call).is_some_and(|s| {
-                matches!(
-                    s.as_str(),
-                    "std::fs::File::create" | "std::fs::write" | "std::fs::create_dir_all"
-                )
+                    && tar_entry(&root, receiver, &function, 0)
             });
             let entry = if write {
                 path_source(&root, &destination, &function, 0)
