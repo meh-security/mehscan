@@ -30,6 +30,13 @@ its own allocation. A limit in a shared string decoder covers only branches
 that call it. Check whether callers can disable the limit or select a legacy
 branch, and distinguish those configurations from the default path.
 
+When a decoder reuses a buffer field for the header and payload, follow the
+header resize, successful read or awaited read, decode and payload resize in
+order. Check the bound on both client replies and server requests. For an IPC
+stream, identify who can select the endpoint or connect to the listener, and
+whether allocation precedes message-level authorization. A generic stream or
+listener leaves endpoint exposure to its caller. [russh agent framing advisory](https://github.com/Eugeny/russh/security/advisories/GHSA-g9f8-wqj9-fjw5)
+
 ```rust
 pub fn bad_frame(input: &[u8]) -> Option<Vec<u8>> {
     let n = u32::from_be_bytes(input.get(..4)?.try_into().ok()?) as usize;
