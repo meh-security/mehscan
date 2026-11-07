@@ -74,3 +74,6 @@ deciding evidence and repaired controls. Rust source and Cargo manifest/lockfile
 assignments receive a short router even when native scanning produces no candidates; full guides remain
 available through the worker's allowlisted guidance API. Guidance does not extend
 the native detection guarantees listed above or establish a finding by itself.
+Use the [attack scenario guide](../skills/mehscan-security/references/rust-attack-surfaces.md)
+to select a scenario from the application's actual entry point and verify the
+caller, guard and consequence against source.

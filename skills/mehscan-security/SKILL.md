@@ -25,6 +25,9 @@ For Rust source, use [Rust security review](references/rust-security.md), availa
 as `rust-security`. Load `rust-memory` or `rust-boundaries` for the relevant
 advisory-derived patterns and verification controls. Rust guidance applies to
 source discovery even when native scanning produces no questions.
+Use [Rust attack scenarios](references/rust-attack-surfaces.md), available as
+`rust-attack-surfaces`, to select the applicable application boundary and verify
+the scenario against the candidate's caller, guard and effect.
 The ordinary controller uses one configured model with direct source lookups.
 The worker's [research API](references/worker-api.md) exposes exact tool arguments,
 costs and limits. It differs from the [operator CLI](references/commands.md):
@@ -116,6 +119,7 @@ separate authority/state question. Keep those claims distinct.
 | Rust safe APIs, Cargo/configuration applicability and soundness | [Rust review](references/rust-security.md), `rust-security` |
 | Rust unsafe memory, panic cleanup, Send/Sync, FFI and pinning | [Rust memory](references/rust-memory.md), `rust-memory` |
 | Rust parser/resource bounds, archives, protocols and credentials | [Rust boundaries](references/rust-boundaries.md), `rust-boundaries` |
+| Rust application entry points, attacker prerequisites or candidate verification | [Rust attack scenarios](references/rust-attack-surfaces.md), `rust-attack-surfaces` |
 
 In worker mode, the initial contract already contains relevant shared/bucket
 guidance. Use `guidance` with the exact catalog name for a needed additional guide;

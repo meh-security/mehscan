@@ -34,6 +34,8 @@ construction. Retain a concrete missing relationship when it remains unresolved.
 
 For Rust assignments, apply the supplied Rust router and use `rust-security`,
 `rust-memory` or `rust-boundaries` guidance when the actual relationship needs it.
+Use [Rust attack scenarios](rust-attack-surfaces.md) to select a source-backed
+scenario and verify it against existing candidate IDs or an anchored proposal.
 Safe-call soundness, input-driven availability and dependency metadata need their
 own evidence; a zero-candidate assignment can still contain these mechanisms.
 

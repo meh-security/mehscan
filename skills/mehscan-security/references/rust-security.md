@@ -5,6 +5,10 @@ For Rust source, use `guidance(name="rust-security")` for the pattern index when
 needed. Load `rust-memory` for unsafe invariants, lifetimes, panic cleanup,
 thread sharing or pinning; load `rust-boundaries` for parser/resource limits,
 archives, protocol transitions and credentials. Load only the relevant guide.
+Use `rust-attack-surfaces` when selecting scenarios for an application or when
+a candidate's impact depends on its caller. Start from the actual entry point,
+actor or safe caller, then trace the deciding guard and effect. Apply this
+also to source assignments with zero native questions.
 
 Establish the concrete type/API, safe caller boundary and effective configuration.
 Inspect imports, aliases, impl bounds and helpers rather than assigning standard
@@ -27,6 +31,8 @@ an authorized operator actually runs them; report that distinction.
 Use the violated invariant from an advisory, not its package name as a detection
 signature. The examples below are historical mechanisms, not current affected
 version advice. Check the current advisory and actual lockfile for version claims.
+Use [Rust attack scenarios](rust-attack-surfaces.md) to connect a mechanism to
+the actual application boundary and choose a verification control.
 
 | Relationship | Deciding evidence | Guide / advisory example |
 | --- | --- | --- |

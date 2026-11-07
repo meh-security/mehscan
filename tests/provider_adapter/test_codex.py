@@ -255,7 +255,7 @@ class Adapter(unittest.TestCase):
                        if v["properties"]["tool"]["enum"] == ["guidance"])
         names = variant["properties"]["arguments"]["properties"]["name"]["enum"]
         self.assertIn("mass-assignment", names)
-        for name in ("rust-security", "rust-memory", "rust-boundaries"):
+        for name in ("rust-security", "rust-memory", "rust-boundaries", "rust-attack-surfaces"):
             self.assertIn(name, names)
         self.assertNotIn("../../source/AGENTS.md", names)
         facts = [{"result_id":"guide1", "result":{"operation":"review_guidance", "name":"mass-assignment",

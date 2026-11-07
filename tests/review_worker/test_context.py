@@ -216,6 +216,8 @@ class Context(unittest.TestCase):
                 self.assertEqual(routers[0]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
                 # Full examples stay on demand, rather than filling every task.
                 self.assertNotIn("## Pattern index", routers[0]["text"])
+                self.assertIn("rust-attack-surfaces", routers[0]["text"])
+                self.assertNotIn("rust-attack-surfaces.md", [Path(s["path"]).name for s in contract["sources"]])
         self.assertEqual(context.language_contracts(skill, ["lib.rs.txt", "lib.ts", "Cargo.toml.txt"]), [])
 
     def test_native_memory_contracts_load_the_selected_language_playbook(self):
@@ -233,7 +235,7 @@ class Context(unittest.TestCase):
 
     def test_rust_references_are_allowlisted_hash_bound_guidance(self):
         skill = PRODUCT / "skills/mehscan-security"
-        for name in ("rust-security", "rust-memory", "rust-boundaries"):
+        for name in ("rust-security", "rust-memory", "rust-boundaries", "rust-attack-surfaces"):
             with self.subTest(name=name):
                 guide = context.load_guidance(skill, name)
                 raw = (skill / "references" / guide["path"]).read_bytes()

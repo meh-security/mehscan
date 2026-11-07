@@ -54,6 +54,7 @@
   "skills/mehscan-security/references/rust-security.md",
   "skills/mehscan-security/references/rust-memory.md",
   "skills/mehscan-security/references/rust-boundaries.md",
+  "skills/mehscan-security/references/rust-attack-surfaces.md",
   "skills/mehscan-security/references/path-selection-review.md",
   "skills/mehscan-security/references/worker-api.md",
   "skills/mehscan-security/references/execution-trace.md",

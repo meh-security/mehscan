@@ -47,6 +47,7 @@ review; never cite a guide as application evidence.
 | [`rust-security`](rust-security.md) | Rust safe APIs, soundness, Cargo features/targets, advisory applicability or source discovery without native candidates |
 | [`rust-memory`](rust-memory.md) | Rust unsafe extents/initialization, panic cleanup, Send/Sync, FFI lifetimes, pinning or cancellation |
 | [`rust-boundaries`](rust-boundaries.md) | Rust parser and cumulative resource limits, archive containment, protocol transitions or credential consumers |
+| [`rust-attack-surfaces`](rust-attack-surfaces.md) | Rust application attack scenarios, caller and configuration applicability, or verification of a source candidate |
 
 A research reply has `action=research`, a nonempty `research` array and
 `draft=null`. A final reply has `action=final`, `research=[]` and the complete

@@ -16,5 +16,6 @@
   "native-memory":{"path":"buckets/native-memory.md","when":"C/C++ bounds, lifetime, ownership or native parser state"},
   "rust-security":{"path":"rust-security.md","when":"Rust safe APIs, soundness, Cargo features/targets, advisory applicability or source discovery without native candidates"},
   "rust-memory":{"path":"rust-memory.md","when":"Rust unsafe extents/initialization, panic cleanup, Send/Sync, FFI lifetimes, pinning or cancellation"},
-  "rust-boundaries":{"path":"rust-boundaries.md","when":"Rust parser and cumulative resource limits, archive containment, protocol transitions or credential consumers"}
+  "rust-boundaries":{"path":"rust-boundaries.md","when":"Rust parser and cumulative resource limits, archive containment, protocol transitions or credential consumers"},
+  "rust-attack-surfaces":{"path":"rust-attack-surfaces.md","when":"Rust application attack scenarios, caller and configuration applicability, or verification of a source candidate"}
 }
