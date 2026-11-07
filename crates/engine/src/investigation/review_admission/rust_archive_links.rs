@@ -226,6 +226,11 @@ fn directory_permissions<'a>(
     let block = statement
         .parent()
         .filter(|p| p.kind().as_ref() == "block")?;
+    if previous_statement(&block, statement).is_some_and(|prior| {
+        enabled(&prior) && rejects_final_link(root, &function, &prior, destination).is_some()
+    }) {
+        return None;
+    }
     let next = named(&block).skip_while(|n| !same(n, statement)).nth(1)?;
     let write_call = operation(&next)?;
     if !enabled_call(&guard_call, &function, enabled)
@@ -263,6 +268,84 @@ fn bound<'a>(function: &N<'a>, a: &N<'a>, b: &N<'a>) -> bool {
             .map(|v| v.range())
     };
     binding(a).is_some_and(|r| binding(b) == Some(r))
+}
+
+fn previous_statement<'a>(block: &N<'a>, statement: &N<'a>) -> Option<N<'a>> {
+    named(block)
+        .take_while(|node| node.range().start < statement.range().start)
+        .last()
+}
+
+fn rejecting_condition<'a>(statement: &N<'a>, exit_kind: &str) -> Option<N<'a>> {
+    let branch = expression(statement)?;
+    if branch.kind().as_ref() != "if_expression" || branch.field("alternative").is_some() {
+        return None;
+    }
+    let exit = expression(&unique(named(&branch.field("consequence")?))?)?;
+    if exit.kind().as_ref() != exit_kind {
+        return None;
+    }
+    // A labelled continue can target a different loop. A nested helper
+    // returning is likewise outside this direct-statement check.
+    if exit_kind == "continue_expression" && named(&exit).next().is_some() {
+        return None;
+    }
+    branch.field("condition")
+}
+
+fn method_receiver<'a>(call: &N<'a>, name: &str) -> Option<N<'a>> {
+    let (receiver, actual) = method(call)?;
+    (actual == name && arguments(call)?.is_empty()).then_some(receiver)
+}
+
+fn fallible_operand<'a>(root: &N<'a>, expression: &N<'a>, api: &str) -> Option<N<'a>> {
+    if expression.kind().as_ref() != "try_expression" {
+        return None;
+    }
+    let call = operation(expression)?;
+    if rust_raw_memory::api(root, &call).as_deref() != Some(api) {
+        return None;
+    }
+    unique(arguments(&call)?.into_iter())
+}
+
+// These controls close the selected sequential link mechanism. Neither
+// check establishes safety against concurrent filesystem replacement.
+fn rejects_final_link<'a>(
+    root: &N<'a>,
+    function: &N<'a>,
+    statement: &N<'a>,
+    destination: &N<'a>,
+) -> Option<()> {
+    let condition = rejecting_condition(statement, "return_expression")?;
+    let file_type = method_receiver(&condition, "is_symlink")?;
+    let metadata = method_receiver(&file_type, "file_type")?;
+    let selected = fallible_operand(root, &metadata, "std::fs::symlink_metadata")?;
+    bound(function, &selected, destination).then_some(())
+}
+
+fn confines_parent<'a>(
+    root: &N<'a>,
+    function: &N<'a>,
+    statement: &N<'a>,
+    destination: &N<'a>,
+    base: &N<'a>,
+) -> Option<()> {
+    let condition = rejecting_condition(statement, "continue_expression")?;
+    if condition.kind().as_ref() != "unary_expression" || !condition.text().starts_with('!') {
+        return None;
+    }
+    let check = peel(unique(named(&condition))?)?;
+    let (parent, method_name) = method(&check)?;
+    if method_name != "starts_with" {
+        return None;
+    }
+    let root_arg = unique(arguments(&check)?.into_iter())?;
+    let root_arg = fallible_operand(root, &root_arg, "std::fs::canonicalize")?;
+    let parent = fallible_operand(root, &parent, "std::fs::canonicalize")?;
+    let parent = method_receiver(&parent, "unwrap")?;
+    let child = method_receiver(&parent, "parent")?;
+    (bound(function, &root_arg, base) && bound(function, &child, destination)).then_some(())
 }
 
 fn compact_is(node: &N<'_>, expected: &str) -> bool {
@@ -736,6 +819,12 @@ fn parent_before_dispatch<'a>(
             let call = operation(&n).filter(|call| enabled_call(call, function, enabled))?;
             let args = arguments(&call)?;
             let path = args.iter().position(|n| bound(function, n, destination))?;
+            if previous_statement(&block, &n).is_some_and(|prior| {
+                enabled(&prior)
+                    && confines_parent(root, function, &prior, destination, base).is_some()
+            }) {
+                return None;
+            }
             let base = args.iter().position(|n| bound(function, n, base));
             let helper = unique(definitions(&call, function, enabled).into_iter())?;
             let guard = following_parent(root, &helper, path, base)?;

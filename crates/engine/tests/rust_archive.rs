@@ -222,6 +222,16 @@ fn via_handle(path: &Path, file: &disk::File, permissions: disk::Permissions) ->
     assert!(
         reviews(&source.replace("disk::metadata(path)", "disk::symlink_metadata(path)")).is_empty()
     );
+    let reject_link = "if disk::symlink_metadata(path)?.file_type().is_symlink() { return Err(io::Error::other(\"link\")); }";
+    let guarded = source.replace(
+        "allow_existing(path)?;\n    disk::set_permissions",
+        &format!("{reject_link}\n    allow_existing(path)?;\n    disk::set_permissions"),
+    );
+    assert!(reviews(&guarded).is_empty());
+    assert_eq!(
+        reviews(&guarded.replace(".is_symlink()", ".is_dir()")).len(),
+        1
+    );
 }
 
 #[test]
@@ -286,4 +296,14 @@ pub fn restore<R: Read>(reader: R, root: &Path, other: &Path) -> io::Result<()> 
     );
     let confined = source.replace("match fs::create_dir_all(parent)", "if fs::canonicalize(parent)?.strip_prefix(base).is_err() { return Err(io::Error::other(\"outside\")); }\n        match fs::create_dir_all(parent)");
     assert_eq!(link_count(&confined), 0);
+    let reject_outside = "if !fs::canonicalize(output.parent().unwrap())?.starts_with(fs::canonicalize(root)?) { continue; }";
+    let guarded = source.replace(
+        "prepare(&output, root)?;",
+        &format!("{reject_outside}\n        prepare(&output, root)?;"),
+    );
+    assert_eq!(link_count(&guarded), 0);
+    assert_eq!(
+        link_count(&guarded.replace("canonicalize(root)?", "canonicalize(other)?")),
+        1
+    );
 }
