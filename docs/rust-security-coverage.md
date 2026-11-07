@@ -7,7 +7,7 @@ relationships beyond these native models.
 
 | Area | Selected relationships |
 | --- | --- |
-| Allocation and size arithmetic | Caller-influenced vector capacity, typed reserve/resize, identifier-count repeat macros, and selected source-defined arithmetic reaching capacity allocation. Growth receivers can follow named fields, explicit free-helper returns and aliases through source-owned modules, including selected cross-file imports and reexports. Checked arithmetic and bounds stay available for assessment. |
+| Allocation and size arithmetic | Caller-influenced vector capacity, typed reserve/resize, identifier-count repeat macros, and selected arithmetic reaching allocation or view capacity publication. Growth receivers can follow named fields, explicit free-helper returns and aliases through source-owned modules, including selected cross-file imports and reexports. Capacity reuse review ties an unchecked offset addition to the same backing vector and the metadata update. |
 | Archives | Typed tar/zip extraction, selected ZIP entry names reaching writes, and tar entries from loops or `if let Some(entry) = entries.next()` reaching writes or per-entry extraction. Review `unpack` as an explicit destination and `unpack_in` as a library-managed root. |
 | Unsafe memory | Selected vector reconstruction/ownership, raw slices and copies, unchecked indexing on witnessed buffers, length publication, typed pointer offsets, MaybeUninit assertions and standard transmute operations in safe functions. |
 | Thread safety | Unsafe standard Send/Sync assertions connected to the same local struct's generic or recognized interior-mutability storage, with actual bounds retained. |

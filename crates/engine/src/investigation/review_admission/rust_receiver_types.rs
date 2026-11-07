@@ -5,6 +5,9 @@ use rust_shared_state::AstNode as N;
 
 enum Type<'a> {
     Vector,
+    Usize,
+    NonNull,
+    RawPointer(Located<'a>),
     Record(Located<'a>),
 }
 
@@ -42,6 +45,53 @@ fn pattern_shadows(scope: &N<'_>, value: &N<'_>, name: &str) -> bool {
         }
         _ => false,
     }
+}
+
+pub(super) fn local_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
+    if value.kind().as_ref() != "identifier" {
+        return None;
+    }
+    let name = value.text();
+    for scope in value
+        .ancestors()
+        .take_while(|n| n.range() != function.range())
+    {
+        if pattern_shadows(&scope, value, &name) {
+            return None;
+        }
+        if scope.kind().as_ref() != "block" {
+            continue;
+        }
+        let binding = scope
+            .children()
+            .filter(|n| {
+                n.kind().as_ref() == "let_declaration"
+                    && n.range().end <= value.range().start
+                    && n.field("pattern").is_some_and(|p| {
+                        p.dfs()
+                            .any(|n| n.kind().as_ref() == "identifier" && n.text() == name)
+                    })
+            })
+            .last();
+        if let Some(binding) = binding {
+            if binding.field("pattern")?.kind().as_ref() != "identifier"
+                || function.dfs().any(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "assignment_expression" | "compound_assignment_expr"
+                    ) && n.range().start >= binding.range().end
+                        && n.range().start < value.range().start
+                        && n.field("left").is_some_and(|n| n.text() == name)
+                })
+            {
+                return None;
+            }
+            return Some(binding);
+        }
+    }
+    function.field("parameters")?.children().find(|n| {
+        n.kind().as_ref() == "parameter" && n.field("pattern").is_some_and(|n| n.text() == name)
+    })
 }
 
 struct Resolver<'a, 's> {
@@ -231,6 +281,18 @@ impl<'a> Resolver<'a, '_> {
             result.support.push(self.capture(node));
             return Some(result);
         }
+        if node.kind().as_ref() == "pointer_type" {
+            return Some(Witness {
+                ty: Type::RawPointer(self.site.with_node(node.field("type")?)),
+                support: vec![self.capture(node)],
+            });
+        }
+        if node.kind().as_ref() == "primitive_type" && node.text() == "usize" {
+            return Some(Witness {
+                ty: Type::Usize,
+                support: vec![self.capture(node)],
+            });
+        }
         if node.text() == "Self" {
             let implementation = node
                 .ancestors()
@@ -240,9 +302,15 @@ impl<'a> Resolver<'a, '_> {
             }
             return self.declared(&implementation.field("type")?, depth + 1);
         }
-        if rust_raw_memory::canonical(&self.project.root(&self.site)?, node, &node.text())
-            .is_some_and(|s| matches!(s.as_str(), "std::vec::Vec" | "alloc::vec::Vec"))
-        {
+        let library_type =
+            match rust_raw_memory::canonical(&self.project.root(&self.site)?, node, &node.text())
+                .as_deref()
+            {
+                Some("std::vec::Vec" | "alloc::vec::Vec") => Some(Type::Vector),
+                Some("std::ptr::NonNull" | "core::ptr::NonNull") => Some(Type::NonNull),
+                _ => None,
+            };
+        if let Some(ty) = library_type {
             let mut support = vec![self.capture(node)];
             if let Some((_, Some(import))) = crate::code::rust_http::canonical(
                 &self.project.root(&self.site)?,
@@ -254,10 +322,7 @@ impl<'a> Resolver<'a, '_> {
                 }
                 support.push(self.capture(&import));
             }
-            return Some(Witness {
-                ty: Type::Vector,
-                support,
-            });
+            return Some(Witness { ty, support });
         }
         let (item, mut support) = self.item(node, &node.text(), depth + 1)?;
         support.push(item.capture());
@@ -294,6 +359,20 @@ impl<'a> Resolver<'a, '_> {
                 function,
                 depth + 1,
             );
+        }
+        if value.kind().as_ref() == "unary_expression"
+            && value.children().next().is_some_and(|op| op.text() == "*")
+        {
+            let pointer =
+                self.expression(&named(value).into_iter().next()?, function, depth + 1)?;
+            let Type::RawPointer(pointee) = pointer.ty else {
+                return None;
+            };
+            let mut result = self
+                .at(pointee.clone())
+                .declared(&pointee.node, depth + 1)?;
+            result.support.extend(pointer.support);
+            return Some(result);
         }
         if value.kind().as_ref() == "field_expression" {
             let mut owner = self.expression(&value.field("value")?, function, depth + 1)?;
@@ -378,58 +457,13 @@ impl<'a> Resolver<'a, '_> {
             }
             return self.declared(&implementation.field("type")?, depth + 1);
         }
-        if value.kind().as_ref() != "identifier" {
-            return None;
-        }
-        let name = value.text();
-        for scope in value
-            .ancestors()
-            .take_while(|n| n.range() != function.range())
-        {
-            if pattern_shadows(&scope, value, &name) {
-                return None;
-            }
-            if scope.kind().as_ref() != "block" {
-                continue;
-            }
-            let binding = scope
-                .children()
-                .filter(|n| {
-                    n.kind().as_ref() == "let_declaration"
-                        && n.range().end <= value.range().start
-                        && n.field("pattern").is_some_and(|p| {
-                            p.dfs()
-                                .any(|n| n.kind().as_ref() == "identifier" && n.text() == name)
-                        })
-                })
-                .last();
-            if let Some(binding) = binding {
-                if binding.field("pattern")?.kind().as_ref() != "identifier"
-                    || function.dfs().any(|n| {
-                        matches!(
-                            n.kind().as_ref(),
-                            "assignment_expression" | "compound_assignment_expr"
-                        ) && n.range().start >= binding.range().end
-                            && n.range().start < value.range().start
-                            && n.field("left").is_some_and(|n| n.text() == name)
-                    })
-                {
-                    return None;
-                }
-                let mut result = if let Some(ty) = binding.field("type") {
-                    self.declared(&ty, depth + 1)?
-                } else {
-                    self.expression(&binding.field("value")?, function, depth + 1)?
-                };
-                result.support.push(self.capture(&binding));
-                return Some(result);
-            }
-        }
-        let parameter = function.field("parameters")?.children().find(|n| {
-            n.kind().as_ref() == "parameter" && n.field("pattern").is_some_and(|n| n.text() == name)
-        })?;
-        let mut result = self.declared(&parameter.field("type")?, depth + 1)?;
-        result.support.push(self.capture(&parameter));
+        let binding = local_binding(value, function)?;
+        let mut result = if let Some(ty) = binding.field("type") {
+            self.declared(&ty, depth + 1)?
+        } else {
+            self.expression(&binding.field("value")?, function, depth + 1)?
+        };
+        result.support.push(self.capture(&binding));
         Some(result)
     }
 
@@ -463,12 +497,49 @@ pub(super) fn vector_support<'a>(
     function: &N<'a>,
     file: &'a SourceFile,
 ) -> Option<Vec<Capture>> {
+    type_support(project, value, function, file, |ty| {
+        matches!(ty, Type::Vector)
+    })
+}
+
+pub(super) fn extent_field_support<'a>(
+    project: &Project<'a>,
+    value: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+) -> Option<Vec<Capture>> {
+    type_support(project, value, function, file, |ty| {
+        matches!(ty, Type::Usize)
+    })
+}
+
+pub(super) fn pointer_field_support<'a>(
+    project: &Project<'a>,
+    value: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+    nonnull: bool,
+) -> Option<Vec<Capture>> {
+    type_support(project, value, function, file, |ty| match ty {
+        Type::NonNull => nonnull,
+        Type::RawPointer(_) => !nonnull,
+        _ => false,
+    })
+}
+
+fn type_support<'a>(
+    project: &Project<'a>,
+    value: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+    accepts: impl FnOnce(&Type<'a>) -> bool,
+) -> Option<Vec<Capture>> {
     let resolver = Resolver {
         project,
         site: project.locate(file, value.clone()),
     };
     let result = resolver.expression(value, function, 0)?;
-    if !matches!(result.ty, Type::Vector) {
+    if !accepts(&result.ty) {
         return None;
     }
     let mut support = result.support;

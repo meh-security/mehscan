@@ -5,6 +5,7 @@ mod python_credentials;
 mod rust_allocation;
 mod rust_archive;
 mod rust_buffer_initialization;
+mod rust_capacity_reuse;
 mod rust_configuration;
 mod rust_credential_renewal;
 mod rust_dependencies;
@@ -97,6 +98,9 @@ fn server_mutation_review_marker_groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_extent_arithmetic::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_capacity_reuse::groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_parser_resource::groups(
@@ -659,6 +663,16 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             relationship,
             title,
             security_question: question,
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.rule_id == rust_capacity_reuse::RULE)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_capacity_reuse_review",
+            title: "Review offset-adjusted capacity reuse",
+            security_question: "Can the requested extent plus the view offset wrap before the backing capacity comparison and let the true branch publish an extent larger than the available allocation? Check the same live allocation, offset direction and units, prior rejecting bounds, overflow settings, and later uses of the published field. A checked addition with rejection or a sufficient prior bound can settle the arithmetic obligation. Review caller reachability and subsequent memory access separately.",
         });
     }
     if evidence
