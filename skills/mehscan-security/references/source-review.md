@@ -32,6 +32,17 @@ additional category guidance through the broker when relevant. Avoid exhaustive
 caller discovery or reconstructing a whole application to close an ordinary
 construction. Retain a concrete missing relationship when it remains unresolved.
 
+Within an assignment, reuse a helper's inspected source from the assigned
+windows or earlier lookups. Check each caller's arguments, configuration and
+effect separately. For an explicit handoff between chunks on the same snapshot,
+the operator can [save and reload a cited fact](pattern-sweep.md#reuse-facts-between-chunks),
+including a helper discovered in a zero-candidate assignment. Ordinary worker
+assignments get their own source, available native facts and their lookup
+history. They load neither other assignments' fact files nor private replay notes
+automatically. Across revisions or projects, carry over the attack scenario,
+proof checklist and affected/repaired controls. Re-establish the relevant facts
+and verdict from the current caller, configuration and effect.
+
 For Rust assignments, apply the supplied Rust router and use `rust-security`,
 `rust-memory` or `rust-boundaries` guidance when the actual relationship needs it.
 Use [Rust attack scenarios](rust-attack-surfaces.md) to select a source-backed

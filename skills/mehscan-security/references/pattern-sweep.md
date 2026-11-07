@@ -100,10 +100,19 @@ Notes input:
 {"facts":[{"contract":"KEY_FROM_CONTRACT_QUEUE","statement":"What the inspected implementation does","citations":[{"path":"src/Helper.cs","start_line":20,"end_line":35}],"remaining_checks":["caller authority", "alternate writers"]}]}
 ```
 
+Use a key from the contract queue when available. For a source-only helper, use
+`source:src/Helper.cs:20-35`, with an exact matching path and inclusive range in
+the citations. For example, record a writer's checked byte budget once, then
+verify which budget each JSON, Form and Bytes/String caller passes to it.
+
 Record: `mehscan investigate review-facts ROOT --inventory DIR --notes notes.json --output facts.json`.
 Reuse: `mehscan investigate review-facts ROOT --inventory DIR --facts facts.json --contract KEY`.
-Binding or source changes require fresh inspection. Binding validates source
-reuse, not the author's conclusion. Skip notes for a one-off question.
+Use the same source snapshot and inventory binding for both commands. The
+operator passes the reloaded evidence to the next manual chunk. The ordinary
+worker has no fact-file input. Binding validates the cited source. Check the
+statement against that source and resolve the remaining checks for each caller.
+Use the normal source artifacts when citing a verdict in the finalizer. Inspect
+again when the source or scanner inputs change. Skip notes for a one-off question.
 Do not add a separate note-writing model pass or require this for every chunk.
 Fewer lookups alone is not a time saving; use notes when measured reuse pays off.
 
