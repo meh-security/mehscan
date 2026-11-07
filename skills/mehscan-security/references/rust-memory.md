@@ -133,6 +133,12 @@ cannot generically reclaim a foreign allocation. Sources:
 [CString ownership contracts](https://doc.rust-lang.org/std/ffi/struct.CString.html),
 [ANSSI FFI guidance](https://anssi-fr.github.io/rust-guide/unsafe/ffi.html).
 
+For a buffer passed across FFI, confirm whether the count is bytes or elements
+and which side supplies capacity and reports the initialized extent. Check the
+failure path before Rust publishes the output. Credit a `debug_assert!` only
+when the effective build enables it and the condition proves the required
+precondition. [Cargo profile settings](https://doc.rust-lang.org/cargo/reference/profiles.html#debug-assertions)
+
 ## Pinning, async cancellation and reentrancy
 
 For `Pin::new_unchecked`, unchecked projection, lifetime erasure or manual Unpin,

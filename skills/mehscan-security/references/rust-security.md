@@ -3,8 +3,9 @@
 <!-- runtime:routing -->
 For Rust source, use `guidance(name="rust-security")` for the pattern index when
 needed. Load `rust-memory` for unsafe invariants, lifetimes, panic cleanup,
-thread sharing or pinning; load `rust-boundaries` for parser/resource limits,
-archives, protocol transitions and credentials. Load only the relevant guide.
+thread sharing or pinning. Load `rust-boundaries` for parser and resource limits,
+archives, CLI arguments, async request lifetimes, protocol transitions or
+credentials. Load only the relevant guide.
 Use `rust-attack-surfaces` when selecting scenarios for an application or when
 a candidate's impact depends on its caller. Start from the actual entry point,
 actor or safe caller, then trace the deciding guard and effect. Apply this

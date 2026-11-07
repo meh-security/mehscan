@@ -7,7 +7,10 @@ Keep these claims separate from unsafe-code soundness.
 ## Length headers and cumulative work
 
 Bind the decoded length to the reservation/resize/repeat/collection operation.
-Check units, conversions and a limit before the effect. `try_reserve` reports some
+Check units, conversions and a limit before the effect. For record counts,
+offsets and strides, follow intermediate arithmetic to the exact value used by
+the guard and the allocation, slice or copy. Check whether narrowing, wrapping
+or saturation changes that value. `try_reserve` reports some
 allocation failures but does not impose a workload budget; a limit after allocation
 is too late. Growing only as bytes arrive avoids trusting an absent payload but
 still needs an overall limit for genuinely large streams. This distinction is
@@ -82,6 +85,11 @@ memory corruption. [ANSSI error guidance](https://anssi-fr.github.io/rust-guide/
 helps locate fallible paths; a policy preference for Result is not sufficient to
 report DoS.
 
+Trace an `unwrap` or `expect` back to the exact failed operation, such as a
+checked multiply returning `None`. Check whether an earlier bound rules out
+that failure on the same value. For a propagated error, inspect the caller's
+response and any allocation or mutation that already happened.
+
 For repeated scanning, recursion or decompression, identify the repeated range and
 the measure that should decrease. A geometric input series and operation counts
 can demonstrate superlinear work without a service attack. Retain the enabled
@@ -115,6 +123,29 @@ Record known access flags separately from unknown flags and from the path policy
 Protection on the final path component leaves the parent components to verify.
 For recursive deletion, trace the same selected path and the condition that enables
 overwrite or cleanup, even when extraction has a separate guard.
+
+## CLI argument interpretation
+
+Follow checkout, archive or IPC data to the actual launched program. Use
+[process review](categories/process-code.md) to distinguish executable selection,
+shell text and argument operands. For a direct `Command::arg`, inspect the
+callee's option or path grammar and confirm whether its operand separator
+applies at that position. On Windows, check the selected program's argument
+decoding, especially `cmd.exe` and batch files. [Rust Command](https://doc.rust-lang.org/std/process/struct.Command.html#method.arg)
+
+## Async request and stream lifetimes
+
+For a slow operation, bind attacker-controlled work to the executor that runs
+it and the requests that share that executor. For work offloaded to a blocking
+pool, inspect admission and queue limits and what happens after the caller
+times out. For a held lock, identify its type, where the guard drops and which
+other task needs that lock to make progress. [Tokio blocking tasks](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html) ·
+[Tokio mutexes](https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html)
+
+For a timeout, disconnect or losing `select!` branch, identify which future
+is dropped and what survives. Check partially read protocol state, queued work
+and committed effects before retry. A complete control restores the invariant
+or safely resumes the same operation. [Tokio cancellation safety](https://docs.rs/tokio/latest/tokio/macro.select.html#cancellation-safety)
 
 ## Protocol transitions and credentials
 
