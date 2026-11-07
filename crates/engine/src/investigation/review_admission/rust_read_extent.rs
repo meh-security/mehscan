@@ -2,7 +2,7 @@
 use super::*;
 use rust_allocation::method;
 use rust_module_bindings::Project;
-use rust_receiver_types::lexical_binding;
+use rust_receiver_types::{ReaderContract, lexical_binding};
 use rust_shared_state::AstNode as N;
 
 fn named<'a, 'node>(node: &'node N<'a>) -> impl Iterator<Item = N<'a>> + use<'a, 'node> {
@@ -322,52 +322,48 @@ fn can_change_buffer(node: &N<'_>, name: &str) -> bool {
     }
 }
 
+fn statement_expression(statement: N<'_>) -> N<'_> {
+    if statement.kind() == "expression_statement" {
+        only(named(&statement)).unwrap_or(statement)
+    } else {
+        statement
+    }
+}
+
+fn plain_if(statement: N<'_>) -> Option<N<'_>> {
+    let node = statement_expression(statement);
+    (node.kind() == "if_expression" && node.field("alternative").is_none()).then_some(node)
+}
+
+fn rejects(branch: &N<'_>) -> bool {
+    branch.field("consequence").is_some_and(|body| {
+        only(named(&body))
+            .is_some_and(|stmt| statement_expression(stmt).kind() == "return_expression")
+    })
+}
+
 fn guard<'a>(
     block: &N<'a>,
     before: usize,
     decoder: &N<'a>,
     resolve: impl Fn(N<'a>) -> Option<N<'a>>,
 ) -> Option<N<'a>> {
-    for statement in named(block).filter(|n| n.range().end <= before) {
-        let n = if statement.kind().as_ref() == "expression_statement" {
-            only(named(&statement)).unwrap_or(statement)
-        } else {
-            statement
-        };
-        if n.kind().as_ref() != "if_expression" || n.field("alternative").is_some() {
-            continue;
-        }
-        let Some(condition) = n.field("condition") else {
-            continue;
-        };
-        let Some(op) = condition.field("operator") else {
-            continue;
-        };
-        let Some(length) = (match op.text().as_ref() {
-            ">" | ">=" => condition.field("left"),
-            "<" | "<=" => condition.field("right"),
-            _ => None,
-        }) else {
-            continue;
-        };
-        if !resolve(length).is_some_and(|value| value.range() == decoder.range()) {
-            continue;
-        }
-        let Some(body) = n.field("consequence") else {
-            continue;
-        };
-        if only(named(&body)).is_some_and(|stmt| {
-            let stmt = if stmt.kind().as_ref() == "expression_statement" {
-                only(named(&stmt)).unwrap_or(stmt)
-            } else {
-                stmt
-            };
-            stmt.kind().as_ref() == "return_expression"
-        }) {
-            return Some(n);
-        }
-    }
-    None
+    named(block)
+        .filter(|n| n.range().end <= before)
+        .filter_map(plain_if)
+        .find(|n| {
+            n.field("condition")
+                .and_then(|condition| {
+                    let length = match condition.field("operator")?.text().as_ref() {
+                        ">" | ">=" => condition.field("left"),
+                        "<" | "<=" => condition.field("right"),
+                        _ => None,
+                    }?;
+                    resolve(length)
+                })
+                .is_some_and(|value| value.range() == decoder.range())
+                && rejects(n)
+        })
 }
 
 pub(super) fn evidence<'a>(
@@ -444,6 +440,20 @@ fn read_captures<'a>(
             rust_dependencies::capture(file, decoder),
         ),
     ]);
+    add_read_support(&mut captures, support);
+    if let Some(guard) = comparison {
+        captures.insert(
+            "allocation_guard".into(),
+            rust_dependencies::capture(file, &guard),
+        );
+    }
+    captures
+}
+
+fn add_read_support(
+    captures: &mut BTreeMap<String, Capture>,
+    support: impl Iterator<Item = Capture>,
+) {
     let mut locations = BTreeSet::new();
     for (i, item) in support
         .filter(|item| {
@@ -457,13 +467,6 @@ fn read_captures<'a>(
     {
         captures.insert(format!("read_extent_support_{i:02}"), item);
     }
-    if let Some(guard) = comparison {
-        captures.insert(
-            "allocation_guard".into(),
-            rust_dependencies::capture(file, &guard),
-        );
-    }
-    captures
 }
 
 fn byteorder_decode<'a>(root: &N<'a>, call: &N<'a>) -> Option<(&'static str, Vec<N<'a>>)> {
@@ -494,6 +497,145 @@ fn byteorder_decode<'a>(root: &N<'a>, call: &N<'a>) -> Option<(&'static str, Vec
 fn self_field<'a>(value: &N<'a>) -> Option<N<'a>> {
     (value.kind() == "field_expression" && value.field("value")?.kind() == "self")
         .then(|| value.field("field"))?
+}
+
+fn scalar_read<'a>(call: &N<'a>) -> Option<(N<'a>, String, N<'a>)> {
+    let generic = call.field("function")?;
+    if generic.kind() != "generic_function" || named(&call.field("arguments")?).next().is_some() {
+        return None;
+    }
+    let (receiver, method) = method(call)?;
+    if !matches!(method.as_str(), "read_i32" | "read_i64")
+        || call.parent()?.kind() != "try_expression"
+    {
+        return None;
+    }
+    self_field(&receiver)?;
+    Some((
+        receiver,
+        method,
+        only(named(&generic.field("type_arguments")?))?,
+    ))
+}
+
+fn negative_guard<'a>(
+    block: &N<'a>,
+    before: usize,
+    decoder: &N<'a>,
+    function: &N<'a>,
+) -> Option<N<'a>> {
+    named(block)
+        .filter(|n| n.range().end <= before)
+        .filter_map(plain_if)
+        .find(|branch| {
+            let Some(binding) = branch.field("condition").and_then(|condition| {
+                let (value, zero) = match condition.field("operator")?.text().as_ref() {
+                    "<" => (condition.field("left")?, condition.field("right")?),
+                    ">" => (condition.field("right")?, condition.field("left")?),
+                    _ => return None,
+                };
+                (zero.text() == "0").then_some(())?;
+                rust_receiver_types::local_binding(&value, function)
+            }) else {
+                return false;
+            };
+            // Comparing an already cast unsigned alias to zero is not a sign check.
+            binding.field("value").is_some_and(|value| {
+                value.kind() == "try_expression"
+                    && only(named(&value)).is_some_and(|call| call.range() == decoder.range())
+            }) && rejects(branch)
+        })
+}
+
+pub(super) fn scalar_field_evidence<'a>(
+    root: &N<'a>,
+    extent: &N<'a>,
+    allocation: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+    project: &Project<'a>,
+) -> Option<BTreeMap<String, Capture>> {
+    let resolve = |node| decoded_length(root, node, function, |call| scalar_read(call).is_some());
+    let decoder = resolve(extent.clone())?;
+    let (reader, method, endian) = scalar_read(&decoder)?;
+    let (identity, endian_import) =
+        crate::code::rust_http::canonical(root, &endian, &endian.text())?;
+    if !matches!(
+        identity.as_str(),
+        "byteorder::BigEndian" | "byteorder::LittleEndian"
+    ) {
+        return None;
+    }
+    let (identity, extension) = crate::code::rust_http::canonical(root, &decoder, "ReadBytesExt")?;
+    if identity != "byteorder::ReadBytesExt" {
+        return None;
+    }
+    let imports = [endian_import, Some(extension?)];
+    let declaration = decoder
+        .ancestors()
+        .find(|n| n.kind() == "let_declaration")?;
+    let block = declaration.parent()?;
+    if block.kind() != "block"
+        || declaration.range().end > allocation.range().start
+        || allocation
+            .ancestors()
+            .find(|n| n.kind() == "block")?
+            .range()
+            != block.range()
+        || std::iter::once(&decoder)
+            .chain(imports.iter().flatten())
+            .any(|n| !project.selected(&project.locate(file, n.clone())))
+    {
+        return None;
+    }
+    let support = rust_receiver_types::reader_field_support(
+        project,
+        &reader,
+        function,
+        file,
+        ReaderContract::Scalar(&method),
+    )?;
+    let mut captures = BTreeMap::from([(
+        "scalar_length_read".into(),
+        rust_dependencies::capture(file, &decoder),
+    )]);
+    add_read_support(
+        &mut captures,
+        support.into_iter().chain(
+            imports
+                .iter()
+                .flatten()
+                .map(|n| rust_dependencies::capture(file, n)),
+        ),
+    );
+    let before = allocation.range().start;
+    let optional = named(&block)
+        .filter(|n| n.range().end <= before)
+        .filter_map(plain_if)
+        .find(|branch| {
+            branch
+                .field("condition")
+                .is_some_and(|condition| condition.kind() == "let_condition")
+                && branch.field("consequence").is_some_and(|body| {
+                    guard(&body, before, &decoder, resolve)
+                        .is_some_and(|inner| project.selected(&project.locate(file, inner)))
+                })
+        });
+    for (key, comparison) in [
+        ("allocation_guard", guard(&block, before, &decoder, resolve)),
+        ("allocation_optional_guard", optional),
+        (
+            "allocation_sign_guard",
+            negative_guard(&block, before, &decoder, function),
+        ),
+    ] {
+        if let Some(comparison) =
+            comparison.filter(|n| project.selected(&project.locate(file, n.clone())))
+        {
+            captures.insert(key.into(), rust_dependencies::capture(file, &comparison));
+        }
+    }
+    Some(captures)
 }
 
 // Admit a same-block sequence only. The successful read and decoder must be
@@ -582,8 +724,13 @@ pub(super) fn async_field_evidence<'a>(
     {
         return None;
     }
-    let support =
-        rust_receiver_types::async_reader_field_support(project, &reader, function, file)?;
+    let support = rust_receiver_types::reader_field_support(
+        project,
+        &reader,
+        function,
+        file,
+        ReaderContract::Async,
+    )?;
     let comparison = guard(&block, allocation.range().start, &decoder, resolve)
         .filter(|guard| project.selected(&project.locate(file, guard.clone())));
     Some(read_captures(

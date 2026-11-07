@@ -212,7 +212,7 @@ fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<(N<'a>, bool)> {
     let children = tokens.children().collect::<Vec<_>>();
     let semicolon = children.iter().position(|n| n.text() == ";")?;
     let count = children.get(semicolon + 1)?;
-    // The optional primitive cast is interpreted only by the read-filled
+    // The optional primitive cast is interpreted only by the decoded-length
     // path. Do not expand the macro or treat other count expressions as IDs.
     let suffix = &children[semicolon + 2..];
     let (closing, cast) = match suffix {
@@ -270,6 +270,8 @@ pub(super) fn groups(
         let Some(root) = parsed.root(&file.path) else {
             continue;
         };
+        let has_read_exact = file.source.contains("read_exact");
+        let has_scalar_read = file.source.contains("read_i32") || file.source.contains("read_i64");
         let api = rust_raw_memory::ApiNames::new(&root, &["with_capacity"]);
         for call in root.dfs().filter(|n| {
             matches!(n.kind().as_ref(), "call_expression" | "macro_invocation")
@@ -354,11 +356,21 @@ pub(super) fn groups(
                     "input_parameter".into(),
                     rust_dependencies::capture(file, &parameter),
                 )])
-            } else if file.source.contains("read_exact") && function.text().contains("read_exact") {
+            } else {
+                if !has_read_exact && !has_scalar_read {
+                    continue;
+                }
+                let body = function.text();
+                let read_filled = has_read_exact && body.contains("read_exact");
+                let scalar_read =
+                    has_scalar_read && (body.contains("read_i32") || body.contains("read_i64"));
+                if !read_filled && !scalar_read {
+                    continue;
+                }
                 let project = module_bindings.get_or_init(|| {
                     rust_module_bindings::Project::build(sources, parsed, selection)
                 });
-                let Some(input) =
+                let read_evidence = if read_filled {
                     rust_read_extent::evidence(&root, &extent, &call, &function, file, project)
                         .or_else(|| {
                             vector_method.then_some(())?;
@@ -366,12 +378,18 @@ pub(super) fn groups(
                                 &root, &extent, &call, &function, file, project,
                             )
                         })
-                else {
+                } else {
+                    None
+                };
+                let Some(input) = read_evidence.or_else(|| {
+                    scalar_read.then_some(())?;
+                    rust_read_extent::scalar_field_evidence(
+                        &root, &extent, &call, &function, file, project,
+                    )
+                }) else {
                     continue;
                 };
                 input
-            } else {
-                continue;
             };
             let location = rust_dependencies::capture(file, &call).location;
             if scope.is_some_and(|s| {
@@ -401,6 +419,9 @@ pub(super) fn groups(
             ];
             if input.contains_key("input_read") {
                 tags.push("read-filled-allocation-extent".into());
+            }
+            if input.contains_key("scalar_length_read") {
+                tags.push("signed-wire-allocation-extent".into());
             }
             if input.contains_key("allocation_guard") {
                 tags.push("pre-allocation-rejecting-comparison".into());

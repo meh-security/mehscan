@@ -533,19 +533,42 @@ pub(super) fn std_reader_support<'a>(
     })
 }
 
-// Resolve only a bare generic field on the current inherent impl. Concrete
+#[derive(Clone, Copy)]
+pub(super) enum ReaderContract<'a> {
+    Async,
+    Scalar(&'a str),
+}
+
+impl ReaderContract<'_> {
+    fn reader_trait(self) -> &'static str {
+        match self {
+            Self::Async => "tokio::io::AsyncRead",
+            Self::Scalar(_) => "std::io::Read",
+        }
+    }
+
+    fn method(&self) -> &str {
+        match self {
+            Self::Async => "read_exact",
+            Self::Scalar(method) => method,
+        }
+    }
+}
+
+// Resolve only a bare generic field on the current impl. Concrete
 // types can have inherent methods with the same name as a reader extension.
-pub(super) fn async_reader_field_support<'a>(
+pub(super) fn reader_field_support<'a>(
     project: &Project<'a>,
     value: &N<'a>,
     function: &N<'a>,
     file: &'a SourceFile,
+    contract: ReaderContract<'_>,
 ) -> Option<Vec<Capture>> {
     if value.kind().as_ref() != "field_expression" || value.field("value")?.text() != "self" {
         return None;
     }
     let implementation = function.ancestors().find(|n| n.kind() == "impl_item")?;
-    if implementation.field("trait").is_some() {
+    if matches!(contract, ReaderContract::Async) && implementation.field("trait").is_some() {
         return None;
     }
     let ty = implementation.field("type")?;
@@ -594,6 +617,7 @@ pub(super) fn async_reader_field_support<'a>(
     }
     for clause in implementation
         .children()
+        .chain(function.children())
         .filter(|n| n.kind() == "where_clause")
     {
         constraints.extend(named(&clause));
@@ -607,7 +631,7 @@ pub(super) fn async_reader_field_support<'a>(
             continue;
         }
         if let Some(bounds) = constraint.field("bounds") {
-            reader |= resolver.async_read_bounds(&bounds, &mut support, 0)?;
+            reader |= resolver.reader_bounds(&bounds, &mut support, contract, 0)?;
         }
     }
     if !reader {
@@ -619,10 +643,11 @@ pub(super) fn async_reader_field_support<'a>(
 }
 
 impl<'a> Resolver<'a, '_> {
-    fn async_read_bounds(
+    fn reader_bounds(
         &self,
         bounds: &N<'a>,
         support: &mut Vec<Capture>,
+        contract: ReaderContract<'_>,
         depth: usize,
     ) -> Option<bool> {
         if depth > 4 || !self.selected(bounds) {
@@ -640,22 +665,29 @@ impl<'a> Resolver<'a, '_> {
             let (identity, import) =
                 crate::code::rust_http::canonical(&root, &bound, &bound.text())?;
             match identity.as_str() {
-                "tokio::io::AsyncRead" => reader = true,
-                "tokio::io::AsyncWrite" | "Unpin" | "Send" | "Sync" | "Sized" => (),
+                identity if identity == contract.reader_trait() => reader = true,
+                "tokio::io::AsyncWrite"
+                | "std::io::Write"
+                | "Unpin"
+                | "Send"
+                | "Sync"
+                | "Sized" => (),
                 _ => {
                     let (item, route) = self.item(&bound, &bound.text(), 0)?;
                     if item.node.kind() != "trait_item"
                         || item.node.field("body")?.children().any(|n| {
-                            n.field("name").is_some_and(|n| n.text() == "read_exact")
+                            n.field("name")
+                                .is_some_and(|n| n.text() == contract.method())
                                 || n.kind() == "macro_invocation"
                         })
                         || item.node.children().any(|n| n.kind() == "where_clause")
                     {
                         return None;
                     }
-                    reader |= self.at(item.clone()).async_read_bounds(
+                    reader |= self.at(item.clone()).reader_bounds(
                         &item.node.field("bounds")?,
                         support,
+                        contract,
                         depth + 1,
                     )?;
                     support.extend(route);

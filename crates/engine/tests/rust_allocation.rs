@@ -113,6 +113,85 @@ impl<T: CustomRead> Framing<T> {
     );
 }
 
+#[test]
+fn signed_reader_field_extent_preserves_sign_and_conditional_cap() {
+    let source = r#"
+use byteorder::{BigEndian, ReadBytesExt};
+use std::io::{self, Read};
+
+trait Reader: Read {}
+struct Decoder<R> { reader: R, max: Option<usize> }
+trait Frames { fn body(&mut self) -> io::Result<Vec<u8>>; }
+
+impl<R: Reader> Frames for Decoder<R> {
+    fn body(&mut self) -> io::Result<Vec<u8>> {
+        let size = self.reader.read_i32::<BigEndian>()? as usize;
+        Ok(vec![0; size])
+    }
+}
+impl<R: Reader> Decoder<R> {
+    fn capped(&mut self) -> io::Result<Vec<u8>> {
+        let size = self.reader.read_i32::<BigEndian>()?;
+        if size < 0 { return Err(io::Error::other("negative")); }
+        if let Some(max) = self.max {
+            if size as usize > max { return Err(io::Error::other("too large")); }
+        }
+        Ok(vec![0; size as usize])
+    }
+    fn wrong_sign_check(&mut self) -> io::Result<Vec<u8>> {
+        let size = self.reader.read_i32::<BigEndian>()? as usize;
+        if size < 0 { return Err(io::Error::other("too late")); }
+        Ok(Vec::with_capacity(size))
+    }
+    fn shadowed_bound(&mut self) -> io::Result<Vec<u8>> where R: CustomRead {
+        let size = self.reader.read_i32::<BigEndian>()? as usize;
+        Ok(vec![0; size])
+    }
+}
+trait CustomRead: Read {
+    fn read_i32<E>(&mut self) -> io::Result<i32> { Ok(4) }
+}
+struct Unrelated;
+impl Unrelated { fn read_i32<E>(&mut self) -> io::Result<i32> { Ok(4) } }
+impl Decoder<Unrelated> {
+    fn same_name(&mut self) -> io::Result<Vec<u8>> {
+        let size = self.reader.read_i32::<BigEndian>()? as usize;
+        Ok(vec![0; size])
+    }
+}
+"#;
+    let root = support::temp_dir("signed-reader-field-extent");
+    fs::write(root.join("lib.rs"), source).unwrap();
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&root, None, false).unwrap();
+    let found: std::collections::BTreeMap<_, _> = job
+        .observation_reviews
+        .iter()
+        .flat_map(|review| &review.evidence)
+        .filter(|e| e.rule_id == "rust-allocation-extent-review")
+        .map(|e| {
+            assert!(e.captures.contains_key("scalar_length_read"));
+            assert!(!e.captures.contains_key("allocation_guard"));
+            (
+                e.enclosing_symbol.as_deref().unwrap(),
+                (
+                    e.captures.contains_key("allocation_sign_guard"),
+                    e.captures.contains_key("allocation_optional_guard"),
+                ),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("body", (false, false)),
+            ("capped", (true, true)),
+            ("wrong_sign_check", (false, false))
+        ]
+        .into()
+    );
+}
+
 fn review(source: &str) -> Vec<String> {
     let root = support::temp_dir("allocation-review");
     fs::create_dir_all(root.join("src")).unwrap();
