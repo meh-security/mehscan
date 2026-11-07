@@ -21,6 +21,7 @@
   "docs/release-notes-v0.11.0.md",
   "docs/review-state.md",
   "docs/review-worker.md",
+  "docs/rust-security-coverage.md",
   "scripts/github_action.py",
   "scripts/review_context.py",
   "scripts/review_source.py",
