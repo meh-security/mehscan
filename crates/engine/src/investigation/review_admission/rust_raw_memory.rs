@@ -52,7 +52,7 @@ fn without_generics(value: &str) -> String {
     }
     text
 }
-fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
+pub(super) fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
     let value = without_generics(&compact(value));
     let (mut result, _) = crate::code::rust_http::canonical(root, site, &value)?;
     if result == "Drop"
@@ -96,7 +96,7 @@ fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
     }
     Some(result)
 }
-fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
+pub(super) fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
     let mut function = call.field("function")?;
     if function.kind().as_ref() == "generic_function" {
         function = function.field("function")?;

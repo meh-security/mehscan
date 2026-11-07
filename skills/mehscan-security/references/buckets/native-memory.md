@@ -1,43 +1,7 @@
-# Native memory and parser state
+# C/C++ memory and parser state
 
 Match the exact operation to its authoritative extent, object and branch.
 Attacker-controlled input is not required for every memory defect.
-
-Rust `raw_operation_definition` and the captured parameter/owner identify the
-selected operation. Review each invariant separately: vector metadata uses
-element counts and initialized length no greater than capacity; ownership must
-transfer the same live allocation exactly once; retyping must preserve allocation
-size/alignment and valid initialized representation. A byte pointer's apparent
-alignment does not establish the allocation layout required at deallocation.
-`Copy` does not exclude padding, and a plain-data bound alone does not guarantee
-that changing the allocation's element alignment is valid. A repair for metadata
-or padding is not closure for another invariant. See the
-[vector reconstruction contract](https://doc.rust-lang.org/std/vec/struct.Vec.html#method.from_raw_parts).
-
-For raw slices and copies exposed through safe APIs, check every relevant pointer,
-extent, alignment, mutability and lifetime condition. A non-null check does not
-validate arbitrary non-null addresses or lengths. For slice-derived pointers,
-compare the count with the exact source/destination bounds before the operation;
-account for element size and overlap. `copy` permits overlap;
-`copy_nonoverlapping` does not. Bitwise copying owning values also needs an
-ownership transfer: inspect the actual source suppression and destination Drop,
-including custom element Drop and unwind paths. Follow the original binding
-through moves and shadowing; forgetting a replacement owner does not release the
-original one. An opaque helper leaves its precise effect unresolved. See
-[raw-copy requirements](https://doc.rust-lang.org/std/ptr/fn.copy_nonoverlapping.html).
-
-Distinguish consuming the owner from forgetting a reference or derived pointer:
-the latter does not disable the backing container's destructor. After drop is
-disabled, trace actual reallocations, additional owners and handoffs of that
-allocation before reconstruction. A `ManuallyDrop` constructor does not prove
-the captured allocation remains live after a later helper or mutation.
-
-`rust_context_*` captures provide bounded typed definitions, import/re-export
-bindings and macro bodies as source context. They do not prove trait dispatch,
-macro expansion, active features, caller authority or a transaction's coverage.
-Use the exact bound implementation when established; identify the unresolved
-binding/configuration when it decides the result. Optional context is separate
-from the selected operation's applicability.
 
 `native_operand_declaration` locates the scalar's declared type; inspect typedefs,
 promotions and the value at the operation before deciding its arithmetic domain.
@@ -52,8 +16,6 @@ all caller preconditions. A boundary names the unresolved binding or caller.
 | Parser remaining input | Cursor bound and `length <= total - cursor` before the read; `cursor + length` may wrap. |
 | Fixed-layout blob | Reported source length against the exact copy extent. Allocation size is a different invariant. |
 | Subtracted copy count | The original integer's lower bound before subtraction, its promotions and conversion into the actual copy-count parameter. |
-| Rust raw slice | A concrete pointer state, the same owned field and a rejecting non-null boundary before construction, including zero length. |
-| Initialized buffer prefix | The initialized element range before a stored position becomes logical length, including any gap skipped by an FFI writer. Capacity is separate. |
 | Ownership/lifetime | Same allocation, pointer, release family and reachable path. A failed-allocation return is not a post-allocation leak. |
 | Format string | Whether the complete format is compile-time fixed; runtime text should be a data argument or constrained as a whole format. |
 
@@ -110,29 +72,3 @@ selected allocation's cleanup without treating every entry as newly owned.
 Deleting with a different allocation family or an opaque cleanup helper does
 not establish correct cleanup. Keep unrelated throw sites, failed insertion,
 double deletion and other lifetime claims separate from the selected exit.
-
-For Rust raw slices, use `null_pointer`, `safe_constructor`, `field_transfer`
-and `safe_accessor` to check that a possible null state belongs to the same
-object field. A raw slice requires a non-null pointer even for zero length.
-Returning an empty slice before construction can settle this invariant;
-alignment, initialized extent, single-allocation range, lifetime and aliasing
-remain separate. A generic `unsafe` block or FFI declaration alone establishes
-no such relationship. See the [raw-slice safety requirements](https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html#safety).
-
-For initialized-prefix questions, distinguish allocation capacity, initialized
-length and output position. Follow the same mutable buffer from safe construction
-through the carrier and publisher; inspect the supplied standard-vector effect
-and any initializing write. A source-bound trait implementation is a concrete
-witness, not proof about every implementation. Helper names do not establish
-effects. A safe library API can expose a real invariant violation for valid
-caller arguments without an HTTP entry point.
-
-Before `Vec::set_len`, the newly exposed elements must already be initialized.
-An FFI writer starting at a nonzero position may leave an earlier gap untouched.
-Zero filling settles that gap only when its exact pointer, starting offset,
-count, branch and order cover the range before publication. Partial writes,
-unknown helper effects or initialization after exposure do not establish that
-coverage. Preserve a complete earlier initialization as a negative control;
-otherwise identify the precise missing effect or dispatch fact. Keep null,
-alignment, capacity, lifetime and initialization claims separate. See
-[the vector length contract](https://doc.rust-lang.org/std/vec/struct.Vec.html#method.set_len).

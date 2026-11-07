@@ -241,6 +241,26 @@ class SourceReview(unittest.TestCase):
         inventory = json.loads((self.base / "admitted/inventory.json").read_text())
         self.assertEqual(len(inventory["entries"]), 2)
 
+    def test_zero_candidate_rust_worker_receives_the_bound_language_router(self):
+        import review_context as context
+        (self.root / "Widget.razor").unlink()
+        (self.root / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf8")
+        self.inventory = self.base / "rust-inventory"
+        self.native("investigate", "review-inventory", self.root,
+                    "--repository-key", "acceptance:rust-source", "--output", self.inventory)
+        self.assertEqual(json.loads((self.inventory / "inventory.json").read_text())["entries"], [])
+        result = subprocess.run(self.prepare_worker(proposal=False), capture_output=True,
+                                text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        packets = list((self.base / "worker/source-review/jobs").glob("*/context.json"))
+        self.assertTrue(packets)
+        router = context.language_contracts(SKILL, ["lib.rs"])[0]["text"]
+        for path in packets:
+            packet = json.loads(path.read_text(encoding="utf8"))
+            self.assertEqual(packet["native_questions"], [])
+            self.assertIn(router, packet["contract"])
+            self.assertNotIn("pub fn bad_bytes", packet["contract"])
+
     def test_native_admission_rejects_unseen_fabricated_and_altered_plans(self):
         for name in ("quote", "range", "plan", "zero", "duplicate"):
             with self.subTest(name=name):

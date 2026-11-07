@@ -13,5 +13,8 @@
   "angular-output":{"path":"angular-output-review.md","when":"Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings"},
   "parser-resource":{"path":"categories/parser-resource.md","when":"Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits"},
   "crypto-configuration":{"path":"buckets/crypto-configuration.md","when":"Signing/encryption, password hashing, randomness, cookie or CORS settings"},
-  "native-memory":{"path":"buckets/native-memory.md","when":"C/C++ bounds, lifetime, ownership or native parser state"}
+  "native-memory":{"path":"buckets/native-memory.md","when":"C/C++ bounds, lifetime, ownership or native parser state"},
+  "rust-security":{"path":"rust-security.md","when":"Rust safe APIs, soundness, Cargo features/targets, advisory applicability or source discovery without native candidates"},
+  "rust-memory":{"path":"rust-memory.md","when":"Rust unsafe extents/initialization, panic cleanup, Send/Sync, FFI lifetimes, pinning or cancellation"},
+  "rust-boundaries":{"path":"rust-boundaries.md","when":"Rust parser and cumulative resource limits, archive containment, protocol transitions or credential consumers"}
 }

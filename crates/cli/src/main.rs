@@ -655,6 +655,27 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         return Err("--journal is available only for read-only investigation queries".to_string());
     }
     match operation.as_str() {
+        "rust-advisories" => {
+            let database = PathBuf::from(parsed.required("--database")?);
+            let include = parsed
+                .optional_bool("--include-informational")?
+                .unwrap_or(true);
+            let output = parsed.optional("--output").map(PathBuf::from);
+            parsed.finish()?;
+            let report = engine(mehscan_engine::rust_advisories::inspect(
+                &root, &database, include,
+            ))?;
+            if let Some(path) = output {
+                fs::write(
+                    path,
+                    serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            } else {
+                print_json(&report)
+            }
+        }
         "provenance" => {
             let prefix = parsed.optional("--path-prefix");
             let limit = parsed.optional_usize("--limit")?;
@@ -4570,6 +4591,7 @@ fn print_investigation_help() {
 
 USAGE:
   mehscan investigate funnel [ROOT]
+  mehscan investigate rust-advisories [ROOT] --database DIR [--include-informational true|false] [--output FILE]
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE [--inventory DIR] [--evidence-ids ID,ID]
   mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE [--inventory DIR] [--evidence-ids ID,ID]

@@ -127,7 +127,7 @@ fn source_bound_publication_chain_preserves_the_deciding_initialization_code() {
             bundle
                 .review_playbooks
                 .get(&review.id)
-                .is_some_and(|playbook| playbook.bucket == "native_memory")
+                .is_some_and(|playbook| playbook.bucket == "rust_memory")
         }));
     }
 }

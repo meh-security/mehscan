@@ -2,12 +2,22 @@ use super::*;
 mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
+mod rust_allocation;
+mod rust_archive;
 mod rust_buffer_initialization;
 mod rust_configuration;
 mod rust_credential_renewal;
 mod rust_dependencies;
+mod rust_extent_arithmetic;
+mod rust_memory_boundaries;
+mod rust_module_bindings;
+mod rust_panic_cleanup;
+mod rust_parser_resource;
+mod rust_protocol_credentials;
 mod rust_raw_memory;
+mod rust_receiver_types;
 mod rust_shared_state;
+mod rust_thread_safety;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -71,6 +81,7 @@ fn server_mutation_review_marker_groups(
     let parsed = rust_dependencies::RustSources::build(sources, &selection);
     let models = rust_shared_state::ModelBindings::build(sources, &selection, &parsed);
     let dependencies = rust_dependencies::Dependencies::build(sources, &selection, &parsed);
+    let allocation_groups = rust_allocation::groups(sources, scope, &selection, &parsed);
     let mut groups = rust_shared_state::configured_groups_with_context(
         sources,
         existing_evidence,
@@ -80,6 +91,26 @@ fn server_mutation_review_marker_groups(
         &parsed,
         &models,
     );
+    groups.extend(allocation_groups);
+    groups.extend(rust_archive::groups(sources, scope, &selection, &parsed));
+    groups.extend(rust_protocol_credentials::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_extent_arithmetic::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_parser_resource::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_panic_cleanup::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_thread_safety::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_memory_boundaries::groups(
+        sources, scope, &selection, &parsed,
+    ));
     groups.extend(rust_credential_renewal::configured_groups_with_context(
         sources,
         existing_evidence,
@@ -597,11 +628,124 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    if let Some(e) = evidence.iter().find(|e| {
+        e.tags
+            .iter()
+            .any(|t| t == "rust-protocol-credential-obligation")
+    }) {
+        let (relationship, title, question) = match e.rule_id.as_str() {
+            "rust-http-framing-forward-review" => (
+                "bounded_rust_http_framing_review",
+                "Review HTTP framing before forwarding",
+                "Do the same request headers and forwarded bytes have one unambiguous message boundary at every peer? Inspect captured Content-Length/Transfer-Encoding handling, raw byte provenance, conflicting/duplicate values, rejection before forwarding, connection reuse and actual downstream parsing. Reading both headers is not a smuggling finding. A strict rejection or single canonical reserialization can be a clean control; demonstrate a bounded peer disagreement before claiming request smuggling.",
+            ),
+            "rust-default-credential-header-review" => (
+                "bounded_rust_credential_header_policy_review",
+                "Review default credential header destinations",
+                "Can these default authentication-like headers reach an unintended origin through the configured client, redirects or reused requests? Inspect actual credential meaning, destination authority, redirect policy and version-specific header stripping. Standard Authorization and custom API-key headers can behave differently. A disabled redirect policy or fixed authorized origin can be a control; builder configuration alone does not prove delivery or exposure.",
+            ),
+            "rust-jwt-verification-policy-review" => (
+                "bounded_rust_jwt_verification_policy_review",
+                "Review consumed token verification policy",
+                "Can an untrusted token reach this decode with signature checking disabled on the same Validation object? Trace the captured policy mutation and consuming call, key/algorithm and claims checks, later rejection and actual authentication/authorization use. Parsing a token for non-authoritative display can differ from trusting it. A secure verifier on the deciding path can be a control; signature-disabled syntax alone does not establish an account takeover.",
+            ),
+            _ => (
+                "bounded_rust_credential_output_review",
+                "Review generated credential output",
+                "Does this output actually expose a usable generated token to an unintended reader? Trace the exact token producer, direct formatter argument, log visibility, redaction, token validity and lifetime. A length/digest, test-only dummy or authorized intentional display is a different effect. Source linkage does not establish log deployment or severity, and this review does not enable generic literal-secret scanning.",
+            ),
+        };
+        return Some(OperationReviewContract {
+            relationship,
+            title,
+            security_question: question,
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.rule_id == "rust-allocation-extent-arithmetic-review")
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_extent_arithmetic_review",
+            title: "Review allocation extent arithmetic",
+            security_question: "Can caller-influenced size arithmetic wrap, narrow or produce a mismatched extent before allocation? Inspect operand types, element counts versus bytes, arithmetic order, checked/saturating/wrapping behavior and guards before computation. Debug overflow panic and release wrapping differ; allocation failure or a later bounds check does not repair prior arithmetic. Checked arithmetic with a rejecting error path and valid small extents are controls. Establish consequential use and caller constraints before claiming memory corruption or denial of service.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.capability == Capability::RustParserResourceReview)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_input_parser_resource_review",
+            title: "Review input-backed parser panic boundary",
+            security_question: "Can an allowed short or malformed byte input reach this indexing or get(...).unwrap operation without an effective rejecting bound? Check every endpoint, arithmetic before the check, exact input length and the parser's caller contract. Distinguish an ordinary panic/precondition from a remotely consequential abort or service denial; inspect catch_unwind, panic profile and isolation before assigning availability impact. Guarded access or fallible get/Result conversion can be clean controls. This is not a memory-unsafety claim and does not prove arbitrary recursion or expansion behavior.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "rust-panic-cleanup-obligation"))
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_panic_cleanup_review",
+            title: "Review metadata across element destruction",
+            security_question: "If this element destructor panics, does the same owner's live-element metadata already exclude the destroyed value before later cleanup? Trace the captured raw drop, metadata assignments, actual owner Drop and generic destructor behavior. Preserve control flow, partial initialization and guards. Updating metadata before destruction can be a repaired control; a nonpanicking concrete element or unwind guard can change applicability. Establish the safe catch_unwind/callback path and repeated destruction rather than calling every raw drop a double free.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "rust-thread-safety-obligation"))
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_thread_safety_review",
+            title: "Review unsafe thread-transfer contract",
+            security_question: "Does this unsafe Send/Sync implementation preserve the same stored values' thread-transfer/sharing requirements? Inspect captured fields, generic bounds, interior mutability, synchronization, ownership, PhantomData and type-erased callbacks/futures. A mutex or bound must cover the exact storage and operation. Establish a safe caller that transfers or shares forbidden state, or retain the unresolved contract. Unsafe impl syntax alone is not a defect; complete bounds and valid synchronized storage can be clean controls.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.capability == Capability::RustArchiveExtractionReview)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_archive_extraction_review",
+            title: "Review archive extraction boundary",
+            security_question: "Can archive-controlled names, link targets or metadata escape the intended extraction boundary or cause an unauthorized overwrite? Trace archive provenance, exact library implementation/version/options, destination and platform path/symlink semantics. For entry-path writes inspect containment BEFORE the write, for the same resolved destination. Distinguish tar Entry::unpack's explicit destination from Entry::unpack_in's root and library containment behavior, using the captured method. For library extraction inspect its actual guarantees; using unpack/extract alone is not a vulnerability. Keep resource limits, permissions and overwrite policy distinct. A documented local API boundary can be assessed without inventing a remote caller; deployment impact needs its real caller binding.",
+        });
+    }
+    if evidence
+        .iter()
+        .any(|e| e.capability == Capability::RustAllocationReview)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_rust_allocation_extent_review",
+            title: "Review caller-influenced allocation extent",
+            security_question: "Can untrusted callers control this allocation extent, directly or through decoded lengths? Establish the actual input boundary, element size, arithmetic/casts, available payload and effective rejecting limits BEFORE allocation. A public parameter alone does not prove attacker control. Receiver support captures witness selected fields, aliases and helper return declarations, including the source-owned module/target route when crossing files. Check applicable configuration; declarations do not prove helper value semantics, trait dispatch, generic substitution or custom dereferencing. Distinguish bounded allocation, capacity overflow, allocation-error abort, resident memory growth and recoverable errors; catch_unwind does not catch allocation-error abort. Keep guards and embedding quotas in scope; this marker proves neither missing limits nor denial of service.",
+        });
+    }
     if let Some(e) = evidence
         .iter()
         .find(|e| e.capability == Capability::RustRawMemoryReview)
     {
         let (question, title) = match e.rule_id.as_str() {
+            "rust-unchecked-index-review" => (
+                "Can a safe caller select an index or range outside this exact slice/vector's initialized length? Check all range endpoints, overflow, same-object bounds, rejecting guards and mutable aliasing before get_unchecked/get_unchecked_mut. Forming an invalid reference is UB even without a later dereference. A guard retained in source may establish a valid control; admission is not a missing-check verdict.",
+                "Review unchecked indexing boundary",
+            ),
+            "rust-vector-length-publication-review" => (
+                "Are all elements exposed by this set_len initialized and valid, and is the new length no greater than the same allocation's capacity? Capacity is not initialized length. Trace writes, their order, element representation, length units, caller preconditions and panic paths. Shrinking length can be valid but changes drop behavior; do not infer uninitialized exposure from the call alone.",
+                "Review vector length publication",
+            ),
+            "rust-pointer-offset-review" => (
+                "Does pointer arithmetic stay within the same live allocation or its permitted one-past boundary, without arithmetic overflow? Establish offset units, element size, provenance and subsequent access. Non-null does not establish allocation membership; add/sub/offset and wrapping variants have different contracts. Safe-call reachability alone does not establish that the pointer is dereferenced.",
+                "Review raw pointer offset",
+            ),
+            "rust-assume-initialized-review" => (
+                "Has the exact MaybeUninit value been fully initialized with a valid representation before assume_init/read/ref/mut/drop? Inspect writes, padding versus value validity, initialized-prefix accounting and duplicate owning reads. zeroed is invalid for some types; a new(initialized_value) control can be valid. Do not assume a write occurred from capacity or field names.",
+                "Review initialization assertion",
+            ),
+            "rust-transmute-representation-review" => (
+                "Does the source value establish the destination representation, alignment, lifetime and aliasing invariants for this transmute/transmute_copy? Equal size is insufficient; pointer/integer provenance, invalid enum/bool/reference values and duplicated owners are separate obligations. Inspect actual generic types and safe caller values rather than treating all retyping as a defect.",
+                "Review representation conversion",
+            ),
             "rust-vector-metadata-review" => (
                 "Do the reconstructed vector's length and capacity operands represent the correct element counts, with initialized length no greater than its actual capacity? Trace their source and arithmetic. Ownership and allocation layout are separate obligations.",
                 "Review reconstructed vector metadata",

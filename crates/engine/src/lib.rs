@@ -14,6 +14,7 @@ mod report_policy;
 pub mod repository;
 pub mod review_runtime;
 pub mod rules;
+pub mod rust_advisories;
 pub mod secrets;
 pub mod typescript_semantic;
 

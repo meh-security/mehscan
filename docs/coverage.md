@@ -23,6 +23,9 @@ The [database coverage guide](extended-database-coverage.md) lists supported
 receiver and query shapes in more detail. Optional compiler backends are separate
 from standard scanning and do not make unsupported relationships complete.
 
+The [Rust security coverage guide](rust-security-coverage.md) describes selected
+library invariants, protocol/credential reviews and offline RustSec metadata.
+
 C and C++ copy-count analysis follows selected source-defined constructors and
 free helpers into standard memory operations. Typed C++ braced returns can carry
 the same relationship across files. A matching lower bound closes subtraction
@@ -72,6 +75,43 @@ copy ranges and ownership remain separate questions. Supported direct operations
 and source-defined copy helpers retain their source and binding evidence.
 Arbitrary pointer aliasing, generated code and whole-program soundness remain
 outside these bounded relationships.
+
+Additional Rust safe-function reviews recognize unchecked indexing on witnessed
+slices, arrays and vectors; vector length publication; typed pointer offsets;
+MaybeUninit initialization assertions; and standard representation conversions.
+The source retains guards, typed bindings and the selected operation's complete
+definition. Explicit unsafe-function caller contracts, unknown field receivers,
+arbitrary traits and whole-program lifetimes remain outside this safe-boundary
+recognition. Guarded operations remain questions until their invariant is assessed.
+
+Selected unsafe Send/Sync reviews connect standard trait assertions to the same
+local struct's generic fields or recognized interior-mutability storage. Bounds
+and synchronized controls are retained, not assumed missing. Selected panic
+cleanup reviews connect raw destruction of owner storage to scalar metadata
+assignments and the same owner's Drop implementation. Ordering, unwinding and
+actual generic destructor behavior remain reviewer obligations. These models
+do not prove general trait soundness or exception safety.
+
+Rust allocation reviews connect recognized `Vec::with_capacity`, typed vector
+reserve/resize calls and `vec![value; count]` with a single identifier count to
+parameters through selected local expressions. Review retains the
+enclosing checks and asks whether caller authority, payload bounds and limits
+constrain allocation before it occurs. Dynamic capacity alone is not a finding.
+The repeat form is inspected without expanding arbitrary macros. Mutable local
+value propagation, reader-to-buffer mutation effects, arbitrary wrappers and
+cross-function extent propagation remain outside this selected relationship.
+
+Rust archive reviews recognize selected tar/zip extraction methods using local
+constructors or explicit receiver types. Selected ZIP entry names from
+`by_index`/`by_name` connect to standard file creation, writing and directory
+creation through bounded local expressions. Enclosing checks and options remain
+available for review. Selected tar `entries`/`entries_with_seek` loops carry
+entry path provenance through local Result handling to writes or per-entry
+`unpack`/`unpack_in` operations. The exact extraction method remains evidence;
+root-based extraction is not equated with an explicit output path.
+Extraction APIs may enforce their own containment; their
+use alone is not a vulnerability. Arbitrary iterator adapters, cross-file wrappers,
+trait dispatch and filesystem race guarantees remain outside this recognition.
 
 Rust policy reviews share prepared type, import/re-export, helper and macro
 source context. Definitions are not universal trait-dispatch or macro-expansion
