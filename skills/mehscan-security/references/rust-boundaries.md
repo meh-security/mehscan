@@ -22,6 +22,14 @@ any intervening writes and what the bound measures. A remaining-input check can
 exclude allocation for a missing payload while leaving a separate question about
 the cost of a large payload that is actually present.
 
+When a decoder reads a scalar through a reader field, follow the field type,
+trait bounds and imported extension trait to establish that the value comes
+from input. For signed lengths, check which negative values can reach the
+conversion to `usize`. Follow each reachable format or compatibility branch to
+its own allocation. A limit in a shared string decoder covers only branches
+that call it. Check whether callers can disable the limit or select a legacy
+branch, and distinguish those configurations from the default path.
+
 ```rust
 pub fn bad_frame(input: &[u8]) -> Option<Vec<u8>> {
     let n = u32::from_be_bytes(input.get(..4)?.try_into().ok()?) as usize;
