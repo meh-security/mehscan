@@ -13,6 +13,12 @@ is too late. Growing only as bytes arrive avoids trusting an absent payload but
 still needs an overall limit for genuinely large streams. This distinction is
 illustrated by [codeq RUSTSEC-2026-0432](https://rustsec.org/advisories/RUSTSEC-2026-0432.html).
 
+When the length comes from a local header buffer, trace the successful read into
+that buffer and the bytes the decoder consumes. Identify who supplies the reader,
+any intervening writes and what the bound measures. A remaining-input check can
+exclude allocation for a missing payload while leaving a separate question about
+the cost of a large payload that is actually present.
+
 ```rust
 pub fn bad_frame(input: &[u8]) -> Option<Vec<u8>> {
     let n = u32::from_be_bytes(input.get(..4)?.try_into().ok()?) as usize;
@@ -61,6 +67,10 @@ options: [pulldown-cmark RUSTSEC-2026-0433](https://rustsec.org/advisories/RUSTS
 depends on wikilink parsing, including when enabled through `Options::all()`.
 Small output does not establish small parsing cost. Bounded input and disabled
 features are distinct controls; neither fixes the enabled implementation itself.
+When a parser invokes a callback or populates internal state before returning an
+event, inspect that helper before crediting limits applied by the event consumer.
+Track which counter or budget is shared across recursion or iterations and when it
+is checked, reset or overridden.
 
 ## Archive names and actual writes
 
@@ -76,6 +86,13 @@ containment does not by itself resolve existing symlinks, archive-created links,
 check/write races, Windows drive/UNC paths or platform-specific normalization.
 A repaired control must address the claimed property and filesystem assumptions.
 Load `path-selection` and `file-network` for the specific containment relationship.
+
+For `OpenOptions`, follow the builder returned by the helper through the caller's
+setters to the exact `open`, including retry closures and target-specific branches.
+Record known access flags separately from unknown flags and from the path policy.
+Protection on the final path component leaves the parent components to verify.
+For recursive deletion, trace the same selected path and the condition that enables
+overwrite or cleanup, even when extraction has a separate guard.
 
 ## Protocol transitions and credentials
 

@@ -19,6 +19,48 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn rust_filesystem_removal_resolves_imports_without_borrowing_local_names() {
+    let fixture = Fixture::new(
+        "rust-removal-imports",
+        &[(
+            "app.rs",
+            r#"
+use std::{fs as disk, fs::remove_file as unlink};
+fn remove_tree(path: &str) { let _ = disk::remove_dir_all(path); }
+fn remove_file(path: &str) { let _ = unlink(path); }
+fn explicit(path: &str) { let _ = std::fs::remove_dir(path); }
+fn local_import(path: &str) { use std::fs; let _ = fs::remove_dir(path); }
+fn local_function(path: &str) { fn unlink(_: &str) {} unlink(path); }
+fn callback(path: &str) { let _ = |unlink: fn(&str)| unlink(path); }
+fn closure(path: &str) { let _ = |unlink| unlink(path); }
+fn loop_binding(path: &str, callbacks: Vec<fn(&str)>) { for unlink in callbacks { unlink(path); } }
+fn match_binding(path: &str, callback: Option<fn(&str)>) { if let Some(unlink) = callback { unlink(path); } }
+mod child { use application::fs as disk; fn custom(path: &str) { disk::remove_dir_all(path); } }
+mod sibling { fn invisible(path: &str) { disk::remove_dir_all(path); } }
+mod shadowed { mod std { pub mod fs {} } use std::fs; fn custom(path: &str) { fs::remove_dir_all(path); } }
+"#,
+        )],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    let mut effects = inventory
+        .scan
+        .evidence
+        .iter()
+        .filter(|item| item.rule_id == "rust-filesystem-write")
+        .map(|item| {
+            assert_eq!(item.captures["path"].text, "path");
+            item.enclosing_symbol.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    effects.sort_unstable();
+    assert_eq!(
+        effects,
+        ["explicit", "local_import", "remove_file", "remove_tree"]
+    );
+}
+
+#[test]
 fn rust_open_options_tracks_effects_aliases_and_uncertainty_once_per_open() {
     let fixture = Fixture::new(
         "open-options",
@@ -50,6 +92,15 @@ fn alias_expression(path: &str, choose: bool) { let mut a = Options::new(); a.re
 fn typed_local(path: &str) { let o: std::fs::OpenOptions = configured(); let _ = o.open(path); }
 fn configured_options() -> Options { let mut o = Options::new(); o.write(true); o }
 fn helper_return(path: &str) { let _ = configured_options().create_new(true).open(path); }
+fn opened_by_callback(path: &str) { let o = configured_options(); let open = |p| o.open(p); let _ = open(path); }
+fn dynamic_defaults(allow_replace: bool) -> Options { let mut o = platform_defaults(); o.create_new(!allow_replace).create(allow_replace).write(true); o }
+fn helper_partial(path: &str, replace: bool) { let mut o = dynamic_defaults(replace); { use std::os::unix::fs::OpenOptionsExt; o.mode(0o600); } let open = |p| o.open(p); let _ = open(path); }
+fn escaped_defaults() -> Options { let mut o = Options::new(); o.write(true); configure(&mut o); o }
+fn helper_escaped(path: &str) { let _ = escaped_defaults().open(path); }
+fn conditional_defaults(branch: bool) -> Options { let mut o = Options::new(); o.read(true); if branch { o.write(true); } o }
+fn helper_conditional(path: &str, branch: bool) { let _ = conditional_defaults(branch).open(path); }
+fn different_builder() -> Options { let mut first = Options::new(); first.write(true); let mut second = Options::new(); second.read(true); second }
+fn helper_other(path: &str) { let _ = different_builder().open(path); }
 fn permissions(path: &str) { let mut o = Options::new(); o.write(true).create_new(true); std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600); let _ = o.open(path); }
 fn else_outer(path: &str, value: Option<Custom>) { let mut options = Options::new(); options.read(true); if let Some(options) = value { use_custom(options); } else { let _ = options.open(path); } }
 fn separate(path: &str) { let mut o = Options::new(); o.read(true); let _ = o.open(path); o.write(true); let _ = o.open(path); }
@@ -103,12 +154,21 @@ trait Reader {
         ("alias_branch", Capability::FilesystemRead, "unresolved"),
         ("alias_expression", Capability::FilesystemRead, "unresolved"),
         ("typed_local", Capability::FilesystemRead, "unresolved"),
-        ("helper_return", Capability::FilesystemWrite, "unresolved"),
+        ("helper_return", Capability::FilesystemWrite, "write"),
+        ("opened_by_callback", Capability::FilesystemWrite, "write"),
+        ("helper_partial", Capability::FilesystemWrite, "unresolved"),
+        ("helper_escaped", Capability::FilesystemRead, "unresolved"),
+        (
+            "helper_conditional",
+            Capability::FilesystemRead,
+            "unresolved",
+        ),
+        ("helper_other", Capability::FilesystemRead, "read"),
         ("permissions", Capability::FilesystemWrite, "write"),
         ("else_outer", Capability::FilesystemRead, "read"),
         ("nested", Capability::FilesystemRead, "read"),
         ("method_import", Capability::FilesystemRead, "read"),
-        ("method_factory", Capability::FilesystemWrite, "unresolved"),
+        ("method_factory", Capability::FilesystemWrite, "write"),
         ("trait_import", Capability::FilesystemRead, "read"),
     ] {
         let effects = inventory
@@ -127,7 +187,11 @@ trait Reader {
             effect.tags.contains(&format!("filesystem-mode:{mode}")),
             "{symbol}: {effect:?}"
         );
-        assert_eq!(effect.captures["path"].text, "path", "{symbol}");
+        let captured_path = match symbol {
+            "opened_by_callback" | "helper_partial" => "p",
+            _ => "path",
+        };
+        assert_eq!(effect.captures["path"].text, captured_path, "{symbol}");
         assert_eq!(effect.context.operand_facts.len(), 1);
         assert_eq!(
             effect.context.operand_facts[0].remaining_checks.is_empty(),
@@ -173,6 +237,8 @@ mod nested { pub fn inherited(path: &str) { let _ = OpenOptions::new().open(path
 fn wrapper() -> Vec<std::fs::OpenOptions> { unimplemented!() }
 fn wrapper_return(path: &str) { let _ = wrapper().read(true).open(path); }
 fn factory() -> std::fs::OpenOptions { unimplemented!() }
+async fn async_factory() -> std::fs::OpenOptions { unimplemented!() }
+fn async_lookalike(path: &str) { let _ = async_factory().open(path); }
 fn shadowed_factory(path: &str) { let factory = || Custom; let _ = factory().open(path); }
 fn closure_shadow(path: &str) { let options = std::fs::OpenOptions::new(); let _ = |options| options.open(path); }
 fn for_shadow(path: &str, values: Vec<Custom>) { let options = std::fs::OpenOptions::new(); for options in values { let _ = options.open(path); } }

@@ -103,10 +103,17 @@ fn module_boundary(node: &RustNode<'_>) -> bool {
 }
 
 #[derive(Default)]
-struct Names {
+pub(super) struct Names {
     names: BTreeMap<(ScopeId, String), Option<String>>,
     globs: BTreeSet<ScopeId>,
-    factories: BTreeSet<(ScopeId, String)>,
+    functions: BTreeSet<(ScopeId, String)>,
+    factories: BTreeMap<(ScopeId, String), Factory>,
+}
+
+#[derive(Clone, Copy)]
+struct Factory {
+    standard: bool,
+    flags: [Option<bool>; 6],
 }
 
 impl Names {
@@ -121,7 +128,7 @@ impl Names {
         })
     }
 
-    fn new(root: &RustNode<'_>) -> Self {
+    pub(super) fn new(root: &RustNode<'_>) -> Self {
         let mut result = Self::default();
         let mut functions = BTreeMap::<_, Vec<_>>::new();
         // Index namespace declarations once, including nested module and local
@@ -138,9 +145,15 @@ impl Names {
                     | "trait_item"
                     | "type_item"
                     | "type_parameter"
+                    | "const_item"
+                    | "static_item"
                     | "extern_crate_declaration"
                     | "let_declaration"
                     | "parameter"
+                    | "let_condition"
+                    | "for_expression"
+                    | "match_arm"
+                    | "closure_parameters"
             ) {
                 continue;
             }
@@ -173,66 +186,184 @@ impl Names {
                     | "trait_item"
                     | "type_item"
                     | "type_parameter"
+                    | "const_item"
+                    | "static_item"
                     | "extern_crate_declaration"
             ) {
                 if let Some(name) = node.field("alias").or_else(|| node.field("name")) {
                     result.names.insert((owner, name.text().into_owned()), None);
                 }
-            } else if matches!(node.kind().as_ref(), "let_declaration" | "parameter")
-                && let Some(pattern) = node.field("pattern")
-            {
-                for name in pattern.dfs().filter(|n| n.kind().as_ref() == "identifier") {
-                    result.names.insert((owner, name.text().into_owned()), None);
+            } else {
+                let (owner, patterns) = match node.kind().as_ref() {
+                    "for_expression" | "match_arm" => (
+                        scope_id(&node),
+                        node.field("pattern").into_iter().collect::<Vec<_>>(),
+                    ),
+                    "closure_parameters" => (
+                        owner,
+                        node.children()
+                            .filter(|n| n.is_named() && n.kind().as_ref() != "parameter")
+                            .collect(),
+                    ),
+                    _ => (owner, node.field("pattern").into_iter().collect()),
+                };
+                for pattern in patterns {
+                    for name in pattern.dfs().filter(|n| n.kind().as_ref() == "identifier") {
+                        result.names.insert((owner, name.text().into_owned()), None);
+                    }
                 }
             }
         }
+        result.functions.extend(functions.keys().cloned());
         for (key, definitions) in functions {
             if definitions.len() == 1
                 && !result.names.contains_key(&key)
-                && definitions[0]
-                    .field("return_type")
-                    .is_some_and(|ty| result.options_type(&ty, &definitions[0]))
+                && !definitions[0].children().any(|n| {
+                    n.kind().as_ref() == "function_modifiers"
+                        && n.children().any(|modifier| modifier.text() == "async")
+                })
+                && let Some(ty) = definitions[0].field("return_type")
+                && let Some(standard) = result.options_owner(&ty, &definitions[0])
             {
-                result.factories.insert(key);
+                let flags = result
+                    .factory_flags(&definitions[0], standard)
+                    .unwrap_or([None; 6]);
+                result.factories.insert(key, Factory { standard, flags });
             }
         }
         result
     }
 
     fn options_type(&self, ty: &RustNode<'_>, at: &RustNode<'_>) -> bool {
-        if ty.kind().as_ref() == "reference_type" {
-            return ty
-                .field("type")
-                .is_some_and(|inner| self.options_type(&inner, at));
-        }
-        matches!(
-            ty.kind().as_ref(),
-            "type_identifier" | "scoped_type_identifier"
-        ) && self.canonical(at, ty.text().as_ref()).is_some_and(|name| {
-            matches!(
-                name.as_str(),
-                "std::fs::OpenOptions" | "tokio::fs::OpenOptions"
-            )
-        })
+        self.options_owner(ty, at).is_some()
     }
 
-    fn factory(&self, at: &RustNode<'_>, name: &str) -> bool {
+    fn options_owner(&self, ty: &RustNode<'_>, at: &RustNode<'_>) -> Option<bool> {
+        if ty.kind().as_ref() == "reference_type" {
+            return self.options_owner(&ty.field("type")?, at);
+        }
+        if !matches!(
+            ty.kind().as_ref(),
+            "type_identifier" | "scoped_type_identifier"
+        ) {
+            return None;
+        }
+        match self.canonical(at, ty.text().as_ref())?.as_str() {
+            "std::fs::OpenOptions" => Some(true),
+            "tokio::fs::OpenOptions" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn factory(&self, at: &RustNode<'_>, name: &str) -> Option<Factory> {
         for owner in at.ancestors().filter(scope) {
             let key = (scope_id(&owner), name.into());
             if self.names.contains_key(&key) {
-                return false;
+                return None;
             }
-            if self.factories.contains(&key) {
-                return true;
+            if let Some(factory) = self.factories.get(&key) {
+                return Some(*factory);
+            }
+            if self.functions.contains(&key) {
+                return None;
             }
             if module_boundary(&owner) {
                 break;
             }
         }
-        false
+        None
     }
 
-    fn canonical(&self, at: &RustNode<'_>, text: &str) -> Option<String> {
+    fn factory_flags(&self, function: &RustNode<'_>, standard: bool) -> Option<[Option<bool>; 6]> {
+        // Only summarize ordered setters on the exact local returned at the
+        // tail. An opaque initializer establishes no defaults. A use outside
+        // the setter chain can change or replace the builder, so decline it.
+        if function.field("return_type")?.kind().as_ref() == "reference_type" {
+            return None;
+        }
+        let body = function.field("body")?;
+        if body.range().len() > 4096
+            || body.dfs().any(|n| {
+                n.is_error()
+                    || n.is_missing()
+                    || matches!(
+                        n.kind().as_ref(),
+                        "return_expression" | "attribute_item" | "macro_invocation"
+                    )
+            })
+        {
+            return None;
+        }
+        let mut statements = body
+            .children()
+            .filter(|n| n.is_named() && !n.kind().contains("comment"))
+            .collect::<Vec<_>>();
+        let tail = statements.pop()?;
+        if tail.kind().as_ref() != "identifier" {
+            return None;
+        }
+        let name = tail.text();
+        let mut flags = None;
+        for statement in statements {
+            if !statement
+                .dfs()
+                .any(|n| n.kind().as_ref() == "identifier" && n.text() == name)
+            {
+                continue;
+            }
+            if statement.kind().as_ref() == "let_declaration"
+                && statement
+                    .field("pattern")
+                    .is_some_and(|n| n.kind().as_ref() == "identifier" && n.text() == name)
+            {
+                let init = statement.field("value")?;
+                let fresh = init.kind().as_ref() == "call_expression"
+                    && init
+                        .field("function")
+                        .and_then(|n| self.canonical(&init, &n.text()))
+                        .is_some_and(|path| match path.as_str() {
+                            "std::fs::OpenOptions::new" | "std::fs::File::options" => standard,
+                            "tokio::fs::OpenOptions::new" | "tokio::fs::File::options" => !standard,
+                            _ => false,
+                        });
+                flags = Some([fresh.then_some(false); 6]);
+                continue;
+            }
+            let mut chain = statement.children().find(|n| n.is_named())?;
+            if statement.kind().as_ref() != "expression_statement" {
+                return None;
+            }
+            let mut updates = Vec::new();
+            while chain.kind().as_ref() == "call_expression" {
+                let method = chain.field("function")?;
+                let field = method.field("field")?;
+                let flag = FLAGS.iter().position(|flag| field.text() == *flag)?;
+                let args = chain.field("arguments")?;
+                let mut args = args
+                    .children()
+                    .filter(|n| n.is_named() && !n.kind().contains("comment"));
+                let arg = args.next()?;
+                if args.next().is_some()
+                    || arg
+                        .dfs()
+                        .any(|n| n.kind().as_ref() == "identifier" && n.text() == name)
+                {
+                    return None;
+                }
+                updates.push((flag, boolean(&arg)));
+                chain = method.field("value")?;
+            }
+            if chain.kind().as_ref() != "identifier" || chain.text() != name || updates.is_empty() {
+                return None;
+            }
+            for (flag, value) in updates.into_iter().rev() {
+                flags.as_mut()?[flag] = value;
+            }
+        }
+        flags
+    }
+
+    pub(super) fn canonical(&self, at: &RustNode<'_>, text: &str) -> Option<String> {
         let text = text.trim();
         let head = text.trim_start_matches("::").split("::").next()?;
         // Absolute paths still require an external standard library spelling.
@@ -240,10 +371,17 @@ impl Names {
             return matches!(head, "std" | "tokio").then(|| text[2..].into());
         }
         for ancestor in at.ancestors().filter(scope) {
-            if let Some(value) = self.names.get(&(scope_id(&ancestor), head.into())) {
+            let key = (scope_id(&ancestor), head.into());
+            if self.functions.contains(&key) {
+                return None;
+            }
+            if let Some(value) = self.names.get(&key) {
                 let resolved = value
                     .as_ref()
                     .map(|base| format!("{base}{}", &text[head.len()..]))?;
+                if let Some(absolute) = resolved.strip_prefix("::") {
+                    return Some(absolute.into());
+                }
                 let library = resolved.split("::").next()?;
                 // An import written through a locally shadowed `std`/`tokio`
                 // path does not prove an external SDK identity.
@@ -268,6 +406,39 @@ impl Names {
         }
         matches!(head, "std" | "tokio").then(|| text.into())
     }
+}
+
+fn boolean(node: &RustNode<'_>) -> Option<bool> {
+    match node.text().as_ref() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn direct_open_closure(node: &RustNode<'_>) -> bool {
+    // A bare `.open(path)` only borrows a standard builder. Repeated calls
+    // cannot change its access flags through that shared borrow.
+    let Some(body) = node
+        .field("body")
+        .filter(|n| n.kind().as_ref() == "call_expression")
+    else {
+        return false;
+    };
+    body.field("function").is_some_and(|function| {
+        function.kind().as_ref() == "field_expression"
+            && function
+                .field("value")
+                .is_some_and(|n| n.kind().as_ref() == "identifier")
+            && function.field("field").is_some_and(|n| n.text() == "open")
+    }) && body.field("arguments").is_some_and(|args| {
+        let mut args = args
+            .children()
+            .filter(|n| n.is_named() && !n.kind().contains("comment"));
+        args.next()
+            .is_some_and(|n| n.kind().as_ref() == "identifier")
+            && args.next().is_none()
+    })
 }
 
 #[derive(Clone)]
@@ -467,7 +638,8 @@ impl<'a> Walker<'a, '_> {
                     | "loop_expression"
                     | "closure_expression"
                     | "async_block"
-            ) {
+            ) && !(node.kind().as_ref() == "closure_expression" && direct_open_closure(node))
+            {
                 // A later loop iteration/closure invocation can observe setters
                 // that occur after an open in source order.
                 // Lazy invalidation keeps this O(1) even in files with many
@@ -560,15 +732,7 @@ impl<'a> Walker<'a, '_> {
                     .uncertain
                     .iter()
                     .any(|start| self.objects[id].origin < *start);
-                self.objects[id].flags[flag] = if conditional {
-                    None
-                } else {
-                    match args[0].text().as_ref() {
-                        "true" => Some(true),
-                        "false" => Some(false),
-                        _ => None,
-                    }
-                };
+                self.objects[id].flags[flag] = if conditional { None } else { boolean(&args[0]) };
                 return Some(id);
             }
             if method == "clone" && args.is_empty() {
@@ -585,11 +749,11 @@ impl<'a> Walker<'a, '_> {
         }
         if function.kind().as_ref() == "identifier"
             && self.binding(call, function.text().as_ref()).is_none()
-            && self.names.factory(call, function.text().as_ref())
+            && let Some(factory) = self.names.factory(call, function.text().as_ref())
         {
-            // Declared SDK return ownership is sufficient for an observation,
-            // never for importing the helper's effective settings or callers.
-            return Some(self.allocate(call.range().start, [None; 6]));
+            let id = self.allocate(call.range().start, factory.flags);
+            self.objects[id].standard = factory.standard;
+            return Some(id);
         }
         None
     }
