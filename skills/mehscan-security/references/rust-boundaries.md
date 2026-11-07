@@ -42,6 +42,13 @@ compressed-input cap does not bound decompressed output, recursion or CPU work.
 [calamine RUSTSEC-2026-0436](https://rustsec.org/advisories/RUSTSEC-2026-0436.html)
 includes a malformed chain that grows storage without a useful iteration bound.
 
+For queues, compare what each accepted item charges with what the receiver
+retains. A payload-byte window can leave empty frames free even when each
+creates a queue entry. Trace the insertion, the consumer's dequeue, and any
+separate item or overhead budget. Check whether a discard preserves terminal
+signals and whether discarded work and delivered items return the same credit.
+[h2 empty DATA frames](https://rustsec.org/advisories/RUSTSEC-2026-0258.html)
+
 ## Compressed request bodies
 
 Trace the enabled codec from content-encoding selection to the first output
