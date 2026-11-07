@@ -143,7 +143,6 @@ fn repeated_vectors_and_typed_growth_keep_extent_questions() {
     let source = r#"
 pub fn repeated(n:usize)->Vec<u8>{vec![0; n]}
 pub fn qualified_repeat(n:usize)->Vec<u8>{std::vec![0; n]}
-pub fn reader<R:std::io::Read>(mut input:R)->std::io::Result<Vec<u8>>{let mut h=[0;4];input.read_exact(&mut h)?;let n=u32::from_be_bytes(h) as usize;Ok(vec![0;n])}
 pub fn reader_method<R:std::io::Read>(mut input:R)->Vec<u8>{let n=input.read_u32() as usize;vec![0;n]}
 pub fn generic_reader<R:byteorder::ReadBytesExt>(mut input:R)->std::io::Result<Vec<u8>>{let n=input.read_u32::<byteorder::BigEndian>()? as usize;Ok(vec![0;n])}
 pub fn reserve(n:usize){let mut v=Vec::<u8>::new();v.reserve(n);}
@@ -171,7 +170,103 @@ pub fn foreign(v:&mut Other,n:usize){v.reserve(n);}
             "reserve"
         ]
     );
-    // Header mutation and interprocedural read_exact effects are not modeled.
+}
+
+#[test]
+fn read_filled_extent_keeps_only_the_reaching_buffer_and_same_length_guard() {
+    let source = r#"
+use std::io::{self, Read};
+struct Decoder { file: std::fs::File }
+fn take<const N: usize>(bytes: &[u8]) -> [u8; N] { bytes[..N].try_into().expect("header") }
+impl Decoder {
+    fn unchecked(&mut self) -> io::Result<Vec<u8>> {
+        let mut head = [0u8; 5]; self.file.read_exact(&mut head).map_err(|err| err)?;
+        let length = u32::from_be_bytes(take(&head[1..]));
+        let count = usize::try_from(length).map_err(io::Error::other)?;
+        Ok(vec![0u8; count])
+    }
+}
+fn guarded<R: Read>(mut reader: R, limit: u32) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 4]; std::io::Read::read_exact(&mut reader, &mut head)?;
+    let length = u32::from_be_bytes(head);
+    if length > limit { return Err(io::Error::other("limit")); }
+    Ok(vec![0u8; length as usize])
+}
+fn generic(reader: &mut impl Read) -> io::Result<Vec<u8>> {
+    let payload = {
+        let mut head = [0u8; 4]; reader.read_exact(&mut head)?;
+        let count = u32::from_be_bytes(head) as usize;
+        let unrelated = 0;
+        if unrelated > 1024 { return Err(io::Error::other("other length")); }
+        vec![0u8; count]
+    };
+    Ok(payload)
+}
+fn modified<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 4]; reader.read_exact(&mut head)?;
+    head[0] = 0;
+    let count = u32::from_be_bytes(head) as usize;
+    Ok(vec![0u8; count])
+}
+fn conditional<R: Read>(mut reader: R, run: bool) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 4]; if run { reader.read_exact(&mut head)?; }
+    let count = u32::from_be_bytes(head) as usize;
+    Ok(vec![0u8; count])
+}
+fn short_width<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 2]; reader.read_exact(&mut head)?;
+    let count = u16::from_be_bytes(head) as usize;
+    Ok(vec![0u8; count])
+}
+fn constant_adapter(_: &[u8]) -> [u8; 4] { [0; 4] }
+fn opaque<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 4]; reader.read_exact(&mut head)?;
+    let count = u32::from_be_bytes(constant_adapter(&head)) as usize;
+    Ok(vec![0u8; count])
+}
+struct Foreign;
+impl Foreign { fn read_exact(&mut self, _: &mut [u8]) -> io::Result<()> { Ok(()) } }
+fn foreign(mut reader: Foreign) -> io::Result<Vec<u8>> {
+    let mut head = [0u8; 4]; reader.read_exact(&mut head)?;
+    let count = u32::from_be_bytes(head) as usize;
+    Ok(vec![0u8; count])
+}
+"#;
+    let root = support::temp_dir("read-filled-allocation");
+    fs::write(root.join("lib.rs"), source).unwrap();
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&root, None, false).unwrap();
+    let mut evidence = job
+        .observation_reviews
+        .iter()
+        .flat_map(|review| &review.evidence)
+        .filter(|e| e.rule_id == "rust-allocation-extent-review")
+        .collect::<Vec<_>>();
+    evidence.sort_by_key(|e| e.enclosing_symbol.as_deref().unwrap());
+    assert_eq!(
+        evidence
+            .iter()
+            .map(|e| e.enclosing_symbol.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["generic", "guarded", "unchecked"]
+    );
+    for e in &evidence {
+        assert!(e.captures.contains_key("input_read"));
+        assert!(e.captures.contains_key("length_decode"));
+    }
+    assert_eq!(
+        evidence[1].captures["allocation_guard"].text,
+        "if length > limit { return Err(io::Error::other(\"limit\")); }"
+    );
+    assert!(!evidence[0].captures.contains_key("allocation_guard"));
+    assert!(!evidence[2].captures.contains_key("allocation_guard"));
+    assert!(
+        evidence[2]
+            .captures
+            .values()
+            .any(|c| c.text.starts_with("fn take<"))
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

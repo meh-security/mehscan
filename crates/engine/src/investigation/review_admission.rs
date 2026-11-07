@@ -22,6 +22,7 @@ mod rust_parser_provenance;
 mod rust_parser_resource;
 mod rust_protocol_credentials;
 mod rust_raw_memory;
+mod rust_read_extent;
 mod rust_receiver_types;
 mod rust_shared_state;
 mod rust_thread_safety;
@@ -776,7 +777,14 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
         return Some(OperationReviewContract {
             relationship: "bounded_rust_allocation_extent_review",
             title: "Review caller-influenced allocation extent",
-            security_question: "Can untrusted callers control this allocation extent, directly or through decoded lengths? Establish the actual input boundary, element size, arithmetic/casts, available payload and effective rejecting limits BEFORE allocation. A public parameter alone does not prove attacker control. Receiver support captures witness selected fields, aliases and helper return declarations, including the source-owned module/target route when crossing files. Check applicable configuration; declarations do not prove helper value semantics, trait dispatch, generic substitution or custom dereferencing. Distinguish bounded allocation, capacity overflow, allocation-error abort, resident memory growth and recoverable errors; catch_unwind does not catch allocation-error abort. Keep guards and embedding quotas in scope; this marker proves neither missing limits nor denial of service.",
+            security_question: if evidence
+                .iter()
+                .any(|item| item.captures.contains_key("input_read"))
+            {
+                "Who controls the reader that filled this header? Follow the captured decode and conversion to the allocation. Check whether a rejecting comparison uses this exact length and whether its bound is trustworthy, in the correct units, and current for this reader position. Distinguish representability checks from available payload and workload limits. Record whether the operation reserves capacity, eagerly initializes memory, or grows only as payload arrives."
+            } else {
+                "Can untrusted callers control this allocation extent, directly or through decoded lengths? Establish the actual input boundary, element size, arithmetic/casts, available payload and effective rejecting limits BEFORE allocation. A public parameter alone does not prove attacker control. Receiver support captures witness selected fields, aliases and helper return declarations, including the source-owned module/target route when crossing files. Check applicable configuration; declarations do not prove helper value semantics, trait dispatch, generic substitution or custom dereferencing. Distinguish bounded allocation, capacity overflow, allocation-error abort, resident memory growth and recoverable errors; catch_unwind does not catch allocation-error abort. Keep guards and embedding quotas in scope; this marker proves neither missing limits nor denial of service."
+            },
         });
     }
     if let Some(e) = evidence

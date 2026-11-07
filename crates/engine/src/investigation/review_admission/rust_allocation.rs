@@ -205,18 +205,22 @@ pub(super) fn receiver_type<'a>(
     rust_raw_memory::canonical(root, &ty, &ty.text())
 }
 
-fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<N<'a>> {
+fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<(N<'a>, bool)> {
     let tokens = call
         .children()
         .find(|n| n.kind().as_ref() == "token_tree")?;
     let children = tokens.children().collect::<Vec<_>>();
     let semicolon = children.iter().position(|n| n.text() == ";")?;
     let count = children.get(semicolon + 1)?;
-    // Only a single identifier count is interpreted; this is not macro expansion.
-    if !(count.kind().as_ref() == "identifier"
-        && children
-            .get(semicolon + 2)
-            .is_some_and(|n| n.text() == "]" || n.text() == ")" || n.text() == "}"))
+    // The optional primitive cast is interpreted only by the read-filled
+    // path. Do not expand the macro or treat other count expressions as IDs.
+    let suffix = &children[semicolon + 2..];
+    let (closing, cast) = match suffix {
+        [closing] => (closing, false),
+        [op, ty, closing] if op.text() == "as" && ty.text() == "usize" => (closing, true),
+        _ => return None,
+    };
+    if count.kind().as_ref() != "identifier" || !matches!(closing.text().as_ref(), "]" | ")" | "}")
     {
         return None;
     }
@@ -246,7 +250,7 @@ fn repeat_extent<'a>(root: &N<'a>, call: &N<'a>) -> Option<N<'a>> {
     {
         return None;
     }
-    Some(count.clone())
+    Some((count.clone(), cast))
 }
 
 pub(super) fn groups(
@@ -330,10 +334,11 @@ pub(super) fn groups(
             let extent = if constructor || vector_method {
                 call.field("arguments")
                     .and_then(|a| named(&a).into_iter().next())
+                    .map(|extent| (extent, false))
             } else {
                 repeated
             };
-            let Some(extent) = extent else {
+            let Some((extent, macro_cast)) = extent else {
                 continue;
             };
             if !handled_extents.is_empty()
@@ -341,7 +346,25 @@ pub(super) fn groups(
             {
                 continue;
             }
-            let Some(parameter) = origin(&extent, &function, 0) else {
+            let mut input = if let Some(parameter) = (!macro_cast)
+                .then(|| origin(&extent, &function, 0))
+                .flatten()
+            {
+                BTreeMap::from([(
+                    "input_parameter".into(),
+                    rust_dependencies::capture(file, &parameter),
+                )])
+            } else if file.source.contains("read_exact") && function.text().contains("read_exact") {
+                let project = module_bindings.get_or_init(|| {
+                    rust_module_bindings::Project::build(sources, parsed, selection)
+                });
+                let Some(input) =
+                    rust_read_extent::evidence(&root, &extent, &call, &function, file, project)
+                else {
+                    continue;
+                };
+                input
+            } else {
                 continue;
             };
             let location = rust_dependencies::capture(file, &call).location;
@@ -362,14 +385,21 @@ pub(super) fn groups(
                 ("allocation".into(), rust_dependencies::capture(file, &call)),
                 ("extent".into(), rust_dependencies::capture(file, &extent)),
                 (
-                    "input_parameter".into(),
-                    rust_dependencies::capture(file, &parameter),
-                ),
-                (
                     "allocation_definition".into(),
                     rust_dependencies::capture(file, &function),
                 ),
             ]);
+            let mut tags = vec![
+                "review-admission-marker".into(),
+                "caller-influenced-allocation".into(),
+            ];
+            if input.contains_key("input_read") {
+                tags.push("read-filled-allocation-extent".into());
+            }
+            if input.contains_key("allocation_guard") {
+                tags.push("pre-allocation-rejecting-comparison".into());
+            }
+            captures.append(&mut input);
             if let Some(receiver) = receiver_capture {
                 captures.insert("allocation_receiver".into(), receiver);
             }
@@ -391,10 +421,7 @@ pub(super) fn groups(
                     enclosing_symbol: Some(symbol),
                     captures,
                     cwe_candidates: vec!["CWE-789".into(), "CWE-400".into()],
-                    tags: vec![
-                        "review-admission-marker".into(),
-                        "caller-influenced-allocation".into(),
-                    ],
+                    tags,
                     confidence: Confidence::Medium,
                     provenance: Provenance {
                         resolution: Resolution::Ast,

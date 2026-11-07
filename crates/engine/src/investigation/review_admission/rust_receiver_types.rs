@@ -5,6 +5,7 @@ use rust_shared_state::AstNode as N;
 
 enum Type<'a> {
     Vector,
+    StdReader,
     Usize,
     NonNull,
     RawPointer(Located<'a>),
@@ -319,6 +320,13 @@ impl<'a> Resolver<'a, '_> {
                 .as_deref()
             {
                 Some("std::vec::Vec" | "alloc::vec::Vec") => Some(Type::Vector),
+                Some(
+                    "std::fs::File"
+                    | "std::io::BufReader"
+                    | "std::io::Cursor"
+                    | "std::net::TcpStream"
+                    | "std::os::unix::net::UnixStream",
+                ) => Some(Type::StdReader),
                 Some("std::ptr::NonNull" | "core::ptr::NonNull") => Some(Type::NonNull),
                 _ => None,
             };
@@ -512,6 +520,36 @@ pub(super) fn vector_support<'a>(
     type_support(project, value, function, file, |ty| {
         matches!(ty, Type::Vector)
     })
+}
+
+pub(super) fn std_reader_support<'a>(
+    project: &Project<'a>,
+    value: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+) -> Option<Vec<Capture>> {
+    type_support(project, value, function, file, |ty| {
+        matches!(ty, Type::StdReader)
+    })
+}
+
+pub(super) fn function_definition<'a>(
+    project: &Project<'a>,
+    callee: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+) -> Option<(Located<'a>, Vec<Capture>)> {
+    let resolver = Resolver {
+        project,
+        site: project.locate(file, callee.clone()),
+    };
+    if !matches!(callee.kind().as_ref(), "identifier" | "scoped_identifier")
+        || (callee.kind().as_ref() == "identifier" && resolver.value_shadow(callee, function))
+    {
+        return None;
+    }
+    let (definition, support) = resolver.item(callee, &callee.text(), 0)?;
+    (definition.node.kind().as_ref() == "function_item").then_some((definition, support))
 }
 
 pub(super) fn extent_field_support<'a>(
