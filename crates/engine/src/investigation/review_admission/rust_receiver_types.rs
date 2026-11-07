@@ -533,6 +533,147 @@ pub(super) fn std_reader_support<'a>(
     })
 }
 
+// Resolve only a bare generic field on the current inherent impl. Concrete
+// types can have inherent methods with the same name as a reader extension.
+pub(super) fn async_reader_field_support<'a>(
+    project: &Project<'a>,
+    value: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+) -> Option<Vec<Capture>> {
+    if value.kind().as_ref() != "field_expression" || value.field("value")?.text() != "self" {
+        return None;
+    }
+    let implementation = function.ancestors().find(|n| n.kind() == "impl_item")?;
+    if implementation.field("trait").is_some() {
+        return None;
+    }
+    let ty = implementation.field("type")?;
+    let name = ty.field("type")?;
+    let resolver = Resolver {
+        project,
+        site: project.locate(file, value.clone()),
+    };
+    let (record, mut support) = resolver.item(&name, &name.text(), 0)?;
+    if record.node.kind() != "struct_item" {
+        return None;
+    }
+    let owner = resolver.at(record.clone());
+    let name = value.field("field")?.text().into_owned();
+    let fields = record.node.field("body")?;
+    let mut matches = fields
+        .children()
+        .filter(|n| owner.configured(n) && n.field("name").is_some_and(|n| n.text() == name));
+    let field = matches.next()?;
+    if matches.next().is_some() || !owner.selected(&field) {
+        return None;
+    }
+    let field_type = field.field("type")?;
+    if field_type.kind() != "type_identifier" {
+        return None;
+    }
+    let parameters = named(&record.node.field("type_parameters")?);
+    let arguments = named(&ty.field("type_arguments")?);
+    if parameters.len() != arguments.len() {
+        return None;
+    }
+    let index = parameters.iter().position(|p| {
+        p.kind() == "type_parameter"
+            && p.field("name")
+                .is_some_and(|n| n.text() == field_type.text())
+    })?;
+    let actual = &arguments[index];
+    let mut constraints = named(&implementation.field("type_parameters")?);
+    if actual.kind() != "type_identifier"
+        || !constraints.iter().any(|p| {
+            p.kind() == "type_parameter"
+                && p.field("name").is_some_and(|n| n.text() == actual.text())
+        })
+    {
+        return None;
+    }
+    for clause in implementation
+        .children()
+        .filter(|n| n.kind() == "where_clause")
+    {
+        constraints.extend(named(&clause));
+    }
+    let mut reader = false;
+    for constraint in constraints {
+        let parameter = constraint
+            .field("name")
+            .or_else(|| constraint.field("left"));
+        if !parameter.is_some_and(|p| p.text() == actual.text()) {
+            continue;
+        }
+        if let Some(bounds) = constraint.field("bounds") {
+            reader |= resolver.async_read_bounds(&bounds, &mut support, 0)?;
+        }
+    }
+    if !reader {
+        return None;
+    }
+    support.push(owner.capture(&field));
+    support.push(resolver.capture(actual));
+    Some(support)
+}
+
+impl<'a> Resolver<'a, '_> {
+    fn async_read_bounds(
+        &self,
+        bounds: &N<'a>,
+        support: &mut Vec<Capture>,
+        depth: usize,
+    ) -> Option<bool> {
+        if depth > 4 || !self.selected(bounds) {
+            return None;
+        }
+        let root = self.project.root(&self.site)?;
+        let mut reader = false;
+        for bound in named(bounds) {
+            if support.len() >= 32 {
+                return None;
+            }
+            if bound.kind() == "lifetime" {
+                continue;
+            }
+            let (identity, import) =
+                crate::code::rust_http::canonical(&root, &bound, &bound.text())?;
+            match identity.as_str() {
+                "tokio::io::AsyncRead" => reader = true,
+                "tokio::io::AsyncWrite" | "Unpin" | "Send" | "Sync" | "Sized" => (),
+                _ => {
+                    let (item, route) = self.item(&bound, &bound.text(), 0)?;
+                    if item.node.kind() != "trait_item"
+                        || item.node.field("body")?.children().any(|n| {
+                            n.field("name").is_some_and(|n| n.text() == "read_exact")
+                                || n.kind() == "macro_invocation"
+                        })
+                        || item.node.children().any(|n| n.kind() == "where_clause")
+                    {
+                        return None;
+                    }
+                    reader |= self.at(item.clone()).async_read_bounds(
+                        &item.node.field("bounds")?,
+                        support,
+                        depth + 1,
+                    )?;
+                    support.extend(route);
+                    support.push(item.capture());
+                }
+            }
+            if let Some(import) = import {
+                if !self.selected(&import) {
+                    return None;
+                }
+                support.push(self.capture(&import));
+            }
+        }
+        support.push(self.capture(bounds));
+        Some(reader)
+    }
+}
+
 pub(super) fn function_definition<'a>(
     project: &Project<'a>,
     callee: &N<'a>,

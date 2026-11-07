@@ -1,6 +1,118 @@
 mod support;
 use std::fs;
 
+#[test]
+fn awaited_header_in_a_reused_vector_binds_resize_and_early_guard() {
+    let root = support::temp_dir("awaited-vector-header");
+    let source = r#"
+use byteorder::{BigEndian, ByteOrder};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+
+trait Transport: AsyncRead + AsyncWrite {}
+struct Framing<T> { stream: T, buf: Vec<u8>, other: Vec<u8> }
+
+impl<S> Framing<S> where S: Transport + Unpin {
+    async fn uncapped(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.clear();
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+    async fn capped(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        if size > 262144 { return Err(std::io::Error::other("cap")); }
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+    async fn late_guard(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        if size > 262144 { return Err(std::io::Error::other("too late")); }
+        Ok(())
+    }
+    async fn different_field(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.other).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+    async fn modified_header(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        self.buf.copy_from_slice(&[0; 4]);
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+    async fn shadowed_decoder(&mut self) -> std::io::Result<()> {
+        struct BigEndian;
+        impl BigEndian { fn read_u32(_: &[u8]) -> u32 { 1 } }
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+}
+
+struct OtherReader;
+impl OtherReader {
+    async fn read_exact(&mut self, _: &mut [u8]) -> std::io::Result<()> { Ok(()) }
+}
+impl Framing<OtherReader> {
+    async fn same_name(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+}
+
+trait CustomRead: AsyncRead {
+    async fn read_exact(&mut self, _: &mut [u8]) -> std::io::Result<()> { Ok(()) }
+}
+impl<T: CustomRead> Framing<T> {
+    async fn bound_method(&mut self) -> std::io::Result<()> {
+        self.buf.resize(4, 0);
+        self.stream.read_exact(&mut self.buf).await?;
+        let size = BigEndian::read_u32(&self.buf) as usize;
+        self.buf.resize(size, 0);
+        Ok(())
+    }
+}
+"#;
+    fs::write(root.join("lib.rs"), source).unwrap();
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&root, None, false).unwrap();
+    let found: std::collections::BTreeMap<_, _> = job
+        .observation_reviews
+        .iter()
+        .flat_map(|review| &review.evidence)
+        .filter(|e| e.rule_id == "rust-allocation-extent-review")
+        .map(|e| {
+            assert!(e.captures.contains_key("input_read"));
+            assert!(e.captures.contains_key("input_buffer"));
+            assert!(e.captures.contains_key("length_decode"));
+            (
+                e.enclosing_symbol.as_deref().unwrap(),
+                e.captures.contains_key("allocation_guard"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [("capped", true), ("late_guard", false), ("uncapped", false)].into()
+    );
+}
+
 fn review(source: &str) -> Vec<String> {
     let root = support::temp_dir("allocation-review");
     fs::create_dir_all(root.join("src")).unwrap();

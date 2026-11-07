@@ -43,7 +43,12 @@ fn direct_statement<'a>(node: &N<'a>, block: &N<'a>) -> Option<N<'a>> {
         .find(|n| n.parent().is_some_and(|p| p.range() == block.range()))
 }
 
-fn decoded_length<'a>(root: &N<'a>, mut node: N<'a>, function: &N<'a>) -> Option<N<'a>> {
+fn decoded_length<'a>(
+    root: &N<'a>,
+    mut node: N<'a>,
+    function: &N<'a>,
+    accepts: impl Fn(&N<'a>) -> bool,
+) -> Option<N<'a>> {
     for _ in 0..12 {
         match node.kind().as_ref() {
             "identifier" => {
@@ -60,23 +65,19 @@ fn decoded_length<'a>(root: &N<'a>, mut node: N<'a>, function: &N<'a>) -> Option
                 node = node.field("value")?;
             }
             "call_expression" => {
+                if accepts(&node) {
+                    return Some(node);
+                }
                 let callee = node.field("function")?;
-                if let Some(ty) = callee.field("path")
-                    && matches!(ty.text().as_ref(), "u32" | "u64" | "u128" | "usize")
-                    && rust_raw_memory::canonical(root, &ty, &ty.text()).as_deref()
-                        == Some(ty.text().as_ref())
+                if callee.field("name").is_some_and(|n| n.text() == "try_from")
+                    && callee.field("path").is_some_and(|ty| {
+                        ty.text() == "usize"
+                            && rust_raw_memory::canonical(root, &ty, &ty.text()).as_deref()
+                                == Some("usize")
+                    })
                 {
-                    let name = callee.field("name")?;
-                    if ty.text() == "usize" && name.text() == "try_from" {
-                        node = argument(&node)?;
-                        continue;
-                    }
-                    if matches!(
-                        name.text().as_ref(),
-                        "from_le_bytes" | "from_be_bytes" | "from_ne_bytes"
-                    ) {
-                        return Some(node);
-                    }
+                    node = argument(&node)?;
+                    continue;
                 }
                 node = unpack(node)?;
             }
@@ -84,6 +85,21 @@ fn decoded_length<'a>(root: &N<'a>, mut node: N<'a>, function: &N<'a>) -> Option
         }
     }
     None
+}
+
+fn primitive_decode<'a>(root: &N<'a>, call: &N<'a>) -> bool {
+    call.field("function").is_some_and(|callee| {
+        callee.field("path").is_some_and(|ty| {
+            matches!(ty.text().as_ref(), "u32" | "u64" | "u128" | "usize")
+                && rust_raw_memory::canonical(root, &ty, &ty.text()).as_deref()
+                    == Some(ty.text().as_ref())
+        }) && callee.field("name").is_some_and(|name| {
+            matches!(
+                name.text().as_ref(),
+                "from_le_bytes" | "from_be_bytes" | "from_ne_bytes"
+            )
+        })
+    })
 }
 
 fn slice_base<'a>(mut node: N<'a>) -> Option<N<'a>> {
@@ -307,11 +323,10 @@ fn can_change_buffer(node: &N<'_>, name: &str) -> bool {
 }
 
 fn guard<'a>(
-    root: &N<'a>,
     block: &N<'a>,
     before: usize,
     decoder: &N<'a>,
-    function: &N<'a>,
+    resolve: impl Fn(N<'a>) -> Option<N<'a>>,
 ) -> Option<N<'a>> {
     for statement in named(block).filter(|n| n.range().end <= before) {
         let n = if statement.kind().as_ref() == "expression_statement" {
@@ -335,9 +350,7 @@ fn guard<'a>(
         }) else {
             continue;
         };
-        if !decoded_length(root, length, function)
-            .is_some_and(|value| value.range() == decoder.range())
-        {
+        if !resolve(length).is_some_and(|value| value.range() == decoder.range()) {
             continue;
         }
         let Some(body) = n.field("consequence") else {
@@ -365,7 +378,8 @@ pub(super) fn evidence<'a>(
     file: &'a SourceFile,
     project: &Project<'a>,
 ) -> Option<BTreeMap<String, Capture>> {
-    let decoder = decoded_length(root, extent.clone(), function)?;
+    let resolve = |node| decoded_length(root, node, function, |call| primitive_decode(root, call));
+    let decoder = resolve(extent.clone())?;
     let (buffer, adapter) = buffer_source(argument(&decoder)?, function, file, project)?;
     let binding = lexical_binding(&buffer, function)?;
     if binding.kind().as_ref() != "let_declaration"
@@ -394,21 +408,44 @@ pub(super) fn evidence<'a>(
         }
     }
     let (read, support) = read?;
+    let comparison = guard(
+        &block,
+        allocation_statement.range().start,
+        &decoder,
+        resolve,
+    )
+    .filter(|guard| project.selected(&project.locate(file, guard.clone())));
+    Some(read_captures(
+        file,
+        &read,
+        &binding,
+        &decoder,
+        support.into_iter().chain(adapter),
+        comparison,
+    ))
+}
+
+fn read_captures<'a>(
+    file: &SourceFile,
+    read: &N<'a>,
+    buffer: &N<'a>,
+    decoder: &N<'a>,
+    support: impl Iterator<Item = Capture>,
+    comparison: Option<N<'a>>,
+) -> BTreeMap<String, Capture> {
     let mut captures = BTreeMap::from([
-        ("input_read".into(), rust_dependencies::capture(file, &read)),
+        ("input_read".into(), rust_dependencies::capture(file, read)),
         (
             "input_buffer".into(),
-            rust_dependencies::capture(file, &binding),
+            rust_dependencies::capture(file, buffer),
         ),
         (
             "length_decode".into(),
-            rust_dependencies::capture(file, &decoder),
+            rust_dependencies::capture(file, decoder),
         ),
     ]);
     let mut locations = BTreeSet::new();
     for (i, item) in support
-        .into_iter()
-        .chain(adapter)
         .filter(|item| {
             locations.insert((
                 item.location.path.clone(),
@@ -420,18 +457,143 @@ pub(super) fn evidence<'a>(
     {
         captures.insert(format!("read_extent_support_{i:02}"), item);
     }
-    if let Some(guard) = guard(
-        root,
-        &block,
-        allocation_statement.range().start,
-        &decoder,
-        function,
-    ) && project.selected(&project.locate(file, guard.clone()))
-    {
+    if let Some(guard) = comparison {
         captures.insert(
             "allocation_guard".into(),
             rust_dependencies::capture(file, &guard),
         );
     }
-    Some(captures)
+    captures
+}
+
+fn byteorder_decode<'a>(root: &N<'a>, call: &N<'a>) -> Option<(&'static str, Vec<N<'a>>)> {
+    let callee = call.field("function")?;
+    let width = match callee.field("name")?.text().as_ref() {
+        "read_u32" => "4",
+        "read_u64" => "8",
+        _ => return None,
+    };
+    let owner = callee.field("path")?;
+    let (identity, endian_import) = crate::code::rust_http::canonical(root, &owner, &owner.text())?;
+    if !matches!(
+        identity.as_str(),
+        "byteorder::BigEndian" | "byteorder::LittleEndian"
+    ) {
+        return None;
+    }
+    let (identity, trait_import) = crate::code::rust_http::canonical(root, call, "ByteOrder")?;
+    if identity != "byteorder::ByteOrder" {
+        return None;
+    }
+    Some((
+        width,
+        endian_import.into_iter().chain([trait_import?]).collect(),
+    ))
+}
+
+fn self_field<'a>(value: &N<'a>) -> Option<N<'a>> {
+    (value.kind() == "field_expression" && value.field("value")?.kind() == "self")
+        .then(|| value.field("field"))?
+}
+
+// Admit a same-block sequence only. The successful read and decoder must be
+// adjacent so a write or alternate path cannot replace the header in between.
+pub(super) fn async_field_evidence<'a>(
+    root: &N<'a>,
+    extent: &N<'a>,
+    allocation: &N<'a>,
+    function: &N<'a>,
+    file: &'a SourceFile,
+    project: &Project<'a>,
+) -> Option<BTreeMap<String, Capture>> {
+    let (destination, name) = method(allocation)?;
+    if name != "resize" {
+        return None;
+    }
+    let field = self_field(&destination)?.text().into_owned();
+    let resolve = |node| {
+        decoded_length(root, node, function, |call| {
+            byteorder_decode(root, call).is_some()
+        })
+    };
+    let decoder = resolve(extent.clone())?;
+    let (width, mut imports) = byteorder_decode(root, &decoder)?;
+    let buffer = argument(&decoder)?;
+    if buffer.kind() != "reference_expression"
+        || self_field(&buffer.field("value")?)?.text() != field
+    {
+        return None;
+    }
+    let declaration = decoder
+        .ancestors()
+        .find(|n| n.kind() == "let_declaration")?;
+    let block = declaration.parent()?;
+    if block.kind() != "block" || allocation.parent()?.parent()?.range() != block.range() {
+        return None;
+    }
+    let previous: Vec<_> = named(&block)
+        .take_while(|n| n.range().start < declaration.range().start)
+        .collect();
+    let [.., header, read] = previous.as_slice() else {
+        return None;
+    };
+    let header_call = only(named(header))?;
+    let (header_buffer, name) = method(&header_call)?;
+    let header_args = header_call.field("arguments")?;
+    let mut args = named(&header_args);
+    if name != "resize"
+        || self_field(&header_buffer)?.text() != field
+        || args.next()?.text() != width
+        || args.next()?.text() != "0"
+        || args.next().is_some()
+    {
+        return None;
+    }
+    let fallible = only(named(read))?;
+    let awaited = only(named(&fallible))?;
+    if read.kind() != "expression_statement"
+        || fallible.kind() != "try_expression"
+        || awaited.kind() != "await_expression"
+    {
+        return None;
+    }
+    let call = only(named(&awaited))?;
+    if call.field("function")?.kind() != "field_expression" {
+        return None;
+    }
+    let (reader, name) = method(&call)?;
+    let output = argument(&call)?;
+    if name != "read_exact"
+        || output.kind() != "reference_expression"
+        || !output.children().any(|n| n.kind() == "mutable_specifier")
+        || self_field(&output.field("value")?)?.text() != field
+    {
+        return None;
+    }
+    let (identity, import) = crate::code::rust_http::canonical(root, &call, "AsyncReadExt")?;
+    if identity != "tokio::io::AsyncReadExt" {
+        return None;
+    }
+    imports.push(import?);
+    if [&decoder, header, read]
+        .into_iter()
+        .chain(&imports)
+        .any(|n| !project.selected(&project.locate(file, n.clone())))
+    {
+        return None;
+    }
+    let support =
+        rust_receiver_types::async_reader_field_support(project, &reader, function, file)?;
+    let comparison = guard(&block, allocation.range().start, &decoder, resolve)
+        .filter(|guard| project.selected(&project.locate(file, guard.clone())));
+    Some(read_captures(
+        file,
+        read,
+        header,
+        &decoder,
+        support
+            .into_iter()
+            .chain(imports.iter().map(|n| rust_dependencies::capture(file, n))),
+        comparison,
+    ))
 }

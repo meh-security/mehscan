@@ -360,6 +360,12 @@ pub(super) fn groups(
                 });
                 let Some(input) =
                     rust_read_extent::evidence(&root, &extent, &call, &function, file, project)
+                        .or_else(|| {
+                            vector_method.then_some(())?;
+                            rust_read_extent::async_field_evidence(
+                                &root, &extent, &call, &function, file, project,
+                            )
+                        })
                 else {
                     continue;
                 };
