@@ -251,6 +251,7 @@ pub(super) fn groups(
     scope: Option<&mehscan_core::ImpactScanScope>,
     selection: &rust_configuration::Selection,
     parsed: &rust_dependencies::RustSources,
+    handled_extents: &BTreeSet<(String, usize)>,
 ) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
     let module_bindings = std::cell::OnceCell::new();
@@ -322,6 +323,11 @@ pub(super) fn groups(
             let Some(extent) = extent else {
                 continue;
             };
+            if !handled_extents.is_empty()
+                && handled_extents.contains(&(file.path.clone(), call.range().start))
+            {
+                continue;
+            }
             let Some(parameter) = origin(&extent, &function, 0) else {
                 continue;
             };

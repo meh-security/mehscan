@@ -25,6 +25,7 @@ mod rust_raw_memory;
 mod rust_receiver_types;
 mod rust_shared_state;
 mod rust_thread_safety;
+mod rust_zip_boundaries;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -88,7 +89,10 @@ fn server_mutation_review_marker_groups(
     let parsed = rust_dependencies::RustSources::build(sources, &selection);
     let models = rust_shared_state::ModelBindings::build(sources, &selection, &parsed);
     let dependencies = rust_dependencies::Dependencies::build(sources, &selection, &parsed);
-    let allocation_groups = rust_allocation::groups(sources, scope, &selection, &parsed);
+    let (zip_groups, handled_zip_extents) =
+        rust_zip_boundaries::groups(sources, scope, &selection, &parsed);
+    let allocation_groups =
+        rust_allocation::groups(sources, scope, &selection, &parsed, &handled_zip_extents);
     let mut groups = rust_shared_state::configured_groups_with_context(
         sources,
         existing_evidence,
@@ -99,6 +103,7 @@ fn server_mutation_review_marker_groups(
         &models,
     );
     groups.extend(allocation_groups);
+    groups.extend(zip_groups);
     groups.extend(rust_archive::groups(sources, scope, &selection, &parsed));
     groups.extend(rust_archive_links::groups(
         sources,
