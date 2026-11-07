@@ -13,6 +13,7 @@ mod rust_extent_arithmetic;
 mod rust_memory_boundaries;
 mod rust_module_bindings;
 mod rust_panic_cleanup;
+mod rust_panic_cleanup_helpers;
 mod rust_parser_resource;
 mod rust_protocol_credentials;
 mod rust_raw_memory;
@@ -107,6 +108,9 @@ fn server_mutation_review_marker_groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_panic_cleanup::groups(
+        sources, scope, &selection, &parsed,
+    ));
+    groups.extend(rust_panic_cleanup_helpers::groups(
         sources, scope, &selection, &parsed,
     ));
     groups.extend(rust_thread_safety::groups(
@@ -702,7 +706,7 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
         return Some(OperationReviewContract {
             relationship: "bounded_rust_panic_cleanup_review",
             title: "Review metadata across element destruction",
-            security_question: "If this element destructor panics, does the same owner's live-element metadata already exclude the destroyed value before later cleanup? Trace the captured raw drop, metadata assignments, actual owner Drop and generic destructor behavior. Preserve control flow, partial initialization and guards. Updating metadata before destruction can be a repaired control; a nonpanicking concrete element or unwind guard can change applicability. Establish the safe catch_unwind/callback path and repeated destruction rather than calling every raw drop a double free.",
+            security_question: "If this element destructor panics, does the same owner's live-element metadata already exclude the destroyed value before later cleanup? Trace the captured raw drop, scoped guard and helper calls where present, metadata assignments, actual owner Drop and generic destructor behavior. Preserve control flow and partial initialization. Updating metadata before destruction can be a repaired control; a nonpanicking concrete element or unwind guard can change applicability. Establish the safe catch_unwind/callback path and repeated destruction rather than calling every raw drop a double free.",
         });
     }
     if evidence

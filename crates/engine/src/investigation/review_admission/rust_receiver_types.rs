@@ -48,6 +48,11 @@ fn pattern_shadows(scope: &N<'_>, value: &N<'_>, name: &str) -> bool {
 }
 
 pub(super) fn local_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
+    let binding = local_pattern_binding(value, function)?;
+    (binding.field("pattern")?.kind().as_ref() == "identifier").then_some(binding)
+}
+
+pub(super) fn local_pattern_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
     if value.kind().as_ref() != "identifier" {
         return None;
     }
@@ -74,16 +79,14 @@ pub(super) fn local_binding<'a>(value: &N<'a>, function: &N<'a>) -> Option<N<'a>
             })
             .last();
         if let Some(binding) = binding {
-            if binding.field("pattern")?.kind().as_ref() != "identifier"
-                || function.dfs().any(|n| {
-                    matches!(
-                        n.kind().as_ref(),
-                        "assignment_expression" | "compound_assignment_expr"
-                    ) && n.range().start >= binding.range().end
-                        && n.range().start < value.range().start
-                        && n.field("left").is_some_and(|n| n.text() == name)
-                })
-            {
+            if function.dfs().any(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "assignment_expression" | "compound_assignment_expr"
+                ) && n.range().start >= binding.range().end
+                    && n.range().start < value.range().start
+                    && n.field("left").is_some_and(|n| n.text() == name)
+            }) {
                 return None;
             }
             return Some(binding);
