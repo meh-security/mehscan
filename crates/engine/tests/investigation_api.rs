@@ -21,6 +21,43 @@ fn native_investigation_fixture_root() -> PathBuf {
 }
 
 #[test]
+fn native_structural_queries_return_only_complete_matches_from_recovered_files() {
+    use mehscan_engine::investigation::run_structural_query;
+
+    let root = std::env::temp_dir().join(format!("mehscan-structural-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    for (file, language) in [("broken.c", Language::C), ("broken.cpp", Language::Cpp)] {
+        std::fs::write(
+            root.join(file),
+            "int incomplete(void) { return 2 * ; }\nint size(int w, int h) { return w * h; }\n",
+        )
+        .unwrap();
+        for path in [Some(file), None] {
+            let result = run_structural_query(&root, language, "$A * $B", path, Some(1)).unwrap();
+            assert!(result.truncated);
+            assert!(result.skipped_files.is_empty());
+            assert_eq!(result.parse_recovered_files, [file]);
+            assert_eq!(result.results.len(), 1);
+            assert_eq!(result.results[0].text, "w * h");
+            assert_eq!(result.results[0].location.start.line, 2);
+        }
+    }
+
+    std::fs::write(
+        root.join("wrapped.c"),
+        "int incomplete( {\nint size(int w, int h) { return w * h; }\n",
+    )
+    .unwrap();
+    let wrapped =
+        run_structural_query(&root, Language::C, "$A * $B", Some("wrapped.c"), None).unwrap();
+    assert_eq!(wrapped.parse_recovered_files, ["wrapped.c"]);
+    assert_eq!(wrapped.results.len(), 1);
+    assert_eq!(wrapped.results[0].text, "w * h");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
     use mehscan_engine::investigation::{find_imports, find_symbol};
     let root = std::env::temp_dir().join(format!("mehscan-symbols-{}", std::process::id()));

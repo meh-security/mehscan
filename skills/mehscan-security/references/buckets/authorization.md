@@ -28,6 +28,17 @@ endpoints. For a session/cache-derived subject, use
 [token review](../token-review.md) to inspect acceptance and relevant state writers;
 a cache read or equality with another field from that cache is not independent
 identity proof. Reuse that inspected acceptance chain for compatible consumers.
+
+For an authenticated connection or pooled client, trace the requested identity
+and the identity bound to the reusable object into the match and attach paths.
+Check whether the active authentication mode binds state to a request or to the
+connection. Follow its already-authenticated branch to see whether it sends new
+credentials. A destination match or an update to stored credential fields can
+leave the old authenticated context active. Check method-specific rejection and
+any early accept or fallback that can still attach the object. Use matching
+credentials or a verified fresh connection as a control, and keep origin and
+proxy authentication separate when both are present.
+
 For a supposedly owner-scoped compound key, check the actual encoding. Validating
 each component's characters does not prove that different owner/object pairs
 cannot map to the same stored key. Preserve applicable grants and require a

@@ -151,7 +151,10 @@ def missing_source_result(query, error):
         path = query["arguments"]["path_prefix"].rstrip("/")
         prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
         diagnostic = error.stderr.strip()
-        if diagnostic.startswith(prefix) and diagnostic.endswith("(os error 2)") and "\n" not in diagnostic:
+        missing_directory = diagnostic.endswith("(os error 2)") or (
+            os.name == "nt" and diagnostic.endswith("(os error 3)")
+        )
+        if diagnostic.startswith(prefix) and missing_directory and "\n" not in diagnostic:
             operation = "reference_lookup_error" if query["tool"] == "references" else "symbol_lookup_error"
             return {"operation":operation, "results":[], "error":{
                 "code":"scope_not_found", "path":path,
@@ -799,6 +802,13 @@ def definition_result(discovery, read_source, find_references=None):
     matches = discovery.get("results", [])
     if discovery.get("truncated") or not isinstance(matches, list):
         result["limit"] = "symbol_lookup_incomplete"
+        if (
+            isinstance(matches, list)
+            and not matches
+            and discovery.get("skipped_files")
+            and find_references is not None
+        ):
+            result["text_lookup"] = find_references()
         return result
     unique = {json.dumps(item.get("location"), sort_keys=True):item for item in matches if isinstance(item, dict)}
     if len(unique) != 1:

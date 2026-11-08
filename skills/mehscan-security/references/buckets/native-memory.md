@@ -23,7 +23,34 @@ A nearby check protects the operation only if it covers the same value before
 use and its rejection terminates. Do not infer typedef widths, macro effects,
 custom deleters or caller preconditions from names. `native-call-sites` and
 `structural` are syntax navigation, not call graphs or new scan evidence;
-use them only for an exact unresolved syntax question.
+use them only for an exact unresolved syntax question. If `structural` reports
+`parse_recovered_files`, use returned matches as source anchors and check any
+missing edge with an exact source read.
+
+When a parser reuses decoder state across phases, trace the saved buffer,
+remaining count and owner together. On an early exit, follow the cleanup
+implementation through return or buffer replacement. Clearing an owner flag
+alone may leave a live count with a dangling pointer. Check whether the next
+public operation reinitializes the state or resumes from it. Use a caller that
+initializes the next phase first as a control, and verify that the configured
+feature and call sequence can reach the stale read before reporting it.
+
+When an object stores a product for an allocation, resolve the operands at the
+calculation even if the result field has a wider type. Follow field declarations,
+getters and base/derived implementations into the array allocation and compare
+its extent with the stride or bounds used by the writer. An axis limit protects
+the product only when the maximum admitted combination fits the arithmetic
+type. Verify a repair at the multiplication and carry any separate allocation or
+indexing concern as its own question.
+
+For a split copy from a circular buffer, trace the actual source allocation
+size and check both segment lengths. The first segment ends at the ring boundary.
+The wrapped remainder starts at the source base and still needs its own bound.
+A single-wrap implementation can use a total count bounded by the ring size.
+Check that any earlier rejection covers the decoded or cached count before it is
+stored for later use. A destination capacity or signedness check covers a
+different invariant. Verify destination advancement separately and use a
+non-wrapping or explicitly source-bounded path as a control.
 
 For a defined helper or constructor, use `definition`, `defined_copy` and
 `binding_*` captures to check the qualified implementation and source/count
