@@ -62,6 +62,11 @@ needs the enabled resolver, controlled response and applicable caller contract.
 For HTTP acquisition, trace timeout/cancellation through response-body consumption:
 returning a stream after headers can end the request timer before a later copy.
 Check redirect handling at the actual HTTP transport, beyond initial URI checks.
+Follow the client/handler the loader constructs; settings on an unrelated client
+instance do not configure that private client. A wrapper around the stream returned
+by a buffering resolver acts after acquisition, so it cannot bound earlier copying.
+Trace a timed wait separately from cancellation of the underlying download, and
+check active-operation guards before crediting outer-reader disposal as an abort.
 
 Establish default limits in the assessed constructor/initializer and inspect all
 counter writes. Separate a new-document reset from encoding re-decode adjustments
@@ -91,6 +96,7 @@ reader settings through wrappers, async siblings and reused instances.
 Sources: [reader settings](https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmlreadersettings),
 [settings implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/Core/XmlReaderSettings.cs),
 [resource buffering implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/XmlDownloadManager.cs),
+[HTTP completion and body-timeout scope](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpcompletionoption),
 [file URI conversion](https://learn.microsoft.com/en-us/dotnet/api/system.uri.localpath),
 [schema set](https://learn.microsoft.com/en-us/dotnet/api/system.xml.schema.xmlschemaset),
 [XSLT security](https://learn.microsoft.com/en-us/dotnet/standard/data/xml/xslt-security-considerations).
