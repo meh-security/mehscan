@@ -140,6 +140,18 @@ class LookupFailures(unittest.TestCase):
                                missing.stderr + '\nadditional error'):
                 self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,diagnostic)))
 
+    def test_windows_missing_directory_is_recoverable(self):
+        query = {"tool": "symbol", "arguments": {"path_prefix": "src/missing"}}
+        message = 'error: cannot access query directory "src/missing": The system cannot find the path specified. (os error 3)'
+        error = worker.CommandFailure(2, message)
+        with patch.object(worker.os, "name", "nt"):
+            result = worker.missing_source_result(query, error)
+            self.assertEqual(result["error"]["code"], "scope_not_found")
+            wrong_path = worker.CommandFailure(2, message.replace("src/missing", "src/other"))
+            self.assertIsNone(worker.missing_source_result(query, wrong_path))
+        with patch.object(worker.os, "name", "posix"):
+            self.assertIsNone(worker.missing_source_result(query, error))
+
     def test_symbol_and_definition_keep_the_requested_directory_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -277,6 +289,19 @@ class LookupFailures(unittest.TestCase):
         self.assertEqual(looked, [True])
         worker.definition_result({"results":[],"truncated":True}, source, find)
         self.assertEqual(looked, [True])
+
+    def test_parse_skipped_definition_retains_scoped_text_navigation(self):
+        discovery = {"results": [], "truncated": True, "skipped_files": ["channel.cpp"]}
+        refs = {"operation": "find_text_references", "results": [{"text": "Channel::resize()"}]}
+
+        def source(_):
+            self.fail("An incomplete AST lookup must not select a definition body")
+
+        result = worker.definition_result(discovery, source, lambda: refs)
+        self.assertEqual(result["limit"], "symbol_lookup_incomplete")
+        self.assertEqual(result["text_lookup"], refs)
+        self.assertIsNone(result["source"])
+        self.assertFalse(result["source_complete"])
 
     def test_only_exact_current_source_not_found_is_recoverable(self):
         query = {"tool": "source", "arguments": {"path": "missing.ts"}}

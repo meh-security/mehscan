@@ -23,6 +23,9 @@ pub struct QueryResponse<T> {
     /// a complete tree. Empty for query types that do not parse source ASTs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_files: Vec<String>,
+    /// Files searched for locally complete matches despite syntax errors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parse_recovered_files: Vec<String>,
     pub results: T,
 }
 

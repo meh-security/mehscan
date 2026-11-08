@@ -22057,6 +22057,7 @@ pub fn run_structural_query(
     }
     let mut matches = Vec::new();
     let mut skipped_files = Vec::new();
+    let mut parse_recovered_files = Vec::new();
     let mut truncated = false;
     'files: for file in sources.files.values().filter(|file| {
         file.language == Some(language)
@@ -22080,7 +22081,8 @@ pub fn run_structural_query(
         };
         let ast = AstGrep::doc(document);
         let root = ast.root();
-        if crate::code::has_unsupported_syntax_errors(&root, language) {
+        let recovered = crate::code::has_unsupported_syntax_errors(&root, language);
+        if recovered && !matches!(language, Language::C | Language::Cpp) {
             if requested_path.is_some() {
                 return Err(EngineError(format!(
                     "could not run structural query on {}: parser produced ERROR or missing nodes",
@@ -22091,12 +22093,25 @@ pub fn run_structural_query(
             truncated = true;
             continue;
         }
+        if recovered {
+            parse_recovered_files.push(file.path.clone());
+            truncated = true;
+        }
         for matched in root.find_all(&pattern) {
+            let node = matched.get_node();
+            if recovered
+                && (node.dfs().any(|part| part.is_error() || part.is_missing())
+                    // A macro can leave an enclosing error around an intact function.
+                    || node.ancestors()
+                        .take_while(|ancestor| ancestor.kind().as_ref() != "function_definition")
+                        .any(|ancestor| ancestor.is_error()))
+            {
+                continue;
+            }
             if matches.len() == limit {
                 truncated = true;
                 break 'files;
             }
-            let node = matched.get_node();
             matches.push(StructuralMatch {
                 text: bounded_match_text(node.text().as_ref()),
                 location: location_from_offsets(
@@ -22116,6 +22131,7 @@ pub fn run_structural_query(
         matches,
     );
     response.skipped_files = skipped_files;
+    response.parse_recovered_files = parse_recovered_files;
     Ok(response)
 }
 
@@ -22735,6 +22751,7 @@ fn response<T>(
         provenance,
         truncated,
         skipped_files: Vec::new(),
+        parse_recovered_files: Vec::new(),
         results,
     }
 }

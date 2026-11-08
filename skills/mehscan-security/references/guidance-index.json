@@ -4,7 +4,7 @@
   "process-code":{"path":"categories/process-code.md","when":"Process launch, shell text, dynamic evaluation or attacker-selected executable"},
   "file-network":{"path":"categories/file-network.md","when":"Local file-root guarantees versus caller exposure, archive writes, SSRF, redirects or template-selected files"},
   "path-selection":{"path":"path-selection-review.md","when":"Composed root/filename guards, Windows versus POSIX path resolution, prefix boundaries, symlinks and actual check-to-effect applicability"},
-  "authorization":{"path":"buckets/authorization.md","when":"Effective grant/denial composition, server policy, object ownership, tenancy or delegated authority"},
+  "authorization":{"path":"buckets/authorization.md","when":"Effective grant/denial composition, server policy, object ownership, tenancy, delegated authority or authenticated connection reuse"},
   "credential-lifecycle":{"path":"categories/credential-lifecycle.md","when":"Issuance, acceptance, recovery, rotation, expiry, consumption or revocation"},
   "token-review":{"path":"token-review.md","when":"JWT/session/API-key issuance or acceptance, version-specific signing/verification options, expiry, cached identity, token purpose or revocation"},
   "mass-assignment":{"path":"categories/mass-assignment.md","when":"Generic body binding, generated CRUD, privileged fields or sensitive object updates"},

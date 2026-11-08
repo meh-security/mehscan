@@ -15,7 +15,7 @@ runtime analysis.
 | JavaScript and TypeScript/TSX | Recognized interpreters, database operations, resources, credentials and server actions. Static import/export navigation helps find implementations; it does not prove active dependency injection or runtime dispatch. Vue, JSX/TSX and embedded templates can have partial syntax or output-context coverage. |
 | Python | Recognized database APIs, interpreter/resource operations and selected credential effects, including supported async cursors and ORM-backed password writes. Dynamic dispatch, arbitrary context managers and application-specific account APIs may need manual investigation. |
 | Go | Recognized SQL/NoSQL, formatted HTML, HTTP and credential relationships, with bounded package/receiver binding. A matching function name or callback argument does not establish an executed operation. Framework wiring and relationships beyond these bindings remain review questions. |
-| Rust | Recognized SQL, resource operations, typed HTTP clients, selected ownership/state and credential-renewal relationships. Macro expansion, general trait dispatch, database persistence and cross-object atomicity are not inferred from syntax alone. |
+| Rust | Selected unsafe memory, parser and transport sizes, archive extraction, filesystem operations, typed HTTP clients, credentials and SQL. General macro expansion, trait dispatch and cross-object state remain outside the bounded source analysis. |
 | PHP | A partial profile for recognized native and framework APIs. Arbitrary includes, indirect calls and injected or untyped receivers can prevent a relationship from being recognized. See [PHP coverage](php-coverage.md). |
 | Kotlin | A partial JVM profile for recognized typed APIs. Compiler overload/extension resolution, inferred factories, ORM models and reactive execution remain limited. See [Kotlin coverage](kotlin-coverage.md). |
 
@@ -35,6 +35,9 @@ separate questions. Volatile reads do not reuse an earlier value check.
 Arbitrary wrappers, overload resolution, implicit member lookup, virtual calls
 and cross-function ranges remain limited. A buffer copy in source can therefore
 lack a review question even when a related low-level API is recognized elsewhere.
+Structural queries can return intact local matches in recovered C and C++ files.
+The response marks partial results and names the recovered files. Use exact source
+reads to check relationships that cross those matches.
 
 Selected C++ vector lifetime reviews connect an explicitly typed `std::vector`
 reference in a loop to persistent keyed storage, mutations and element addresses

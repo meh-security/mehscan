@@ -82,8 +82,9 @@ Write response drafts as files instead of embedding prose JSON in shell command
 strings. If a report needs correction, change the reviewed response and rerun
 finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
-version. Query results are JSON; inspect all `results`, `truncated`, and
-`skipped_files` before concluding that a lookup found nothing.
+version. Before concluding a lookup found nothing, check `results`, `truncated`,
+`skipped_files`, and `parse_recovered_files`. A structural query in a recovered
+C/C++ file returns locally complete matches and marks the result partial.
 Save finalized responses as `CHUNK/responses/REQUEST_FILENAME`; `report` reads
 that directory and matches each response to its manifest request filename.
 Keep `input-binding.json` with copied manifests and requests for historical
