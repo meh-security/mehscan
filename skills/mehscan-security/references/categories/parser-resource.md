@@ -1,9 +1,15 @@
 # Parsers, deserialization and resource effects
 
-For decoder internals or library-level source review, load the shared
+First distinguish ordinary library usage from code implementing decoding. For
+usage, start with Mehscan's native questions and the basic checks below. A call
+to a parser does not by itself require reviewing that library's internals.
+For library implementation code or a custom serializer, converter, decoder,
+parser or input-processing hook, load the shared
 [deserialization source-review checks](../deserialization-checks.md), available
-to workers as `deserialization-libraries`. It covers System.Text.Json and similar
-libraries across languages, including source assignments with zero candidates.
+as `deserialization-libraries`, and its matching language companion. This deeper
+review activates even when the source assignment has zero native candidates.
+A forwarding wrapper remains on the usage path unless it implements such behavior
+or a concrete missing edge requires implementation research.
 
 Bind the exact parser/import, version/options and downstream consumer before
 classifying the effect. Parsing untrusted input is a review entrypoint, not an
@@ -26,8 +32,13 @@ the actual input exposure and enforced size/depth/time/memory boundary. Small
 wire size alone does not bound expanded work, but a generic large-input argument
 without a disproportionate effect is weak evidence.
 
-For XML/external entities, inspect both entity/DTD behavior and registered resource
-providers. For archives, include extraction paths and expansion controls relevant
+For XML usage, inspect the effective DTD/entity policy and resource providers;
+include schema, XInclude or XSLT settings when those stages actually run. Entity
+substitution and external retrieval are separate effects. For XML implementation,
+custom processing or a concrete unresolved internal relationship, load
+[XML parser checks](../xml-parser-checks.md), available as `xml-parsers`, and its
+relevant platform section. Trace each active stage's loader and work limits.
+For archives, include extraction paths and expansion controls relevant
 to the selected question. Rejected HTTP responses do not undo parsing or writes
 that already occurred.
 

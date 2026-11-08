@@ -1,8 +1,12 @@
 # Deserialization source-review checks
 
-Use for JSON, XML, YAML, ASN.1, binary object and similar decoders, including
-source assignments with zero native questions. Select the checks matching the
-actual operation. Follow the relevant producer, guard and consumer; a checklist
+Use for library implementation code and custom serializers, converters, parsers,
+decoders or input-processing hooks for JSON, XML, YAML, ASN.1, binary objects and
+similar formats, including source assignments with zero native questions.
+Ordinary library usage starts with Mehscan's native questions and the basic
+[parser/resource checks](categories/parser-resource.md); load deeper checks when
+a concrete unresolved implementation relationship needs them. Select checks for
+the actual operation. Follow the relevant producer, guard and consumer; a checklist
 match is a hypothesis requiring fresh source evidence.
 
 Apply these checks and their language companions by reading source and reasoning
@@ -130,7 +134,9 @@ State the controlled dimension or valid caller sequence, exact operation,
 failed invariant, earliest effective guard, activation conditions and narrow
 effect. Distinguish library contract failure from exposure in a deployed caller.
 Carry the trusted-input contract, optional features and extension obligations.
-For XML/YAML/reference formats inspect expansion and resolver activation; for
+For XML use [XML parser checks](xml-parser-checks.md), available as `xml-parsers`,
+for stage-specific loading, namespace interpretation and XML work controls.
+For YAML/reference formats inspect expansion and resolver activation; for
 C/C++ or FFI load [native memory](buckets/native-memory.md).
 
 Support the conclusion with the inspected producer, deciding control and effect.

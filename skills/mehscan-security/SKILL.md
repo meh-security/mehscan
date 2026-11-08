@@ -21,11 +21,17 @@ For JWT, session or API-key issuance/acceptance, expiry or cached identity, use
 For composed path/root guards or platform-dependent containment, use
 [path selection review](references/path-selection-review.md), available to workers
 as `guidance` with `name="path-selection"`.
-For decoder internals, use the [shared deserialization source-review checks](references/deserialization-checks.md)
-and its language routing table: C/C++, .NET, Java, JavaScript/TypeScript/TSX,
-Python, Go, Rust, PHP and Kotlin. Identify mechanisms and assess them from source;
-these checks do not require executing the reviewed code. Workers start with
-`deserialization-libraries`, then load the applicable companion by its catalog name.
+For library usage, start with Mehscan's native questions and the
+[parser/resource guide](references/categories/parser-resource.md): bind the API,
+effective configuration, hooks, input and consumer. For library implementation
+code or a custom serializer, converter, decoder or parser, activate the
+[shared deserialization source-review checks](references/deserialization-checks.md)
+and their matching language companion, even with zero native candidates.
+Workers start with `deserialization-libraries`. For XML implementation or custom
+XML processing, also use [XML parser checks](references/xml-parser-checks.md),
+available as `xml-parsers`, then its relevant platform section. Ordinary usage
+loads deeper guidance only for a concrete unresolved implementation relationship.
+All these checks use source reasoning without target execution.
 For Rust source, use [Rust security review](references/rust-security.md), available
 as `rust-security`. Load `rust-memory` or `rust-boundaries` for the relevant
 advisory-derived patterns and verification controls. Rust guidance applies to

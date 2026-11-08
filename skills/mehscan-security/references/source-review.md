@@ -27,12 +27,19 @@ choose the relevant guide and the next deciding lookup. A directory or language
 boundary may separate the entry point from its helper. When that relationship
 matters, follow the specific caller, dispatcher or helper into its source.
 
-For decoder internals, including zero-candidate assignments, load
-`deserialization-libraries` and the matching companion from its language table.
-Follow the actual decoder/runtime across a language boundary when relevant.
-Apply the selected checks through source reasoning; no target execution or test
-harness is required. Record assessed relationships, inapplicable cases and
-deciding gaps separately from vulnerability verdicts.
+Classify decoder-related code by what it implements. For ordinary library usage,
+start with Mehscan's native questions and `parser-resource`: inspect the API,
+effective options, registered hooks, input boundary and consequential consumer.
+Do not expand every library call into a full decoder-internals review.
+For library implementation code or a custom serializer, converter, decoder,
+parser or input-processing hook, load `deserialization-libraries` and the matching
+language companion, including zero-candidate assignments. For XML implementation
+or custom XML processing, also load `xml-parsers` and its relevant platform section.
+A forwarding wrapper stays on the usage path unless it implements such behavior
+or exposes a concrete unresolved implementation edge. Follow that edge into the
+actual decoder/runtime when relevant. Apply selected checks from source without
+target execution; record assessed relationships, inapplicable cases and deciding
+gaps separately from vulnerability verdicts.
 
 On a research turn, put the current flow hypothesis and missing relationship in
 `working_chain` and say what each lookup would decide. In the final coverage
