@@ -119,6 +119,12 @@ pub enum Capability {
     /// A concrete standard Rust raw-memory operation with source-bound pointer,
     /// owner or safe API boundary evidence; individual invariants require review.
     RustRawMemoryReview,
+    /// Caller-influenced Rust allocation extent requiring resource-limit review.
+    RustAllocationReview,
+    /// Recognized Rust archive extraction or entry-path write requiring review.
+    RustArchiveExtractionReview,
+    /// Input-backed Rust slice/parser operation with a possible panic boundary.
+    RustParserResourceReview,
     /// A C-family conversion that may discard higher-order integer bits before
     /// the converted value reaches a security-relevant arithmetic operation.
     IntegerNarrowing,

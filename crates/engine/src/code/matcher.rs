@@ -2367,6 +2367,15 @@ pub(crate) fn scan_source(
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     finish_summary_pass("super::filesystem_operands::annotate", summary_pass_started);
     let summary_pass_started = start_summary_pass();
+    super::rust_filesystem::add_imported(
+        path,
+        language,
+        &root,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::rust_filesystem::annotate(language, &root, &mut evidence);
     finish_summary_pass("super::rust_filesystem::annotate", summary_pass_started);
     let summary_pass_started = start_summary_pass();

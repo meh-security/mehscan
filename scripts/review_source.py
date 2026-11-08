@@ -276,7 +276,11 @@ def run(args, legacy, worker):
                 "snapshot_id": payload["snapshot_id"],
                 "inventory_input_fingerprint": payload["inventory_input_fingerprint"],
             },
-            "contract": contract,
+            "contract": contract + "".join(
+                "\n" + guide["text"] for guide in context.language_contracts(
+                    skill, [w["path"] for w in assignment["windows"]]
+                )
+            ),
             "work": context.compact_work(payload, assignment["review_ids"]),
             "native_questions": known,
             "primary": {"windows": windows, "limits": plan["limitations"]},

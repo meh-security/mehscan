@@ -19,6 +19,19 @@ The known-native-question catalog also lists questions outside the current nativ
 assignment. Use it to avoid duplicates; do not assess unassigned IDs. A different
 authority, content or workflow relationship can still warrant a distinct proposal.
 
+Start by identifying what the assigned code does. Use its public API, dispatcher,
+caller or configuration when the role is unclear. For a plausible security flow,
+name the entry point or caller, who supplies the input or authority, the effect,
+and the guard or configuration that would decide the question. Use that flow to
+choose the relevant guide and the next deciding lookup. A directory or language
+boundary may separate the entry point from its helper. When that relationship
+matters, follow the specific caller, dispatcher or helper into its source.
+
+On a research turn, put the current flow hypothesis and missing relationship in
+`working_chain` and say what each lookup would decide. In the final coverage
+summary, record the role and boundaries examined or what remains deferred. Keep
+the assigned scope and native IDs even when the flow is still unclear.
+
 Look for an actual operation, relevant input/actor, check and effect. Distinguish
 executable code from strings, comments and examples. For components establish the
 relevant callback/lifecycle and Server, client, Auto or unknown execution context.
@@ -31,6 +44,24 @@ deciding producer, consumer or guard when it can change a conclusion. Request
 additional category guidance through the broker when relevant. Avoid exhaustive
 caller discovery or reconstructing a whole application to close an ordinary
 construction. Retain a concrete missing relationship when it remains unresolved.
+
+Within an assignment, reuse a helper's inspected source from the assigned
+windows or earlier lookups. Check each caller's arguments, configuration and
+effect separately. For an explicit handoff between chunks on the same snapshot,
+the operator can [save and reload a cited fact](pattern-sweep.md#reuse-facts-between-chunks),
+including a helper discovered in a zero-candidate assignment. Ordinary worker
+assignments get their own source, available native facts and their lookup
+history. They load neither other assignments' fact files nor private replay notes
+automatically. Across revisions or projects, carry over the attack scenario,
+proof checklist and affected/repaired controls. Re-establish the relevant facts
+and verdict from the current caller, configuration and effect.
+
+For Rust assignments, apply the supplied Rust router and use `rust-security`,
+`rust-memory` or `rust-boundaries` guidance when the actual relationship needs it.
+Use [Rust attack scenarios](rust-attack-surfaces.md) to select a source-backed
+scenario and verify it against existing candidate IDs or an anchored proposal.
+Safe-call soundness, input-driven availability and dependency metadata need their
+own evidence; a zero-candidate assignment can still contain these mechanisms.
 
 Proposals require an anchor in an assigned original source range, a precise
 question, mechanism, consequence, CWE/capability and inspected supporting source.

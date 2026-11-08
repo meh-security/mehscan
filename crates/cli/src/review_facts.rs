@@ -23,6 +23,12 @@ struct Fact {
     remaining_checks: Vec<String>,
 }
 
+impl Citation {
+    fn source_contract(&self) -> String {
+        format!("source:{}:{}-{}", self.path, self.start_line, self.end_line)
+    }
+}
+
 pub(super) fn run(
     root: &Path,
     inventory_dir: &Path,
@@ -68,12 +74,17 @@ pub(super) fn run(
         .map_err(|e| format!("invalid reviewer facts: {e}"))?;
     let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
     for fact in &mut facts {
-        if !known.contains(&fact.contract)
-            || fact.statement.trim().is_empty()
+        if fact.statement.trim().is_empty()
             || fact.citations.is_empty()
+            || !(known.contains(&fact.contract)
+                || fact
+                    .citations
+                    .iter()
+                    .any(|citation| citation.source_contract() == fact.contract))
         {
             return Err(
-                "review fact requires a known contract, statement and source citations".into(),
+                "review fact requires a statement, citations and a known or cited source contract"
+                    .into(),
             );
         }
         for citation in &mut fact.citations {

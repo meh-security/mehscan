@@ -3,9 +3,111 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
-use mehscan_core::{Capability, Evidence, Language, OperandFact, OperandFactKind};
+use mehscan_core::{
+    Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, Language,
+    OperandFact, OperandFactKind, Provenance, Resolution,
+};
+
+use super::{
+    comments::CommentRanges,
+    conditional::ConditionalRegions,
+    literals::LiteralEnvironment,
+    matcher::{evidence_id, location},
+    rust_open_options::Names,
+};
 
 type RustNode<'a> = Node<'a, StrDoc<SupportLang>>;
+
+pub(super) fn add_imported<'a>(
+    path: &str,
+    language: Language,
+    root: &RustNode<'a>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if language != Language::Rust {
+        return;
+    }
+    let source = root.text();
+    let operations = ["remove_file", "remove_dir", "remove_dir_all"];
+    if !operations.iter().any(|name| source.contains(name)) {
+        return;
+    }
+    let rule_id = "rust-filesystem-write";
+    let existing: BTreeSet<_> = evidence
+        .iter()
+        .filter(|item| item.rule_id == rule_id)
+        .map(|item| item.location.start.byte_offset)
+        .collect();
+    let names = Names::new(root);
+    for call in root
+        .dfs()
+        .filter(|n| n.kind().as_ref() == "call_expression")
+    {
+        let range = call.range();
+        if existing.contains(&range.start) || comments.is_in_comment(range.clone()) {
+            continue;
+        }
+        let Some(function) = call.field("function") else {
+            continue;
+        };
+        if !matches!(function.kind().as_ref(), "identifier" | "scoped_identifier")
+            || !names
+                .canonical(&call, function.text().as_ref())
+                .is_some_and(|name| {
+                    name.strip_prefix("std::fs::")
+                        .is_some_and(|operation| operations.contains(&operation))
+                })
+        {
+            continue;
+        }
+        let Some(arguments) = call.field("arguments") else {
+            continue;
+        };
+        let mut arguments = arguments
+            .children()
+            .filter(|n| n.is_named() && !n.kind().as_ref().contains("comment"));
+        let Some(argument) = arguments.next() else {
+            continue;
+        };
+        if arguments.next().is_some() || argument.is_missing() || argument.is_error() {
+            continue;
+        }
+        evidence.push(Evidence {
+            id: evidence_id(path, rule_id, range.start, range.end),
+            rule_id: rule_id.into(),
+            kind: EvidenceKind::Sink,
+            capability: Capability::FilesystemWrite,
+            location: location(path, &call),
+            enclosing_symbol: super::context::enclosing_symbol(&call),
+            captures: BTreeMap::from([(
+                "path".into(),
+                Capture {
+                    text: argument.text().into_owned(),
+                    location: location(path, &argument),
+                },
+            )]),
+            cwe_candidates: vec!["CWE-22".into()],
+            tags: vec!["filesystem".into(), "path".into(), "rust".into()],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: "mehscan Rust filesystem import resolution".into(),
+                rule_version: 2,
+            },
+            context: EvidenceContext {
+                reachability: Some(super::reachability::classify(&call, literals)),
+                availability: Some(conditional.availability_for(range)),
+                literals: BTreeMap::from([("path".into(), literals.evaluate(&argument))]),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            related_evidence: vec![],
+        });
+    }
+}
 
 pub(super) fn annotate<'a>(language: Language, root: &RustNode<'a>, evidence: &mut [Evidence]) {
     if language != Language::Rust

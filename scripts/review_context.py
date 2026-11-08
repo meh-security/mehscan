@@ -190,6 +190,13 @@ def sections(path, names):
             "sections": names, "text": "\n\n".join(selected)}
 
 
+def language_contracts(skill_root, paths):
+    """Small trusted routers; full pattern references remain on demand."""
+    if any(Path(path).suffix.lower() == ".rs" or Path(path).name in ("Cargo.toml", "Cargo.lock") for path in paths):
+        return [sections(skill_root / "references/rust-security.md", ["routing"])]
+    return []
+
+
 def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="investigator", *, tiered=False):
     core = skill_root / "references/runtime-review.md"
     selected_sections = ["common", "source_collection" if role == "collection" else "dependency_research" if role == "research" else kind]
@@ -206,11 +213,12 @@ def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="inv
         raise ValueError("unknown reviewer role")
     if role == "investigator":
         result.append(sections(skill_root / "references/final-proof-check.md", ["final_proof"]))
+    result.extend(language_contracts(skill_root, [*paths, *(entry["path"] for entry in entries if entry.get("path"))]))
     if any(entry.get("capability") == "html_output" for entry in entries) or any(
             Path(path).suffix.lower() in (".html", ".htm", ".vue", ".jsx", ".tsx") for path in paths):
         result.append(sections(skill_root / "references/html-output-review.md", ["chain", "frontend", "dom", "writers", "decisions"]))
     buckets = {"interpreted_input", "resource_boundary", "authorization", "credential_state",
-               "state_integrity", "crypto_configuration", "native_memory", "operation_policy"}
+               "state_integrity", "crypto_configuration", "native_memory", "rust_memory", "operation_policy"}
     selected = sorted({value["bucket"] for value in (playbooks or {}).values()})
     for bucket in selected:
         if bucket not in buckets:

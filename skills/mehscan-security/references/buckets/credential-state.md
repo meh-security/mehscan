@@ -1,5 +1,18 @@
 # Credential state
 
+For generated-token output, inspect the exact producer and direct formatting
+argument, then token usability and output readership. Lengths, digests and
+redaction differ from usable credentials. Do not infer deployment or severity
+from a logging statement alone. This source-flow review is separate from generic
+literal-secret scanning.
+
+For Rust default authentication-like headers, inspect the actual client type,
+redirect policy, origin and version-specific stripping. Custom API-key headers
+can differ from Authorization. For jsonwebtoken verification policy, bind the
+signature-disable call to the exact Validation consumed by decode and follow
+the result into an authoritative action. A different secure validator, display
+parser or rejecting outer check can change the finding.
+
 Trace **requester → required current proof or recovery authority → exact
 credential transition or renewal → rejection before the effect**. This applies to
 password, passcode, MFA, authenticator, recovery code and API-key changes,

@@ -52,7 +52,7 @@ fn without_generics(value: &str) -> String {
     }
     text
 }
-fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
+pub(super) fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
     let value = without_generics(&compact(value));
     let (mut result, _) = crate::code::rust_http::canonical(root, site, &value)?;
     if result == "Drop"
@@ -96,7 +96,7 @@ fn canonical<'a>(root: &N<'a>, site: &N<'a>, value: &str) -> Option<String> {
     }
     Some(result)
 }
-fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
+pub(super) fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
     let mut function = call.field("function")?;
     if function.kind().as_ref() == "generic_function" {
         function = function.field("function")?;
@@ -107,6 +107,57 @@ fn api<'a>(root: &N<'a>, call: &N<'a>) -> Option<String> {
     let (value, _) = crate::code::rust_raw_slice::function_identity(root, call)?;
     canonical(root, call, &value)
 }
+
+/// Fast call-shape gate before the full lexical identity check. Scoped paths
+/// keep their last component after owner resolution; an imported bare name can
+/// be an alias. Collect a superset of import names across all scopes once.
+pub(super) struct ApiNames<'a> {
+    names: &'a [&'a str],
+    import_names: BTreeSet<String>,
+}
+
+impl<'a> ApiNames<'a> {
+    pub(super) fn new(root: &N<'_>, names: &'a [&'a str]) -> Self {
+        let import_names = root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "use_declaration")
+            .flat_map(|node| {
+                node.dfs()
+                    .filter(|part| part.kind().as_ref() == "identifier")
+                    .map(|part| part.text().into_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        Self {
+            names,
+            import_names,
+        }
+    }
+
+    pub(super) fn matches(&self, call: &N<'_>) -> bool {
+        let Some(mut function) = call.field("function") else {
+            return false;
+        };
+        if function.kind().as_ref() == "generic_function" {
+            let Some(inner) = function.field("function") else {
+                return false;
+            };
+            function = inner;
+        }
+        match function.kind().as_ref() {
+            "identifier" => self.import_names.contains(function.text().as_ref()),
+            "scoped_identifier" => function
+                .field("name")
+                .is_some_and(|n| self.names.contains(&n.text().as_ref())),
+            _ => false,
+        }
+    }
+
+    pub(super) fn resolve<'tree>(&self, root: &N<'tree>, call: &N<'tree>) -> Option<String> {
+        self.matches(call).then(|| api(root, call)).flatten()
+    }
+}
+
 fn owned_type<'a>(root: &N<'a>, node: &N<'a>) -> bool {
     let ty = compact(&node.text());
     if ty.starts_with('&') || !ty.contains('<') {

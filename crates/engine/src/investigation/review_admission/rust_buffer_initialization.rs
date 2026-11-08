@@ -161,7 +161,7 @@ fn methods<'a>(
 }
 
 // Prune only direct source-proved exclusions; unknown conditions remain leads.
-fn runtime_path(node: &N<'_>, function: &N<'_>) -> bool {
+pub(super) fn runtime_path(node: &N<'_>, function: &N<'_>) -> bool {
     let mut current = node.clone();
     while let Some(parent) = current.parent() {
         if parent.range() == function.range() {
