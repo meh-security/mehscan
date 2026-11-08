@@ -1,5 +1,10 @@
 # Parsers, deserialization and resource effects
 
+For decoder internals or library-level source review, load the shared
+[deserialization source-review checks](../deserialization-checks.md), available
+to workers as `deserialization-libraries`. It covers System.Text.Json and similar
+libraries across languages, including source assignments with zero candidates.
+
 Bind the exact parser/import, version/options and downstream consumer before
 classifying the effect. Parsing untrusted input is a review entrypoint, not an
 automatic code-execution or denial-of-service finding.

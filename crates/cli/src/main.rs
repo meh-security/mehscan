@@ -939,100 +939,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     output.display()
                 )
             })?;
-            let summary = serde_json::json!({
-                "schema_version": inventory.schema_version,
-                "source_fingerprint": inventory.source_fingerprint,
-                "input_fingerprint": engine(inventory.input_fingerprint())?,
-                "include_review_material": inventory.include_review_material,
-                "review_count": inventory.entries.len(),
-                "coverage": inventory.scan.coverage.totals,
-                "impact_scope": inventory.scan.impact_scope,
-                "identity_catalog": inventory.identity_catalog,
-                "entries": inventory.entries,
-                "admission_audit": inventory.admission_audit,
-                "marker_admission": inventory.marker_admission,
-            });
-            let mut by_capability = BTreeMap::<String, usize>::new();
-            let mut by_cwe = BTreeMap::<String, usize>::new();
-            let mut by_area = BTreeMap::<String, usize>::new();
-            let mut by_operand_fact = BTreeMap::<String, usize>::new();
-            let mut value_deferrals_by_reason = BTreeMap::<String, usize>::new();
-            for entry in &inventory.entries {
-                if let Some(hint) = &entry.value_hint {
-                    *value_deferrals_by_reason
-                        .entry(hint.reason.clone())
-                        .or_default() += 1;
-                }
-                let kinds = entry
-                    .operand_facts
-                    .iter()
-                    .map(|fact| {
-                        serde_json::to_value(&fact.kind)
-                            .map(|value| value.as_str().unwrap().to_string())
-                    })
-                    .collect::<Result<BTreeSet<_>, _>>()
-                    .map_err(|error| error.to_string())?;
-                for kind in kinds {
-                    *by_operand_fact.entry(kind).or_default() += 1;
-                }
-                if entry.operand_facts.is_empty() {
-                    *by_operand_fact.entry("unclassified".into()).or_default() += 1;
-                }
-                let capability =
-                    serde_json::to_value(entry.capability).map_err(|error| error.to_string())?;
-                *by_capability
-                    .entry(capability.as_str().unwrap_or("unknown").to_string())
-                    .or_default() += 1;
-                for cwe in &entry.cwe_candidates {
-                    *by_cwe.entry(cwe.clone()).or_default() += 1;
-                }
-                let area = entry.path.split('/').take(2).collect::<Vec<_>>().join("/");
-                *by_area.entry(area).or_default() += 1;
-            }
-            let mut top_areas = by_area.into_iter().collect::<Vec<_>>();
-            top_areas
-                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-            top_areas.truncate(40);
-            let overview = serde_json::json!({
-                "native_identity": inventory.identity_catalog.as_ref().map(|catalog| serde_json::json!({
-                    "schema_version": catalog.schema_version,
-                    "repository": catalog.repository,
-                    "assessment_context": catalog.assessment_context,
-                    "source_fingerprint": catalog.source_fingerprint,
-                })),
-                "schema_version": inventory.schema_version,
-                "source_fingerprint": inventory.source_fingerprint,
-                "input_fingerprint": engine(inventory.input_fingerprint())?,
-                "review_count": inventory.entries.len(),
-                "coverage": inventory.scan.coverage.totals,
-                "impact_scope": inventory.scan.impact_scope,
-                "by_capability": by_capability,
-                "by_cwe": by_cwe,
-                "by_operand_fact": by_operand_fact,
-                "marker_admission": inventory.marker_admission,
-                "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
-                "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
-                "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
-                "value_deferrals_by_reason": value_deferrals_by_reason,
-                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || hint.reason == "php_relationship_research")).count(),
-                "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
-                "top_areas": top_areas,
-            });
-            fs::write(
-                output.join("inventory.json"),
-                serde_json::to_vec_pretty(&summary).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| format!("could not write inventory: {error}"))?;
-            fs::write(
-                output.join("overview.json"),
-                serde_json::to_vec_pretty(&overview).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| format!("could not write inventory overview: {error}"))?;
-            fs::write(
-                output.join("scan-cache.json"),
-                serde_json::to_vec(&inventory).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| format!("could not write scan cache: {error}"))?;
+            write_review_inventory(&output, &inventory)?;
             if timings {
                 eprintln!(
                     "{}",
@@ -1110,22 +1017,9 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     return Err("source admission output must be outside the target source".into());
                 }
                 fs::create_dir(&output).map_err(|e| e.to_string())?;
-                fs::write(
-                    output.join("scan-cache.json"),
-                    serde_json::to_vec(&inventory).map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-                let summary = serde_json::json!({"schema_version":inventory.schema_version,"source_fingerprint":inventory.source_fingerprint,
-                    "input_fingerprint":engine(inventory.input_fingerprint())?,"include_review_material":inventory.include_review_material,
-                    "identity_catalog":inventory.identity_catalog,"entries":inventory.entries,"admission_audit":inventory.admission_audit,
-                    "marker_admission":inventory.marker_admission,"review_count":inventory.entries.len(),"coverage":inventory.scan.coverage.totals,"impact_scope":inventory.scan.impact_scope});
-                fs::write(
-                    output.join("inventory.json"),
-                    serde_json::to_vec(&summary).map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
+                write_review_inventory(&output, &inventory)?;
                 print_json(
-                    &serde_json::json!({"mapping":mapping,"input_fingerprint":summary["input_fingerprint"],"review_count":inventory.entries.len()}),
+                    &serde_json::json!({"mapping":mapping,"input_fingerprint":engine(inventory.input_fingerprint())?,"review_count":inventory.entries.len()}),
                 )
             }
         }
@@ -3173,6 +3067,105 @@ fn review_run_directories(
             review_run_directories(&entry.path(), depth - 1, runs)?;
         }
     }
+    Ok(())
+}
+
+fn write_review_inventory(
+    output: &Path,
+    inventory: &mehscan_engine::investigation::ReviewInventory,
+) -> Result<(), String> {
+    let summary = serde_json::json!({
+        "schema_version": inventory.schema_version,
+        "source_fingerprint": inventory.source_fingerprint,
+        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "include_review_material": inventory.include_review_material,
+        "review_count": inventory.entries.len(),
+        "coverage": inventory.scan.coverage.totals,
+        "impact_scope": inventory.scan.impact_scope,
+        "identity_catalog": inventory.identity_catalog,
+        "entries": inventory.entries,
+        "admission_audit": inventory.admission_audit,
+        "marker_admission": inventory.marker_admission,
+    });
+    let mut by_capability = BTreeMap::<String, usize>::new();
+    let mut by_cwe = BTreeMap::<String, usize>::new();
+    let mut by_area = BTreeMap::<String, usize>::new();
+    let mut by_operand_fact = BTreeMap::<String, usize>::new();
+    let mut value_deferrals_by_reason = BTreeMap::<String, usize>::new();
+    for entry in &inventory.entries {
+        if let Some(hint) = &entry.value_hint {
+            *value_deferrals_by_reason
+                .entry(hint.reason.clone())
+                .or_default() += 1;
+        }
+        let kinds = entry
+            .operand_facts
+            .iter()
+            .map(|fact| {
+                serde_json::to_value(&fact.kind).map(|value| value.as_str().unwrap().to_string())
+            })
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        for kind in kinds {
+            *by_operand_fact.entry(kind).or_default() += 1;
+        }
+        if entry.operand_facts.is_empty() {
+            *by_operand_fact.entry("unclassified".into()).or_default() += 1;
+        }
+        let capability =
+            serde_json::to_value(entry.capability).map_err(|error| error.to_string())?;
+        *by_capability
+            .entry(capability.as_str().unwrap_or("unknown").to_string())
+            .or_default() += 1;
+        for cwe in &entry.cwe_candidates {
+            *by_cwe.entry(cwe.clone()).or_default() += 1;
+        }
+        let area = entry.path.split('/').take(2).collect::<Vec<_>>().join("/");
+        *by_area.entry(area).or_default() += 1;
+    }
+    let mut top_areas = by_area.into_iter().collect::<Vec<_>>();
+    top_areas.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    top_areas.truncate(40);
+    let overview = serde_json::json!({
+        "native_identity": inventory.identity_catalog.as_ref().map(|catalog| serde_json::json!({
+            "schema_version": catalog.schema_version,
+            "repository": catalog.repository,
+            "assessment_context": catalog.assessment_context,
+            "source_fingerprint": catalog.source_fingerprint,
+        })),
+        "schema_version": inventory.schema_version,
+        "source_fingerprint": inventory.source_fingerprint,
+        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "review_count": inventory.entries.len(),
+        "coverage": inventory.scan.coverage.totals,
+        "impact_scope": inventory.scan.impact_scope,
+        "by_capability": by_capability,
+        "by_cwe": by_cwe,
+        "by_operand_fact": by_operand_fact,
+        "marker_admission": inventory.marker_admission,
+        "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
+        "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
+        "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
+        "value_deferrals_by_reason": value_deferrals_by_reason,
+        "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || hint.reason == "php_relationship_research")).count(),
+        "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
+        "top_areas": top_areas,
+    });
+    fs::write(
+        output.join("inventory.json"),
+        serde_json::to_vec_pretty(&summary).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("could not write inventory: {error}"))?;
+    fs::write(
+        output.join("overview.json"),
+        serde_json::to_vec_pretty(&overview).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("could not write inventory overview: {error}"))?;
+    fs::write(
+        output.join("scan-cache.json"),
+        serde_json::to_vec(&inventory).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("could not write scan cache: {error}"))?;
     Ok(())
 }
 

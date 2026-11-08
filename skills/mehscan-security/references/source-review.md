@@ -27,6 +27,13 @@ choose the relevant guide and the next deciding lookup. A directory or language
 boundary may separate the entry point from its helper. When that relationship
 matters, follow the specific caller, dispatcher or helper into its source.
 
+For decoder internals, including zero-candidate assignments, load
+`deserialization-libraries` and the matching companion from its language table.
+Follow the actual decoder/runtime across a language boundary when relevant.
+Apply the selected checks through source reasoning; no target execution or test
+harness is required. Record assessed relationships, inapplicable cases and
+deciding gaps separately from vulnerability verdicts.
+
 On a research turn, put the current flow hypothesis and missing relationship in
 `working_chain` and say what each lookup would decide. In the final coverage
 summary, record the role and boundaries examined or what remains deferred. Keep
@@ -49,6 +56,13 @@ that could change the verdict. Request category guidance when it helps decide
 the relationship. Avoid exhaustive caller discovery or reconstructing a whole
 application to close an ordinary construction. Retain a concrete missing
 relationship when it remains unresolved.
+
+If AST navigation fails, retain the assigned source and use a known path with
+`source`, or scoped textual references to locate the deciding range. Repeating
+AST queries does not resolve a parser failure. Inspect files containing relative
+link text and generated headers before treating them as separate implementations;
+follow a verified original within scope. A readable body can settle a question
+even when outline or symbol extraction fails.
 
 Within an assignment, reuse a helper's inspected source from the assigned
 windows or earlier lookups. Check each caller's arguments, configuration and
