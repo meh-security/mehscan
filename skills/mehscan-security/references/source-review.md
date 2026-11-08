@@ -32,9 +32,10 @@ start with Mehscan's native questions and `parser-resource`: inspect the API,
 effective options, registered hooks, input boundary and consequential consumer.
 Do not expand every library call into a full decoder-internals review.
 For library implementation code or a custom serializer, converter, decoder,
-parser or input-processing hook, load `deserialization-libraries` and the matching
-language companion, including zero-candidate assignments. For XML implementation
-or custom XML processing, also load `xml-parsers` and its relevant platform section.
+parser or input-processing hook, load `deserialization-libraries` and follow its
+language/format routing, including zero-candidate assignments. For XML implementation
+or custom XML processing, use `xml-parsers` and its relevant platform section;
+load another companion only for a relationship its checks actually address.
 A forwarding wrapper stays on the usage path unless it implements such behavior
 or exposes a concrete unresolved implementation edge. Follow that edge into the
 actual decoder/runtime when relevant. Apply selected checks from source without

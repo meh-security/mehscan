@@ -6,7 +6,7 @@ to a parser does not by itself require reviewing that library's internals.
 For library implementation code or a custom serializer, converter, decoder,
 parser or input-processing hook, load the shared
 [deserialization source-review checks](../deserialization-checks.md), available
-as `deserialization-libraries`, and its matching language companion. This deeper
+as `deserialization-libraries`, and follow its language/format routing. This deeper
 review activates even when the source assignment has zero native candidates.
 A forwarding wrapper remains on the usage path unless it implements such behavior
 or a concrete missing edge requires implementation research.

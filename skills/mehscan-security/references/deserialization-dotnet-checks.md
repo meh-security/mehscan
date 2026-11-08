@@ -1,5 +1,10 @@
 # .NET deserialization source-review checks
 
+For XML reader/parser internals, start with the shared checks and
+[XML .NET section](xml-platform-checks.md), available as `xml-dotnet`, through
+`xml-parsers`. The JSON examples below are relevant only to matching operations;
+do not apply JSON metadata or extension-data scenarios to an XML token reader.
+
 Use with the [shared checks](deserialization-checks.md). Bind the package/runtime,
 target type, reader options, generated/reflection metadata, converter and reference
 handler. Start with the assessed library's own reader, resolver, formatter and

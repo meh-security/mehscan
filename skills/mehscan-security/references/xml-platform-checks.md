@@ -43,6 +43,28 @@ Inspect effective `DtdProcessing` and `XmlResolver` together; a null resolver ca
 close external resolution while internal entity processing remains a separate
 work question. Preserve `MaxCharactersFromEntities` and `MaxCharactersInDocument`
 units and zero semantics. A recursive object binder has its own depth budget.
+Keep the entity resolver separate from the resolver opening a primary input URI;
+explicitly null entity resolution does not prohibit opening that primary input.
+
+For `XmlReader.Create(existingReader, settings)`, distinguish event filtering from
+reconfiguring the inner parser. Trace `inner.Read`/`ReadAsync` before the outer
+DTD/error check; a rejected `DocumentType` event can follow inner DTD parsing and
+resolver I/O. Verify which resolver and quotas remain owned by the inner reader.
+Compare constructing directly over bytes/stream with decorating an existing reader.
+
+Trace resolver acquisition through response buffering as well as URI opening.
+`XmlUrlResolver` can reach a downloader that copies the response into a
+`MemoryStream` before the XML character quota is charged. A decoded-character
+limit is not a bound on earlier response bytes, memory, requests or elapsed time.
+Inspect the assessed implementation and any bounded loader; do not infer that an
+async signature makes copying cancellable or bounded. A resource finding still
+needs the enabled resolver, controlled response and applicable caller contract.
+
+Establish default limits in the assessed constructor/initializer and inspect all
+counter writes. Separate a new-document reset from encoding re-decode adjustments
+and nested entity state. Current API prose or an option name can disagree with
+the pinned implementation; retain that distinction instead of choosing a default
+by recollection.
 
 For validation, trace `ValidationType`, `ValidationFlags` (including inline/schema
 locations), `Schemas` and the `XmlSchemaSet.XmlResolver` used for imports/includes.
@@ -59,6 +81,8 @@ Compare a fixed stylesheet/denying resolver with the actual enabled path. Carry
 reader settings through wrappers, async siblings and reused instances.
 
 Sources: [reader settings](https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmlreadersettings),
+[settings implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/Core/XmlReaderSettings.cs),
+[resource buffering implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/XmlDownloadManager.cs),
 [schema set](https://learn.microsoft.com/en-us/dotnet/api/system.xml.schema.xmlschemaset),
 [XSLT security](https://learn.microsoft.com/en-us/dotnet/standard/data/xml/xslt-security-considerations).
 <!-- /runtime:dotnet -->

@@ -25,6 +25,12 @@ materialization to the first consequential consumer or cleanup.
 
 For implementation-specific checks, load only the relevant companion:
 
+For XML, use [XML checks](xml-parser-checks.md) and their matching platform
+section in place of a general language companion's JSON-specific examples.
+For example, a System.Xml reader implementation needs `xml-parsers` and
+`xml-dotnet`; load `deserialization-dotnet` additionally only when its binding,
+converter or ownership checks address an actual remaining relationship.
+
 | Source/runtime | Companion | Worker guidance name |
 | --- | --- | --- |
 | C and C++ | [Native decoders](deserialization-native-checks.md) | `deserialization-native` |

@@ -26,9 +26,9 @@ For library usage, start with Mehscan's native questions and the
 effective configuration, hooks, input and consumer. For library implementation
 code or a custom serializer, converter, decoder or parser, activate the
 [shared deserialization source-review checks](references/deserialization-checks.md)
-and their matching language companion, even with zero native candidates.
+and follow their language/format routing, even with zero native candidates.
 Workers start with `deserialization-libraries`. For XML implementation or custom
-XML processing, also use [XML parser checks](references/xml-parser-checks.md),
+XML processing, that route uses [XML parser checks](references/xml-parser-checks.md),
 available as `xml-parsers`, then its relevant platform section. Ordinary usage
 loads deeper guidance only for a concrete unresolved implementation relationship.
 All these checks use source reasoning without target execution.

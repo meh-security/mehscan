@@ -652,7 +652,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 | "structural"
         )
     {
-        return Err("--journal is available only for read-only investigation queries".to_string());
+        return Err("--journal is available only for code-evidence lookups such as source, outline and references; bundle/card/sweep operations do not accept it".to_string());
     }
     match operation.as_str() {
         "rust-advisories" => {
@@ -4628,7 +4628,7 @@ Changed inventories default to 'files': whole changed files without expansion or
 
 Native identity: add --repository-key STABLE_ID to review-inventory, review-jobs, review-tasks or direct review-bundles. Use the assessed/base repository's stable platform ID or configured namespace; optional --source-repository-key ID records fork/head provenance. Selected bundles inherit identity and reject overrides. Unknown namespaces are explicitly unscoped. Identity matching never authorizes verdict reuse; canonical reports retain native decision records for issue, not_issue and needs_review.
 
-Add --journal FILE to a read-only query to append its exact arguments, output or error, and elapsed time as JSONL. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
+Add --journal FILE to a code-evidence lookup (such as source, outline or references) to append its exact arguments, output or error, and elapsed time as JSONL. Bundle/card/sweep operations do not accept --journal. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
     );
 }
 

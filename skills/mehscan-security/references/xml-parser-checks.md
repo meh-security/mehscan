@@ -44,6 +44,8 @@ These checks guide source review; they do not add native detector coverage.
    when present. A reader's DTD rejection closes that parse path; carry that
    result only to processors that actually use it. A safe initial parse does
    not determine the policy of a later validator or transformer.
+   For a decorated reader, put inner parsing and outer event filtering on that
+   timeline; rejecting a returned event does not prevent inner work already done.
 
 2. **Follow resolution to the operation that opens or supplies content.** Inspect
    base-URI resolution, catalogs, callback return values and fallback behavior.
@@ -64,7 +66,9 @@ These checks guide source review; they do not add native detector coverage.
    for resets or uncharged work. Compare nested entities, repeated wide references
    and a rejected reference. Derive the recurrence or violated budget: ordinary
    linear character decoding is not automatically disproportionate expansion.
-   Compressed input and later serialization have separate budgets.
+   Follow loaders that fetch or buffer content before returning a reader/stream;
+   a parser quota may not constrain those earlier effects. Compressed input and
+   later serialization have separate budgets.
 
 4. **Inspect work before event delivery.** Trace accumulation of a single long
    token, attributes, namespace declarations, interned names and open-element
