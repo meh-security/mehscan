@@ -59,12 +59,20 @@ limit is not a bound on earlier response bytes, memory, requests or elapsed time
 Inspect the assessed implementation and any bounded loader; do not infer that an
 async signature makes copying cancellable or bounded. A resource finding still
 needs the enabled resolver, controlled response and applicable caller contract.
+For HTTP acquisition, trace timeout/cancellation through response-body consumption:
+returning a stream after headers can end the request timer before a later copy.
+Check redirect handling at the actual HTTP transport, beyond initial URI checks.
 
 Establish default limits in the assessed constructor/initializer and inspect all
 counter writes. Separate a new-document reset from encoding re-decode adjustments
 and nested entity state. Current API prose or an option name can disagree with
 the pinned implementation; retain that distinction instead of choosing a default
 by recollection.
+Follow default-resolver switches to their consumers and fallback-value helper;
+explicit resolver instances can take a different path from default selection.
+On Windows, follow file URIs through `Uri.LocalPath` to distinguish local and UNC
+resources. A file-scheme restriction can still permit network-share access;
+bind any further authentication or disclosure claim to the actual OS policy.
 
 For validation, trace `ValidationType`, `ValidationFlags` (including inline/schema
 locations), `Schemas` and the `XmlSchemaSet.XmlResolver` used for imports/includes.
@@ -83,6 +91,7 @@ reader settings through wrappers, async siblings and reused instances.
 Sources: [reader settings](https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmlreadersettings),
 [settings implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/Core/XmlReaderSettings.cs),
 [resource buffering implementation](https://github.com/dotnet/runtime/blob/60629d14374c56f1cb51819049ad1fa529307f8d/src/libraries/System.Private.Xml/src/System/Xml/XmlDownloadManager.cs),
+[file URI conversion](https://learn.microsoft.com/en-us/dotnet/api/system.uri.localpath),
 [schema set](https://learn.microsoft.com/en-us/dotnet/api/system.xml.schema.xmlschemaset),
 [XSLT security](https://learn.microsoft.com/en-us/dotnet/standard/data/xml/xslt-security-considerations).
 <!-- /runtime:dotnet -->
