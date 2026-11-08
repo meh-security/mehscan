@@ -19,6 +19,19 @@ The known-native-question catalog also lists questions outside the current nativ
 assignment. Use it to avoid duplicates; do not assess unassigned IDs. A different
 authority, content or workflow relationship can still warrant a distinct proposal.
 
+Start by identifying what the assigned code does. Use its public API, dispatcher,
+caller or configuration when the role is unclear. For a plausible security flow,
+name the entry point or caller, who supplies the input or authority, the effect,
+and the guard or configuration that would decide the question. Use that flow to
+choose the relevant guide and the next deciding lookup. A directory or language
+boundary may separate the entry point from its helper. When that relationship
+matters, follow the specific caller, dispatcher or helper into its source.
+
+On a research turn, put the current flow hypothesis and missing relationship in
+`working_chain` and say what each lookup would decide. In the final coverage
+summary, record the role and boundaries examined or what remains deferred. Keep
+the assigned scope and native IDs even when the flow is still unclear.
+
 Look for an actual operation, relevant input/actor, check and effect. Distinguish
 executable code from strings, comments and examples. For components establish the
 relevant callback/lifecycle and Server, client, Auto or unknown execution context.
