@@ -39,12 +39,22 @@ Sources: [libxml2 options](https://gnome.pages.gitlab.gnome.org/libxml2/html/par
 Distinguish `XmlReader.Create`, legacy readers, `XmlDocument.Load`, `XDocument`,
 `XPathDocument` and `XmlSerializer` overloads. Record framework/runtime version,
 the exact reader supplied and whether the overload instead opens input itself.
-Inspect effective `DtdProcessing` and `XmlResolver` together; a null resolver can
-close external resolution while internal entity processing remains a separate
-work question. Preserve `MaxCharactersFromEntities` and `MaxCharactersInDocument`
-units and zero semantics. A recursive object binder has its own depth budget.
-Keep the entity resolver separate from the resolver opening a primary input URI;
-explicitly null entity resolution does not prohibit opening that primary input.
+For modern settings-based readers, distinguish these paths and recheck their
+defaults on the assessed runtime; legacy XmlTextReader can differ:
+
+| Input/configuration | Selected effect |
+| --- | --- |
+| `XmlReader.Create(string uri)` | Opens the primary location as intended; DTD prohibition does not prohibit that fetch |
+| Stream/TextReader with default DTD Prohibit | Rejects a DTD before the selected external-DTD path |
+| DTD Parse without an effective external resolver | Internal DTD/entity work can be enabled while external loading remains gated |
+| DTD Parse with an effective external resolver | Can load a document-selected external resource when the relevant reference is processed |
+
+Installing a resolver alone does not enable DTD processing. Keep the entity
+resolver separate from the resolver opening a primary URI: explicitly null entity
+resolution does not prohibit that primary input open. Neither URI loading nor
+enabling a documented resolver feature is itself a library vulnerability.
+Preserve `MaxCharactersFromEntities` and `MaxCharactersInDocument` units and zero
+semantics. A recursive object binder has its own depth budget.
 
 For `XmlReader.Create(existingReader, settings)`, distinguish event filtering from
 reconfiguring the inner parser. Trace `inner.Read`/`ReadAsync` before the outer

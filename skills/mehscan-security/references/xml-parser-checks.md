@@ -18,6 +18,12 @@ opening the primary document can perform I/O before entity policy applies.
 Record who controls document bytes, base URI, schemas, stylesheets, catalogs and
 resolver registration. A namespace URI is a name, not evidence of retrieval.
 
+When configuration decides the claim, compare the default path with the actual
+enabled path: input as URI versus document bytes, DTD handling, resolver, wrapper
+order and the owner/stage of each limit. Name which setting changes the selected
+effect and which remains protective; enabling a primary fetch does not establish
+that document-selected secondary resources are enabled too.
+
 Load only the relevant section of [XML platform checks](xml-platform-checks.md):
 
 | Implementation reached | Section / worker guidance name |
@@ -103,6 +109,24 @@ These checks guide source review; they do not add native detector coverage.
    a secure factory unused by the actual overload is not a deciding control.
 
 ## Record the bounded result
+
+Separate behavior from the security conclusion:
+
+| Evidence established | Appropriate conclusion |
+| --- | --- |
+| Intended resource loading, ordinary buffering or documented stage-specific limits | Coverage or hardening observation unless an applicable guarantee or concrete consumer boundary is violated |
+| A supplied caller permits a forbidden destination/file or exceeds a defined resource boundary | Application finding tied to that caller, reaching configuration and failed control |
+| Library code violates a supported input, memory, progress or resource guarantee | Library finding with its valid activation conditions; no deployed victim is required |
+
+For SSRF, replace a vague "policy gap" with the intended destination restriction,
+attacker-controlled URI/response, request path and forbidden reachable target.
+For resource use, state the quantity and stage the claimed limit actually bounds.
+A character quota rejecting after acquisition proves ordering, not that it
+promised to cap response-byte buffering. A later rejection is a bypass only when
+the selected control was meant to prevent that earlier effect.
+An executed example can validate this mechanism without establishing a violated
+guarantee or service impact. Source proof remains sufficient when it settles the
+claim; these checks do not require runtime reproduction.
 
 For each applicable relationship record the input or caller sequence, exact
 processor/stage, earliest effective guard, source evidence and narrow effect.

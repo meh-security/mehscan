@@ -140,6 +140,11 @@ State the controlled dimension or valid caller sequence, exact operation,
 failed invariant, earliest effective guard, activation conditions and narrow
 effect. Distinguish library contract failure from exposure in a deployed caller.
 Carry the trusted-input contract, optional features and extension obligations.
+Expected API behavior with hypothetical unsafe callers is a hardening observation
+until the supplied source establishes a failed library guarantee or an actual
+consumer boundary. Reproducing buffering, loading or eventual rejection alone
+does not establish vulnerability. A valid optional feature can still contain a
+source-proven library defect without requiring a deployed application.
 For XML use [XML parser checks](xml-parser-checks.md), available as `xml-parsers`,
 for stage-specific loading, namespace interpretation and XML work controls.
 For YAML/reference formats inspect expansion and resolver activation; for

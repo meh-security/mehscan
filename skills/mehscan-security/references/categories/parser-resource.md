@@ -15,6 +15,15 @@ Bind the exact parser/import, version/options and downstream consumer before
 classifying the effect. Parsing untrusted input is a review entrypoint, not an
 automatic code-execution or denial-of-service finding.
 
+Start with the operation's intended contract. A URI-loading API normally opens
+the requested resource; this alone establishes neither SSRF nor path traversal.
+For an application finding, name the concrete forbidden access or exceeded budget
+and trace the actual caller/configuration that permits it. For a library finding,
+identify the failed bounds, ownership, progress or other supported guarantee.
+Keep expected loading and useful composition pitfalls as coverage/hardening
+observations when neither failure is established. An optional configuration can
+still expose a genuine defect; configuration dependence alone does not dismiss it.
+
 Distinguish executable types/hooks, external-resource access, expansion, deep
 recursion and ordinary data decoding. A safe-type schema can close executable
 deserialization while leaving a separately supported resource effect open.

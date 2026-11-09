@@ -85,6 +85,10 @@ a decisive unresolved fact. A source-established weakness needs no live victim
 or PoC. A business finding needs an actual protected effect and a supported
 requirement; a success message, hypothetical caller or product preference is
 insufficient. Safe local construction does not certify the whole operation.
+Expected library loading/buffering with only hypothetical unsafe callers belongs
+in coverage, not a new finding or an open-ended request to locate a consumer.
+A supported library guarantee failing under a valid optional configuration can
+still establish a defect; configuration dependence alone does not dismiss it.
 Preserve a distinct consequential question encountered in inspected source as a
 separate unreviewed lead; do not replace this ID's claim or hunt for neighbors.
 

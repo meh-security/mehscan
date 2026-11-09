@@ -95,6 +95,10 @@ question, mechanism, consequence, CWE/capability and inspected supporting source
 Choose Value for shown mechanisms or promising consequential gaps; Comprehensive
 for plausible useful relationships with a concrete unresolved edge. Bare API
 occurrences and hypothetical chains do not require a proposal.
+Expected library behavior alone does not justify a new proposal whose remaining
+task is to find any application that could misuse it. Keep useful mechanism and
+configuration lessons in coverage. Assess supplied native IDs with the ordinary
+verdict schema; this does not authorize skipping them or inventing archive verdicts.
 
 Provide an assessment with each proposal in the current context. Use issue for a
 shown weakness, not_issue for a source-established refutation and needs_review for
