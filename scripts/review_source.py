@@ -311,6 +311,13 @@ def run(args, legacy, worker):
         )
         facts = []
         inspected = []
+        citation_windows = {
+            "s" + str(i): {
+                **{k: w[k] for k in ("path", "start_line", "end_line")},
+                "anchor": True,
+            }
+            for i, w in enumerate(windows)
+        }
         queries = 0
         received = 0
         calls = 0
@@ -326,10 +333,14 @@ def run(args, legacy, worker):
                 raise TimeoutError("source assignment deadline exhausted")
             return left
 
-        def offer_source(result):
+        def offer_source(result, handle):
             candidate = context.delivered_source_window(root, result)
             if candidate is not None:
                 inspected.append(candidate)
+                citation_windows[handle] = {
+                    **{k: candidate[k] for k in ("path", "start_line", "end_line")},
+                    "anchor": False,
+                }
 
         try:
             for turn in range(limits["rounds"] + 1):
@@ -406,6 +417,7 @@ def run(args, legacy, worker):
                             "s" + str(i): {k: w[k] for k in ("path", "start_line", "end_line")}
                             for i, w in enumerate(windows)
                         },
+                        "citation_windows": dict(citation_windows),
                         "results": [],
                         "working_chain": working_chain,
                         "progress": [],
@@ -542,7 +554,7 @@ def run(args, legacy, worker):
                     facts.append(item)
                     batch.append(item)
                     worker.write(directory / (str(turn) + "-lookups.json"), batch)
-                    offer_source(result)
+                    offer_source(result, "f" + str(len(facts) - 1))
                 worker.write(directory / (str(turn) + "-lookups.json"), batch)
             if last is None:
                 raise ValueError("source review did not finalize its assignment")

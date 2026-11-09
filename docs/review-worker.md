@@ -39,6 +39,13 @@ from `research.coverage_windows`. The adapter supplies their original paths and
 ranges before native admission. Lookup ranges belong in evidence; they cannot be
 added as assignment coverage. Coverage handles must be complete and unique.
 
+Source citations use `source_ref` and `line` from `research.citation_windows`.
+An original line number selects that single line; null selects the complete
+delivered evidence extent. Proposal anchors require a specific line in an assigned
+`s` reference. Fetched `f` references supply evidence only. The adapter expands
+these into native paths/ranges; separate snippets stay separate, even across a
+blank unread line. Legacy tasks without this catalog retain path/range citations.
+
 Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
 or `--phase change-pass` for only the existing Changed comparison. Experimental
 tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor

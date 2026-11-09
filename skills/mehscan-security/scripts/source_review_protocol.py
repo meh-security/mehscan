@@ -15,10 +15,39 @@ def schema(task, base, api, guidance, bound_handles=True):
 
     text = {"type": "string"}
     integer = {"type": "integer", "minimum": 1}
+
+    def source_citation(anchor=False):
+        if "citation_windows" not in task["research"]:
+            return obj({"path": text, "start_line": integer, "end_line": integer})
+        if not bound_handles:
+            return obj({
+                "source_ref": {
+                    "type": "string",
+                    "pattern": "^s[0-9]+$" if anchor else "^[sf][0-9]+$",
+                },
+                "line": integer if anchor else {"anyOf": [integer, {"type": "null"}]},
+            })
+        variants = []
+        for ref, window in task["research"]["citation_windows"].items():
+            if anchor and not window["anchor"]:
+                continue
+            line = {
+                "type": "integer", "minimum": window["start_line"],
+                "maximum": window["end_line"],
+            }
+            variants.append(obj({
+                "source_ref": {"type": "string", "enum": [ref]},
+                "line": line if anchor else {"anyOf": [line, {"type": "null"}]},
+            }))
+        return {"anyOf": variants} if variants else {"not": {}}
+
+    citation = source_citation()
     native_draft = base["properties"]["draft"]
     if "anyOf" in native_draft:
         native_draft = native_draft["anyOf"][0]
     entry = copy.deepcopy(native_draft["properties"]["results"]["items"])
+    entry["properties"]["evidence"]["items"] = citation
+    entry["properties"]["source_leads"]["items"]["properties"]["evidence"] = citation
     assessment = copy.deepcopy(entry)
     assessment["properties"].pop("review_id")
     assessment["required"].remove("review_id")
@@ -38,7 +67,6 @@ def schema(task, base, api, guidance, bound_handles=True):
             variants.append(variant)
         return {"anyOf": variants}
 
-    citation = obj({"path": text, "start_line": integer, "end_line": integer})
     capabilities = [
         "process_execution",
         "dynamic_code_execution",
@@ -85,7 +113,7 @@ def schema(task, base, api, guidance, bound_handles=True):
             "mechanism": text,
             "consequence": text,
             "priority": {"type": "string", "enum": ["value", "comprehensive"]},
-            "anchor": citation,
+            "anchor": source_citation(anchor=True),
             "evidence": {"type": "array", "minItems": 1, "maxItems": 8, "items": citation},
             "assessment": outcomes(assessment),
         }
@@ -189,7 +217,13 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
     else:
         value = "Continue this source assignment using the previously inspected source and the new deciding evidence."
     if source_presentation != "raw":
-        value += SOURCE_VIEW_NOTICE
+        notice = SOURCE_VIEW_NOTICE
+        if "citation_windows" in task["research"]:
+            notice = notice.replace(
+                "Cite original paths/line ranges.",
+                "Use original line numbers with the offered source references.",
+            )
+        value += notice
     guides = [f for f in new if f["result"].get("operation") == "review_guidance"]
     evidence = [f for f in new if f not in guides]
     if evidence:
@@ -202,6 +236,15 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             + json.dumps(guides, ensure_ascii=False)
         )
     research = task["research"]
+    if "citation_windows" in research:
+        value += (
+            "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
+            "Use an original line number for a precise single-line citation, or null for one complete "
+            "offered evidence extent. Anchors require a specific line in an assigned s-reference; "
+            "f-references are supporting evidence only. Cite separated extents separately. "
+            "The controller supplies source citation extents:\n"
+            + json.dumps(research["citation_windows"], ensure_ascii=False)
+        )
     if "coverage_windows" in research:
         value += (
             "\nController-owned assignment coverage: return each window_ref below exactly once "
@@ -255,6 +298,38 @@ def envelope(response, task):
     ):
         raise ValueError("source reviewer combined incompatible actions")
     draft = copy.deepcopy(response["draft"])
+    if "citation_windows" in task["research"]:
+        windows = task["research"]["citation_windows"]
+
+        def expand(cite, anchor=False):
+            if not isinstance(cite, dict) or set(cite) != {"source_ref", "line"}:
+                raise ValueError("source citation must identify one offered extent")
+            ref, line = cite["source_ref"], cite["line"]
+            window = windows.get(ref) if isinstance(ref, str) else None
+            if window is None or (anchor and (not window["anchor"] or line is None)):
+                raise ValueError("source citation is not offered for this role")
+            if line is not None and (
+                type(line) is not int
+                or not window["start_line"] <= line <= window["end_line"]
+            ):
+                raise ValueError("source citation line is outside its delivered extent")
+            return {
+                "path": window["path"],
+                "start_line": window["start_line"] if line is None else line,
+                "end_line": window["end_line"] if line is None else line,
+            }
+
+        def assessment_citations(assessment):
+            assessment["evidence"] = [expand(c) for c in assessment["evidence"]]
+            for lead in assessment.get("source_leads", []):
+                lead["evidence"] = expand(lead["evidence"])
+
+        for assessment in draft["results"]:
+            assessment_citations(assessment)
+        for proposal in draft["proposals"]:
+            proposal["anchor"] = expand(proposal["anchor"], anchor=True)
+            proposal["evidence"] = [expand(c) for c in proposal["evidence"]]
+            assessment_citations(proposal["assessment"])
     if "coverage_windows" in task["research"]:
         windows = task["research"]["coverage_windows"]
         refs = [row["window_ref"] for row in draft["coverage"]]

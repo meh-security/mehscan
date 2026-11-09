@@ -10,8 +10,11 @@ or concrete unresolved relationships within the assignment. Use the same source
 context for both. Keep independent questions separate and do not repeat an existing
 native question as a proposal. The controller assigns new identities and validates
 source references; proposals are model reasoning, never native flow proof.
-Use one of the offered capability categories and original path/inclusive line
-references for anchors and evidence. The controller attaches the exact bytes from
+Use one of the offered capability categories. With controller-owned citations,
+return `source_ref` and `line`: select one original line for an anchor or focused
+evidence, or null for one complete offered evidence extent. Assigned s-references
+can anchor proposals; fetched f-references are supporting evidence only.
+Otherwise use original path/inclusive line references. The controller attaches the exact bytes from
 source delivered to this investigation; do not retype source quotations. Prefer
 the decisive expression or guard. Keep each citation inside a delivered range;
 cite separated snippets separately, including when the gap is only blank lines.

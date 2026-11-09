@@ -442,6 +442,14 @@ print(json.dumps({'draft':{'results':rows,
             (self.base / "worker/source-review/summary.json").read_text()
         )
         self.assertEqual(summary["results"][0]["inspected"][0]["path"], "Widget.razor")
+        frame = json.loads(next((self.base / "worker/source-review/jobs").glob("*/1-input.json")).read_text())
+        citations = frame["research"]["citation_windows"]
+        self.assertTrue(citations["s0"]["anchor"])
+        self.assertNotIn("f0", citations)  # Guidance is not source evidence.
+        self.assertEqual(citations["f1"], {
+            "path": "Widget.razor", "start_line": 1, "end_line": 1, "anchor": False})
+        self.assertEqual(citations["f2"], {
+            "path": "context.reviewdata", "start_line": 1, "end_line": 1, "anchor": False})
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(len(report["decision_records"]), 1)
         admitted = json.loads(
