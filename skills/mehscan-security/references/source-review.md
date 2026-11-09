@@ -15,6 +15,7 @@ references for anchors and evidence. The controller attaches the exact bytes fro
 source delivered to this investigation; do not retype source quotations. Prefer
 the decisive expression or guard. Keep each citation inside a delivered range;
 cite separated snippets separately, including when the gap is only blank lines.
+Lookups add supporting evidence; they do not expand the assignment's allowed anchors.
 The source-reader ceiling is 400 lines and 64 KiB per reference; a large method
 can use several focused references.
 The known-native-question catalog also lists questions outside the current native
