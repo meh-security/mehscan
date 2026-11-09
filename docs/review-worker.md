@@ -34,6 +34,11 @@ native model call. Source-stage usage contributes to total input, cache and outp
 accounting. A source-stage interruption before handoff is retained for diagnosis;
 automatic continuation of those interrupted source conversations is not yet supported.
 
+The bundled reviewer reports coverage using controller-owned `window_ref` identities
+from `research.coverage_windows`. The adapter supplies their original paths and
+ranges before native admission. Lookup ranges belong in evidence; they cannot be
+added as assignment coverage. Coverage handles must be complete and unique.
+
 Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
 or `--phase change-pass` for only the existing Changed comparison. Experimental
 tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor

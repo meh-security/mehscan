@@ -628,6 +628,10 @@ print(json.dumps({'draft':{'results':rows,
         source_turn = next(p for p in turns if json.loads(p.read_text())["kind"] == "source_review")
         captured = next((output / "source-review/jobs").glob("*/*-input.json"))
         self.assertEqual(source_turn.read_bytes(), captured.read_bytes())
+        source_frame = json.loads(captured.read_text())
+        self.assertTrue(source_frame["research"]["coverage_windows"])
+        self.assertEqual(set(source_frame["research"]["coverage_windows"]["s0"]),
+                         {"path", "start_line", "end_line"})
         self.assertTrue(source_turn.with_name("0-facts.json").is_file())
         self.assertTrue(source_turn.with_name("0-response.json").is_file())
         self.assertTrue(source_turn.with_name("context.json").is_file())

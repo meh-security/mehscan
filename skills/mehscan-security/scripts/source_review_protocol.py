@@ -86,7 +86,7 @@ def schema(task, base, api, guidance, bound_handles=True):
             "consequence": text,
             "priority": {"type": "string", "enum": ["value", "comprehensive"]},
             "anchor": citation,
-            "evidence": {"type": "array", "items": citation},
+            "evidence": {"type": "array", "minItems": 1, "maxItems": 8, "items": citation},
             "assessment": outcomes(assessment),
         }
     )
@@ -117,6 +117,17 @@ def schema(task, base, api, guidance, bound_handles=True):
             },
         }
     )
+    if "coverage_windows" in task["research"]:
+        windows = task["research"]["coverage_windows"]
+        coverage = draft["properties"]["coverage"]
+        coverage["items"]["properties"] = {
+            "window_ref": {"type": "string", "pattern": "^s[0-9]+$",
+                           **({"enum": list(windows)} if bound_handles else {})},
+            **{k: coverage["items"]["properties"][k] for k in ("status", "summary")},
+        }
+        coverage["items"]["required"] = ["window_ref", "status", "summary"]
+        if bound_handles:
+            coverage.update(minItems=len(windows), maxItems=len(windows))
     variants = []
     for tool in api["tools"]:
         props = {
@@ -191,6 +202,13 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             + json.dumps(guides, ensure_ascii=False)
         )
     research = task["research"]
+    if "coverage_windows" in research:
+        value += (
+            "\nController-owned assignment coverage: return each window_ref below exactly once "
+            "with status and summary. Do not add lookup ranges to coverage; cite them as evidence. "
+            "The controller supplies paths and line ranges from these identities:\n"
+            + json.dumps(research["coverage_windows"], ensure_ascii=False)
+        )
     if research.get("feedback"):
         value += (
             "\nController scheduling feedback (not source evidence):\n"
@@ -236,7 +254,16 @@ def envelope(response, task):
         or response["draft"] is None
     ):
         raise ValueError("source reviewer combined incompatible actions")
-    draft = response["draft"]
+    draft = copy.deepcopy(response["draft"])
+    if "coverage_windows" in task["research"]:
+        windows = task["research"]["coverage_windows"]
+        refs = [row["window_ref"] for row in draft["coverage"]]
+        if len(refs) != len(set(refs)) or set(refs) != set(windows):
+            raise ValueError("source coverage must identify assigned windows exactly once")
+        draft["coverage"] = [
+            {**windows[row["window_ref"]], **{k: row[k] for k in ("status", "summary")}}
+            for row in draft["coverage"]
+        ]
     ids = [r["review_id"] for r in draft["results"]]
     if len(ids) != len(set(ids)) or set(ids) != set(task["review_ids"]):
         raise ValueError("source review must assess its native IDs exactly once")

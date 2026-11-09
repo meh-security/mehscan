@@ -4,15 +4,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn fixture() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let base = std::env::temp_dir().join(format!(
-        "mehscan-source-review-cli-{}-{nonce}",
+        "mehscan-source-review-cli-{}-{nonce}-{sequence}",
         std::process::id()
     ));
-    fs::create_dir_all(base.join("source")).unwrap();
+    fs::create_dir(&base).unwrap();
+    fs::create_dir(base.join("source")).unwrap();
     base
 }
 

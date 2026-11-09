@@ -402,6 +402,10 @@ def run(args, legacy, worker):
                         "seconds_remaining": remaining(),
                         "artifact_handles": aliases,
                         "source_artifact_handles": source_handles,
+                        "coverage_windows": {
+                            "s" + str(i): {k: w[k] for k in ("path", "start_line", "end_line")}
+                            for i, w in enumerate(windows)
+                        },
                         "results": [],
                         "working_chain": working_chain,
                         "progress": [],

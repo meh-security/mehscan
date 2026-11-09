@@ -29,6 +29,8 @@ class Adapter(unittest.TestCase):
         self.body.update(contract="Review assigned original source.",primary={"windows":[{"path":"Widget.razor","start_line":1,"end_line":1,
             "text":"<p>@value</p>","artifact_id":"original"}]})
         self.task["research"].update(artifact_handles={"s0":"original"},source_artifact_handles=["s0"])
+        self.task["research"]["coverage_windows"] = {
+            "s0": {"path":"Widget.razor", "start_line":1, "end_line":1}}
         self.packet.write_text(json.dumps(self.body))
         def factory(config,session):
             fake=self.factory(config,session)
@@ -36,13 +38,14 @@ class Adapter(unittest.TestCase):
             def invoke(*args,**kwargs):
                 response,events,stderr=original(*args,**kwargs)
                 for key in ("progress","routing"):response.pop(key,None)
-                response["draft"]={"results":[],"proposals":[],"coverage":[{"path":"Widget.razor","start_line":1,"end_line":1,
+                response["draft"]={"results":[],"proposals":[],"coverage":[{"window_ref":"s0",
                     "status":"examined","summary":"Ordinary escaped text output."}]}
                 return response,events,stderr
             fake.review=invoke
             return fake
         first=reviewer.run(self.config,self.task,factory)
         self.assertEqual(first["draft"]["proposals"],[])
+        self.assertEqual(first["draft"]["coverage"][0]["path"], "Widget.razor")
         self.task["research"].update(round=1,rounds_remaining=0,queries_remaining=0)
         reviewer.run(self.config,self.task,factory)
         self.assertEqual([c[1] for c in self.calls],[None,THREAD])

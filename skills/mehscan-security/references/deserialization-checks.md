@@ -62,6 +62,9 @@ or imply that every framework or format is supported.
    guard can exclude a missing-payload allocation without imposing a total quota.
    After growth or replacement, follow the buffer actually used by the consumer;
    resizing a field does not update a previously captured array or pointer.
+   Establish rather than assume caller preconditions for raw/unsafe helpers.
+   A helper's precondition is not an input guard unless the reached caller
+   enforces it; a finding needs a supported caller sequence violating a guarantee.
 
 2. **Repeated updates revisit a growing collection.** Follow decoded keys,
    conversion and hash/equality into duplicate detection, replacement or merging.
@@ -155,7 +158,10 @@ C/C++ or FFI load [native memory](buckets/native-memory.md).
 
 Support the conclusion with the inspected producer, deciding control and effect.
 Distinguish managed exceptions, process failure and memory corruption through
-their actual source paths. A source-established mechanism can support a review
+their actual source paths. An operation throwing does not by itself establish
+process termination or service denial; bind that consequence to the reached
+caller or applicable runtime behavior rather than an imagined unhandled exception.
+A source-established mechanism can support a review
 verdict without runtime reproduction; an unavailable deciding helper or contract
 remains an explicit evidence gap.
 
