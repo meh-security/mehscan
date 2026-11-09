@@ -77,7 +77,9 @@ Reuse inspected source; shared facts need each caller's own applicability. Batch
 known independent lookups, then use their results for dependent reads. Prepared
 complete_file windows are validated source and need no confirmation query.
 `source` is current bytes; `base_source` is the pinned base. Cite actual inclusive
-lines and source-relative paths. Keep supplied IDs and artifact handles exact.
+lines and source-relative paths. Keep each citation inside a delivered range;
+cite separated snippets separately even when the gap is only blank lines.
+Keep supplied IDs and artifact handles exact.
 
 Use issue for a source-supported weakness and its necessary conditions, not_issue
 for an affirmatively safe/inapplicable selected relationship, or needs_review for
@@ -89,6 +91,11 @@ Expected library loading/buffering with only hypothetical unsafe callers belongs
 in coverage, not a new finding or an open-ended request to locate a consumer.
 A supported library guarantee failing under a valid optional configuration can
 still establish a defect; configuration dependence alone does not dismiss it.
+A functional contract defect is not by itself a security finding. For conversion
+errors or incorrectly forwarded options/hooks, identify the actual security
+restriction or invariant that is lost; do not assume every extension point
+implements a protection. A supported security guarantee needs no deployed consumer.
+A CWE label or the phrase "data integrity" does not supply the security consequence.
 Preserve a distinct consequential question encountered in inspected source as a
 separate unreviewed lead; do not replace this ID's claim or hunt for neighbors.
 

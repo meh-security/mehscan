@@ -141,10 +141,13 @@ failed invariant, earliest effective guard, activation conditions and narrow
 effect. Distinguish library contract failure from exposure in a deployed caller.
 Carry the trusted-input contract, optional features and extension obligations.
 Expected API behavior with hypothetical unsafe callers is a hardening observation
-until the supplied source establishes a failed library guarantee or an actual
-consumer boundary. Reproducing buffering, loading or eventual rejection alone
+until the supplied source establishes a failed library security guarantee or an
+actual consumer boundary. Reproducing buffering, loading or eventual rejection alone
 does not establish vulnerability. A valid optional feature can still contain a
-source-proven library defect without requiring a deployed application.
+source-proven library weakness without requiring a deployed application.
+Conversion and option-forwarding errors need their actual security restriction
+or invariant; ordinary value preservation or an extensibility hook alone does
+not establish an authorization, validation or disclosure boundary.
 For XML use [XML parser checks](xml-parser-checks.md), available as `xml-parsers`,
 for stage-specific loading, namespace interpretation and XML work controls.
 For YAML/reference formats inspect expansion and resolver activation; for

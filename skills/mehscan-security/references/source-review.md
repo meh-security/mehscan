@@ -13,8 +13,10 @@ source references; proposals are model reasoning, never native flow proof.
 Use one of the offered capability categories and original path/inclusive line
 references for anchors and evidence. The controller attaches the exact bytes from
 source delivered to this investigation; do not retype source quotations. Prefer
-the decisive expression or guard. The normal source-reader ceiling is 400 lines
-and 64 KiB per reference; a large method can use several focused references.
+the decisive expression or guard. Keep each citation inside a delivered range;
+cite separated snippets separately, including when the gap is only blank lines.
+The source-reader ceiling is 400 lines and 64 KiB per reference; a large method
+can use several focused references.
 The known-native-question catalog also lists questions outside the current native
 assignment. Use it to avoid duplicates; do not assess unassigned IDs. A different
 authority, content or workflow relationship can still warrant a distinct proposal.
@@ -69,7 +71,9 @@ If AST navigation fails, retain the assigned source and use a known path with
 `source`, or scoped textual references to locate the deciding range. Repeating
 AST queries does not resolve a parser failure. Inspect files containing relative
 link text and generated headers before treating them as separate implementations;
-follow a verified original within scope. A readable body can settle a question
+follow the original within scope. Link text is navigation, not an executable
+finding anchor; record that relationship in coverage when the actual operation
+has no anchor in the assignment. A readable body can settle a question
 even when outline or symbol extraction fails.
 
 Within an assignment, reuse a helper's inspected source from the assigned
@@ -92,13 +96,21 @@ own evidence; a zero-candidate assignment can still contain these mechanisms.
 
 Proposals require an anchor in an assigned original source range, a precise
 question, mechanism, consequence, CWE/capability and inspected supporting source.
+Use one to eight supporting evidence references per proposal; the anchor is
+separate. Select the deciding references and narrow the claim if more are essential.
 Choose Value for shown mechanisms or promising consequential gaps; Comprehensive
 for plausible useful relationships with a concrete unresolved edge. Bare API
 occurrences and hypothetical chains do not require a proposal.
 Expected library behavior alone does not justify a new proposal whose remaining
 task is to find any application that could misuse it. Keep useful mechanism and
-configuration lessons in coverage. Assess supplied native IDs with the ordinary
-verdict schema; this does not authorize skipping them or inventing archive verdicts.
+configuration lessons in coverage. A functional contract defect is not by itself
+a security finding. For conversion errors or incorrectly forwarded options/hooks,
+identify the actual security restriction or invariant that is lost; do not assume
+every extension point implements a protection. A supported security guarantee can
+establish a library weakness without a deployed consumer.
+A CWE label or the phrase "data integrity" does not supply the security consequence.
+Assess supplied native IDs with the ordinary verdict schema; this does not
+authorize skipping them or inventing archive verdicts.
 
 Provide an assessment with each proposal in the current context. Use issue for a
 shown weakness, not_issue for a source-established refutation and needs_review for
