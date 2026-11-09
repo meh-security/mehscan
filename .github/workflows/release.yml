@@ -33,7 +33,7 @@ jobs:
   build:
     name: Build, test, and attest (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
