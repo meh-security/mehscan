@@ -88,12 +88,13 @@ else:
     shape = schema["properties"]["draft"]["anyOf"][0]["properties"]
     if "proposals" in shape:
         packet=json.loads(prompt.split("Requested source assignment and native questions:\n")[1].split("\n")[0])
+        windows=json.JSONDecoder().raw_decode(prompt.split("The controller supplies paths and line ranges from these identities:\n",1)[1])[0]
         pending=auth.get("pending",False)
         draft={"results":[{"review_id":q["review_id"],"decision":"needs_review" if pending else "issue","confidence":"medium",
             "summary":"Synthetic operation verdict for Action integration.","reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":["Additional deployment proof required."] if pending else [],
             "blockers":[],"diagnosis":None,"source_leads":[]} for q in packet["native_questions"]],
-            "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},"status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}
+            "proposals":[],"coverage":[{"window_ref":ref,"status":"examined","summary":"Inspected assigned source."} for ref in windows]}
     elif "change_pass" in shape:
         phase = json.loads(prompt.split("Current phase and available native coverage (inspect before claiming a source-only gap):\n")[1].split("\n")[0])
         ids = [q["review_id"] for q in phase["available_native_questions"]]

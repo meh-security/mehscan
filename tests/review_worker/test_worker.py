@@ -2708,15 +2708,16 @@ else:
     shape = schema["properties"]["draft"]["anyOf"][0]["properties"]
     if "coverage" in shape:
         packet = json.JSONDecoder().raw_decode(prompt.split("Requested source assignment and native questions:\n",1)[1])[0]
+        windows = json.JSONDecoder().raw_decode(prompt.split("The controller supplies paths and line ranges from these identities:\n",1)[1])[0]
         ids = [row["review_id"] for row in packet["native_questions"]]
         draft = {"results":[{"review_id":i,"decision":"issue","confidence":"medium",
             "summary":"Synthetic operation issue for BYOK integration acceptance.",
             "reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
             "diagnosis":None,"source_leads":[]} for i in ids],"proposals":[],"coverage":[{
-            **{key:window[key] for key in ("path","start_line","end_line")},
+            "window_ref":ref,
             "status":"examined","summary":"Inspected the supplied original source."}
-            for window in packet["primary"]["windows"]]}
+            for ref in windows]}
     elif "change_pass" in shape:
         phase = json.loads(prompt.split("Current phase and available native coverage (inspect before claiming a source-only gap):\n")[1].split("\n")[0])
         ids = [q["review_id"] for q in phase["available_native_questions"]]
