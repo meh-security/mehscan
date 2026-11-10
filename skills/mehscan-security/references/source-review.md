@@ -4,6 +4,11 @@ Review the assigned original-source ranges and the supplied native questions.
 Native questions guide work; they do not define all the security relationships
 in this source. A supported language, zero candidates or one closed local property
 does not establish that the operation is safe for other questions.
+For web/API effects, distinguish object, function and property permissions from
+workflow prerequisites. Use `authorization` for the access boundary and
+`workflow-state` when a permitted actor can skip, replay or alter a consequential
+transition. Follow the concrete relationship within scope rather than applying
+every attack category to every endpoint.
 
 Assess the exact supplied native IDs. Discover additional consequential mechanisms
 or concrete unresolved relationships within the assignment. Use the same source

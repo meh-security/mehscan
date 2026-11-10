@@ -34,11 +34,11 @@ review; never cite a guide as application evidence.
 | [`process-code`](categories/process-code.md) | Process launch, shell text, dynamic evaluation or attacker-selected executable |
 | [`file-network`](categories/file-network.md) | Local file-root guarantees versus caller exposure, archive writes, SSRF, redirects or template-selected files |
 | [`path-selection`](path-selection-review.md) | Composed root/filename guards, Windows versus POSIX path resolution, prefix boundaries, symlinks and actual check-to-effect applicability |
-| [`authorization`](buckets/authorization.md) | Effective grant/denial composition, server policy, object ownership, tenancy, delegated authority or authenticated connection reuse |
+| [`authorization`](buckets/authorization.md) | Object/function/property authorization, effective grant/denial composition, ownership, tenancy, delegated authority or authenticated connection reuse |
 | [`credential-lifecycle`](categories/credential-lifecycle.md) | Issuance, acceptance, recovery, rotation, expiry, consumption or revocation |
 | [`token-review`](token-review.md) | JWT/session/API-key issuance or acceptance, version-specific signing/verification options, expiry, cached identity, token purpose or revocation |
 | [`mass-assignment`](categories/mass-assignment.md) | Generic body binding, generated CRUD, privileged fields or sensitive object updates |
-| [`workflow-state`](categories/workflow-state.md) | Ordering, alternate branches, payment/approval, quotas, repetition or concurrency |
+| [`workflow-state`](categories/workflow-state.md) | Business-logic bypass, skipped/reordered steps, alternate representations, payment/approval, replay, batch allowances or concurrency |
 | [`html-output`](html-output-review.md) | Browser interpretation, HTML trust bypass, stored markup, templates or DOM output |
 | [`angular-output`](angular-output-review.md) | Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings |
 | [`parser-resource`](categories/parser-resource.md) | Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits |

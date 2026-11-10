@@ -23,6 +23,27 @@ resolver member, rather than a callback merely near mutation-related text.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+
+Choose the relationship being challenged before widening the review:
+
+| Boundary | Concrete misuse case to check in source |
+| --- | --- |
+| Object access (BOLA/IDOR) | An allowed actor substitutes another object's ID, parent/child relationship or batch member. Bind the effective selected records to that actor's permitted scope. |
+| Function access (BFLA) | A lower-privileged actor reaches a restricted action through a method, route, resolver or alternate entrypoint. Derive the restriction from actual policy, not an admin-looking URL. |
+| Property access | An otherwise allowed operation accepts a protected owner/author/tenant/role field or returns a sensitive property. Inspect effective input mapping, server overrides, persistence and response projection. |
+| Workflow authority | The actor owns the object but skips a required payment, approval, verification or state prerequisite. Use `workflow-state` for the transition, not another ownership check. |
+
+For the material boundary, contrast an allowed case with a minimally changed
+request or sequence that should be rejected. Name the feasible actor, changed
+value, expected restriction and actual disclosure/write. Follow server-side
+normalization and merge order: the checked URL/body/cache value may differ from
+the one consumed. Check every affected record in a batch. Parameter binding,
+opaque identifiers and a valid token do not establish object or field permission.
+A comparison that records a mismatch after a write cannot authorize that write.
+Keep a distinct issuer compromise or workflow defect separate from an otherwise
+effective local owner predicate; record the producer flaw and affected conditions
+without multiplying it into independent local bypasses.
+
 Prioritize the producer of a relied-on subject or storage key before sibling
 endpoints. For a session/cache-derived subject, use
 [token review](../token-review.md) to inspect acceptance and relevant state writers;
@@ -102,3 +123,8 @@ not an exhaustive authorization audit. A boundary omitted by the admission
 budget has not been reviewed or found safe. Read `marker_admission` in the
 inventory overview; use bounded marker continuation from review planning when
 the remaining questions warrant review.
+
+Sources: [OWASP API1:2023 object authorization](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/),
+[API3:2023 property authorization](https://api-security.owasp.org/editions/2023/en/0xa3-broken-object-property-level-authorization/),
+[API5:2023 function authorization](https://api-security.owasp.org/editions/2023/en/0xa5-broken-function-level-authorization/)
+and the [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html).

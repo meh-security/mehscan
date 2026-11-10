@@ -118,10 +118,10 @@ separate authority/state question. Keep those claims distinct.
 | Operator objects, NoSQL selectors, executable predicates | [Structured queries](references/categories/structured-query.md), `structured-query` |
 | Process launch, shell text, dynamic evaluation | [Process and code](references/categories/process-code.md), `process-code` |
 | Files, archives, SSRF, redirects, template paths | [Files and network](references/categories/file-network.md), `file-network` |
-| Server policy, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
+| Object/function/property permissions, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
 | Issuance, recovery, expiry, rotation, revocation | [Credential lifecycle](references/categories/credential-lifecycle.md), `credential-lifecycle` |
 | Generic updates, generated CRUD, sensitive writable fields | [Mass assignment](references/categories/mass-assignment.md), `mass-assignment` |
-| Ordering, alternate branches, quotas, payment, repetition | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
+| Business-logic bypass, skipped steps, payment/approval, replay or batch allowances | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
 | Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
 | Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
 | XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
