@@ -594,60 +594,6 @@ pub(super) fn apply_hints(
         .iter()
         .map(|e| (e.id.as_str(), e))
         .collect::<BTreeMap<_, _>>();
-    let orm_files = entries
-        .iter()
-        .filter(|e| e.rule_id == "python-django-orm-resource-access")
-        .map(|e| e.path.clone())
-        .collect::<BTreeSet<_>>();
-    for path in orm_files {
-        let Some(file) = sources.files.get(&path) else {
-            continue;
-        };
-        let Some(ast) = parse(file) else {
-            continue;
-        };
-        let root = ast.root();
-        if root
-            .dfs()
-            .any(|n| n.kind().as_ref() == "ERROR" || n.is_missing())
-        {
-            continue;
-        }
-        for entry in entries
-            .iter_mut()
-            .filter(|e| e.path == path && e.rule_id == "python-django-orm-resource-access")
-        {
-            let Some(anchor) = entry
-                .identity
-                .as_ref()
-                .and_then(|i| by_id.get(i.anchor_id.as_str()))
-            else {
-                continue;
-            };
-            let Some(function) = root
-                .dfs()
-                .filter(|n| {
-                    n.kind().as_ref() == "function_definition"
-                        && n.range().start <= anchor.location.start.byte_offset
-                        && anchor.location.end.byte_offset <= n.range().end
-                })
-                .min_by_key(|n| n.range().len())
-            else {
-                continue;
-            };
-            entry.operand_facts.push(ReviewOperandSummary {
-                kind: mehscan_core::OperandFactKind::QueryStructure,
-                value: "local_callable_context".into(),
-                role: Some("resource_operation".into()),
-                location: Some(location_from_offsets(
-                    &path,
-                    &file.source,
-                    function.range().start,
-                    function.range().end,
-                )),
-            });
-        }
-    }
     for entry in entries.iter_mut().filter(|e| {
         matches!(
             e.rule_id.as_str(),

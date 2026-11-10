@@ -241,6 +241,15 @@ fn orm_shared_reads_group_by_exact_callable_not_repeated_method_names() {
         .filter(|e| e.rule_id == "python-django-orm-resource-access")
         .collect();
     assert_eq!(entries.len(), 4);
+    assert!(
+        entries.iter().all(|e| e
+            .operand_facts
+            .iter()
+            .filter(|f| f.role.as_deref() == Some("resource_operation"))
+            .count()
+            == 1),
+        "callable grouping must not duplicate existing native facts"
+    );
     let locations = entries
         .iter()
         .map(|e| {
