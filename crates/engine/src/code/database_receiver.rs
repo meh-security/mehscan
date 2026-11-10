@@ -194,14 +194,24 @@ fn proven_family(
                 if only_module.is_some_and(|only| only != module) {
                     continue;
                 }
-                let prefix = format!("import {module}");
-                if source == prefix || source.starts_with(&format!("{prefix} as ")) {
-                    modules.insert(
-                        source
-                            .split_once(" as ")
-                            .map_or(module, |(_, alias)| alias.trim())
-                            .to_string(),
-                    );
+                if import.kind().as_ref() == "import_statement" {
+                    for imported in import.field_children("name") {
+                        let name = if imported.kind().as_ref() == "aliased_import" {
+                            imported.field("name")
+                        } else if imported.kind().as_ref() == "dotted_name" {
+                            Some(imported.clone())
+                        } else {
+                            None
+                        };
+                        if name.is_none_or(|name| name.text().as_ref() != module) {
+                            continue;
+                        }
+                        let binding = imported.field("alias").unwrap_or(imported);
+                        let binding = binding.text();
+                        if python_import_count(root, receiver, binding.as_ref()) == 1 {
+                            modules.insert(binding.to_string());
+                        }
+                    }
                 }
                 if let Some(names) = source.strip_prefix(&format!("from {module} import ")) {
                     for name in names.split(',') {
@@ -515,20 +525,10 @@ fn python_import_count(root: &DbNode<'_>, site: &DbNode<'_>, symbol: &str) -> us
                 .is_none_or(|s| s.start <= site.range().start && site.range().end <= s.end)
         })
         .map(|n| {
-            let text = n.text();
-            let names = text
-                .split_once(" import ")
-                .map(|(_, names)| names)
-                .or_else(|| text.strip_prefix("import "))
-                .unwrap_or("");
-            names
-                .split(',')
+            n.field_children("name")
                 .filter(|name| {
-                    let name = name.trim().trim_matches(['(', ')']).trim();
-                    let binding = name
-                        .split_once(" as ")
-                        .map_or(name, |(_, alias)| alias.trim());
-                    binding == symbol
+                    let binding = name.field("alias").unwrap_or_else(|| name.clone());
+                    binding.text().as_ref() == symbol
                 })
                 .count()
         })

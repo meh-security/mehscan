@@ -1,4 +1,113 @@
-use mehscan_core::Capability;
+use mehscan_core::{Capability, SecurityPathState};
+
+#[test]
+fn python_database_receivers_accept_each_module_in_grouped_imports() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-python-grouped-db-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let cases = [
+        ("first.py", "import sqlite3, os", "sqlite3"),
+        ("later.py", "import os, sqlite3", "sqlite3"),
+        (
+            "continued_plain.py",
+            "import os, \\\n    sqlite3",
+            "sqlite3",
+        ),
+        ("alias.py", "import os, sqlite3 as driver", "driver"),
+        (
+            "dotted.py",
+            "import os, mysql.connector as driver",
+            "driver",
+        ),
+        (
+            "continued.py",
+            "import os, \\\n    sqlite3 as driver",
+            "driver",
+        ),
+    ];
+    for (file, imports, driver) in cases {
+        std::fs::write(root.join(file), format!("{imports}\nfrom flask import request\nstore = {driver}.connect('app.db')\ndef run():\n    name = request.args['name']\n    store.execute('SELECT * FROM users WHERE name=' + name)\n    store.execute('SELECT * FROM users WHERE name=?', (request.args['name'],))\n    store.executemany('INSERT INTO users(name) VALUES (?)', [(name,)])\n    store.executescript('DELETE FROM users')\n")).unwrap();
+    }
+    let result = mehscan_engine::scan_path(&root).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    for (file, _, _) in cases {
+        let queries: Vec<_> = result
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == file && e.capability == Capability::DatabaseQuery)
+            .collect();
+        assert_eq!(queries.len(), 4, "{file}: {queries:#?}");
+        assert!(
+            queries
+                .iter()
+                .any(|e| e.captures["query"].text.contains(" + name"))
+        );
+        assert_eq!(
+            result
+                .evidence
+                .iter()
+                .filter(
+                    |e| e.location.path == file && e.capability == Capability::SqlParameterization
+                )
+                .count(),
+            2,
+            "{file}"
+        );
+        assert!(
+            result
+                .security_paths
+                .iter()
+                .any(|path| path.state == SecurityPathState::Protected
+                    && queries.iter().any(|query| query.id == path.sink_evidence_id
+                        && query.captures["query"].text.contains("WHERE name=?"))),
+            "{file}: {:#?}",
+            result.security_paths
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn python_grouped_database_imports_do_not_admit_unrelated_or_shadowed_receivers() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-python-grouped-db-negative-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let cases = [
+        ("unrelated.py", "import os, sqlite3\nother.execute(sql)\n"),
+        (
+            "prefix.py",
+            "import os, sqlite3_helpers\nstore = sqlite3_helpers.connect('x')\nstore.execute(sql)\n",
+        ),
+        (
+            "shadowed.py",
+            "import os, sqlite3 as driver\ndef run(driver, sql):\n    store = driver.connect('x')\n    store.execute(sql)\n",
+        ),
+        (
+            "reassigned.py",
+            "import os, sqlite3 as driver\nstore = driver.connect('x')\nstore = other\nstore.execute(sql)\n",
+        ),
+        (
+            "collision.py",
+            "import sqlite3 as driver, unrelated as driver\nstore = driver.connect('x')\nstore.execute(sql)\n",
+        ),
+    ];
+    for (file, source) in cases {
+        std::fs::write(root.join(file), source).unwrap();
+    }
+    let result = mehscan_engine::scan_path(&root).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    assert!(
+        !result.evidence.iter().any(|e| matches!(
+            e.capability,
+            Capability::DatabaseQuery | Capability::SqlParameterization
+        )),
+        "{:#?}",
+        result.evidence
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn database_query_variants_preserve_sql_operand_across_languages() {
