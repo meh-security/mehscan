@@ -246,7 +246,13 @@ These scope hints do not certify application safety. Regenerate older inventorie
 before reuse. ORM review packets can include bounded effect and import-bound
 caller excerpts; `review-inventory-list --group-by implementation` groups located
 Python ORM callables for source reading while preserving each review ID and its
-independent authorization decision.
+independent authorization decision. Value can defer additional selectors on the
+same direct Django filter chain to one retained review with the complete chain
+excerpt and an explicit dependency. Separate operations and nested queries keep
+their own questions; no safe verdict transfers between IDs. Fixed or empty,
+import-bound Django `HttpResponse` bodies can also be deferred when local uses
+only return the response or assign fixed content. Dynamic bodies, aliases,
+unknown response uses and unknown query transforms retain Value review.
 
 Python mutation packets can also include import-bound class/base declarations,
 `Meta.permissions`, permission helpers, `mutate` and `check_permissions`

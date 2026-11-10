@@ -439,7 +439,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "36";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "37";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v22";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -9741,7 +9741,7 @@ fn build_observation_reviews(
     let groups = groups.into_iter().collect::<Vec<_>>();
     let file_content = file_content::Index::build(sources, all_evidence, &groups);
     let frontend_context = frontend::FrontendContext::build(sources, &groups);
-    let python_orm = python_review::OrmContext::build(sources, &groups);
+    let python_orm = python_review::OrmContext::build(sources, &groups, all_evidence);
     let python_policy = python_policy::PolicyContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
     for fact in frontend_context.all_facts() {

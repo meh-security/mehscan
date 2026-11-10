@@ -2,6 +2,7 @@
 use super::*;
 mod correlation;
 mod selection;
+mod value;
 
 #[derive(Default)]
 pub(super) struct OrmContext {
@@ -89,7 +90,11 @@ fn unshadowed(root: &PyNode<'_>, call: &PyNode<'_>, name: &str) -> bool {
 }
 
 impl OrmContext {
-    pub(super) fn build(sources: &RepositorySources, groups: &[ObservationGroup]) -> Self {
+    pub(super) fn build(
+        sources: &RepositorySources,
+        groups: &[ObservationGroup],
+        evidence: &[Evidence],
+    ) -> Self {
         let mut result = Self::default();
         let mut targets: BTreeMap<(String, String), Target> = BTreeMap::new();
         let mut per_file: BTreeMap<&str, Vec<&Evidence>> = BTreeMap::new();
@@ -110,6 +115,15 @@ impl OrmContext {
             };
             let root = ast.root();
             let query_bindings = correlation::Bindings::build(&root);
+            // Selected bundles may omit the deferred siblings. Use the raw
+            // file evidence to retain the complete representative obligation.
+            let all_anchors = evidence
+                .iter()
+                .filter(|e| {
+                    e.location.path == path && e.rule_id == "python-django-orm-resource-access"
+                })
+                .collect::<Vec<_>>();
+            let shared_chains = value::chains(&root, &all_anchors);
             for e in anchors {
                 let Some(call) = root
                     .dfs()
@@ -127,6 +141,17 @@ impl OrmContext {
                     .entry(e.id.clone())
                     .or_default()
                     .push(context_fact(file, &call, "python_orm_effect_context"));
+                if let Some(chain) = shared_chains
+                    .iter()
+                    .find(|c| c.anchors.iter().any(|a| a.id == e.id))
+                {
+                    result.by_anchor.entry(e.id.clone()).or_default().push(ReviewNeighborhoodFact {
+                        role: "python_orm_shared_chain_context".into(), symbol: "all selectors and terminal effect".into(),
+                        location: location_from_offsets(&file.path, &file.source, chain.span.start, chain.span.end),
+                        excerpt: file.source[chain.span.clone()].into(), evidence_id: Some(e.id.clone()),
+                        provenance: QueryProvenance { resolution: Resolution::Ast, engine: format!("Python shared receiver-chain review 1; review all predicates and the terminal effect together; {} native selector questions share this complete expression; nested queries, caller authority and correlation remain unverified; no safe verdict transfer", chain.anchors.len()) },
+                    });
+                }
                 let (mut facts, cut) = selection::facts(file, &call, e);
                 let (query_facts, query_cut) = correlation::facts(file, &query_bindings, &call, e);
                 facts.extend(query_facts);
@@ -610,6 +635,7 @@ pub(super) fn apply_hints(
     evidence: &[Evidence],
     sources: &RepositorySources,
 ) {
+    value::apply(entries, evidence, sources);
     let by_id = evidence
         .iter()
         .map(|e| (e.id.as_str(), e))
