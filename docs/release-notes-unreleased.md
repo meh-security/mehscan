@@ -2,4 +2,4 @@
 
 No unreleased changes yet.
 
-[Full changelog](https://github.com/meh-security/mehscan/compare/v0.12.0...main)
+[Full changelog](https://github.com/meh-security/mehscan/compare/v0.13.0...main)

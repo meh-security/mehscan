@@ -10,6 +10,7 @@ It runs locally without building or executing your application. Use the CLI on i
 - Follow relevant source, imports and helper implementations during review.
 - Prepare review bundles for AI coding agents.
 - Review original source with AI, including security questions beyond scanner candidates.
+- Investigate serializer, deserializer and XML parser implementations with language-specific source checks.
 - Match a Rust lockfile against a local copy of the RustSec advisory database.
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
 - Add an optional second pass to check review quality or reassess selected results.
@@ -101,7 +102,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [0.12.0 release notes](docs/release-notes-v0.12.0.md)
+- [0.13.0 release notes](docs/release-notes-v0.13.0.md)
 
 Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
 
