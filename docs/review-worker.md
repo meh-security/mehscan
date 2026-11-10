@@ -45,6 +45,9 @@ delivered evidence extent. Proposal anchors require a specific line in an assign
 `s` reference. Fetched `f` references supply evidence only. The adapter expands
 these into native paths/ranges; separate snippets stay separate, even across a
 blank unread line. Legacy tasks without this catalog retain path/range citations.
+The reviewer prefers deciding lines from source already inspected and keeps full
+extents when a claim needs their context, such as checking a complete body for a
+missing guard. It avoids additional lookups solely to shorten quotations.
 
 Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
 or `--phase change-pass` for only the existing Changed comparison. Experimental
