@@ -134,6 +134,75 @@ def decision_targets(packet, *, physical_lines=False):
     return targets
 
 
+def compact_operation_sources(packet, display):
+    """Reference shared source in a prompt copy; raw evidence stays intact.
+
+    Match original text and exact byte-column extents before redirecting a
+    context to an already supplied full-line window. Metadata stays per ID.
+    """
+    if not packet.get("operation_groups"):
+        return display
+    display = copy.deepcopy(display)
+    windows = packet.get("primary", {}).get("windows", [])
+    contexts = packet.get("sweep", {}).get("source_contexts", [])
+    bindings = packet.get("sweep_source_handles", [])
+    handles = {b["source_context_index"]: b["artifact_id"] for b in bindings}
+    earlier = []
+    removed = 0
+    for index, record in enumerate(contexts):
+        loc = record.get("location", {})
+        first, last = loc.get("start_line"), loc.get("end_line")
+        excerpt = record.get("excerpt")
+        if not isinstance(excerpt, str) or not excerpt or type(first) is not int or type(last) is not int:
+            continue
+        source_ref = None
+        for w in [*windows, *earlier]:
+            if (w.get("side", "current") != record.get("side", "current") or w.get("clipped")
+                    or w.get("path") != loc.get("path") or not w["start_line"] <= first <= last <= w["end_line"]):
+                continue
+            lines = w["text"].replace("\r\n", "\n").split("\n")
+            lines = lines[first - w["start_line"]:last - w["start_line"] + 1]
+            if len(lines) != last - first + 1:
+                continue
+            start, end = loc.get("start_column"), loc.get("end_column")
+            if type(start) is not int or type(end) is not int or min(start, end) < 1:
+                continue
+            # Columns are UTF-8 bytes, including for non-ASCII selectors.
+            rows = [line.encode("utf-8") for line in lines]
+            if start - 1 > len(rows[0]) or end - 1 > len(rows[-1]):
+                continue
+            if len(rows) == 1:
+                expected = rows[0][start - 1:end - 1]
+            else:
+                expected = b"\n".join([rows[0][start - 1:], *rows[1:-1], rows[-1][:end - 1]])
+            if expected == excerpt.replace("\r\n", "\n").encode("utf-8"):
+                source_ref = w["artifact_id"]
+                break
+        if source_ref is None:
+            # Identical source can have different roles and anchor attribution.
+            # Keep those descriptors while referencing the first actual extent.
+            for previous in range(index):
+                other = contexts[previous]
+                if (other.get("location") == loc and other.get("excerpt") == excerpt
+                        and other.get("side", "current") == record.get("side", "current")
+                        and previous in handles):
+                    source_ref = display["sweep"]["source_contexts"][previous].get("source_ref", handles[previous])
+                    break
+        if source_ref is not None:
+            target = display["sweep"]["source_contexts"][index]
+            target.pop("excerpt", None)
+            target["source_ref"] = source_ref
+            removed += len(excerpt.encode("utf-8"))
+        elif index in handles and loc.get("start_column") == 1:
+            rows = excerpt.replace("\r\n", "\n").split("\n")
+            if (len(rows) == last - first + 1 and loc.get("end_column") == len(rows[-1].encode("utf-8")) + 1):
+                earlier.append({"artifact_id": handles[index], "path": loc["path"], "start_line": first,
+                                "end_line": last, "side": record.get("side", "current"), "text": "\n".join(rows)})
+    display["operation_source_view"] = {"removed_duplicate_excerpt_bytes": removed,
+        "semantics": "source_ref supplies the text; retain each context's original location, attribution and truncation"}
+    return display
+
+
 def review_id_schema(ids, *, bound_handles=True):
     # Stable provider schemas carry the protocol, not an assignment. The local
     # schema still enforces exact current IDs before any response is admitted.
@@ -316,6 +385,8 @@ def build_prompt(task, packet, facts, state, *, source_presentation="raw"):
     new_guidance = [value["result"] for value in new_facts if value.get("result", {}).get("operation") == "review_guidance"]
     new_facts = [value for value in new_facts if value.get("result", {}).get("operation") != "review_guidance"]
     display_packet,new_facts = present_source_inputs(task,packet,new_facts,source_presentation,include_packet=state is None)
+    if state is None:
+        display_packet = compact_operation_sources(packet, display_packet)
     handle_by_id = {value:key for key,value in task["research"]["artifact_handles"].items()}
     def readable(value):
         if isinstance(value, str):
@@ -326,6 +397,8 @@ def build_prompt(task, packet, facts, state, *, source_presentation="raw"):
             return [readable(item) for item in value]
         return value
     instructions = INSTRUCTIONS
+    if packet.get("operation_groups"):
+        instructions += "\nOperation groups identify a shared callable, not equivalent security decisions. Read its shared source once; check actor/policy, every selection branch and each later effect. Return every native ID independently and retain incompatible caller, channel, batch, transaction and witness conditions. source_ref redirects duplicate text to an offered source handle; original context extents, attribution and truncation still apply. Grouping does not establish other caller coverage or authorization.\n"
     if not task.get("routing_allowed", False):
         instructions += "\nThis is a single-model investigation. Use the source broker directly for missing evidence. No handoff or automatic second reviewer is enabled; routing=[]. Keep decisive unresolved facts in the final checks when the bounded investigation cannot settle them.\n"
     if task.get("dependency_allowed"):

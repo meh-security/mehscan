@@ -54,6 +54,16 @@ or `--phase change-pass` for only the existing Changed comparison. Experimental
 tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor
 generation remains optional; ordinary AI source review needs no source generator.
 
+For an opt-in Python ORM operation pilot, add `--group-operations` with
+`--phase native`. Two to six selected IDs in the same exact native callable
+share its complete bounded source; the bundled adapter references duplicate
+excerpts instead of repeating them in the prompt. Each ID still requires its
+own result. Split jobs, ambiguous ranges and oversized callables keep ordinary
+review. Groups do not establish authorization, equivalent effects or complete
+caller coverage. The option is bound into recovery and cannot change on resume.
+This groups context within existing bundles; it does not defer candidates or
+guarantee fewer model calls or lower cost.
+
 Use `--policy value --selection policy` for ordinary AI review. Comprehensive
 selects every admitted ID. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound

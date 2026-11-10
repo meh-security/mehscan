@@ -867,6 +867,8 @@ def execute(command, cwd, env, timeout, payload=None):
 
 
 def run(args):
+    if getattr(args, "group_operations", False) and args.phase != "native":
+        raise ValueError("operation grouping pilot requires --phase native")
     root = Path(args.source_root).resolve(strict=True)
     store = outside(args.store, root)
     key = context.digest([str(root), args.stream])
@@ -891,6 +893,9 @@ def run(args):
 
 
 def run_locked(args):
+    group_operations = getattr(args, "group_operations", False)
+    if type(group_operations) is not bool or group_operations and args.phase != "native":
+        raise ValueError("operation grouping pilot requires --phase native")
     second_mode = getattr(args, "second_pass", "off")
     second_scope = second_pass.review_scope(getattr(args, "second_pass_scope", "all"))
     if second_mode == "off" and second_scope != second_pass.review_scope("all"):
@@ -979,6 +984,8 @@ def run_locked(args):
     record = {"schema_version": "1", "status": "running", "generation": generation,
               "reviewer": args.reviewer_label, "alert_disposition": "not_established", "timings_ms": timings,
               "workers": workers, "query_workers": query_workers, "jobs": {}}
+    if group_operations:
+        record["group_operations"] = True
     bound_runtime = None
     shared_budget = None
     tiered_policy = None
@@ -1076,6 +1083,8 @@ def run_locked(args):
                           task.get("profile", "routine"), task.get("review_role", "investigator")]
         if task.get("assessment_cycle"):
             identity_parts.append(task["assessment_cycle"])
+        if group_operations:
+            identity_parts.append("operation-groups-v1")
         identity = context.digest(identity_parts)
         binding = {"package_id": package["package_id"], "runtime": bound_runtime,
                    "reviewer_configuration": reviewer_configuration,
@@ -1085,6 +1094,8 @@ def run_locked(args):
                    "source_handoff_sha256": context.digest(task.get("source_handoff")),
                    "assessment_cycle":task.get("assessment_cycle"),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
+        if group_operations:
+            binding["operation_groups"] = "v1"
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None,
                              timeout=args.timeout, provider=tiered_policy["expert"] if task.get("profile")=="expert" else bound_runtime.get("provider"))
@@ -1253,6 +1264,13 @@ def run_locked(args):
             packet["primary"] = {**prepared_changes,
                 "windows": source_profiles.combine(prepared_changes["windows"], explicit["windows"], application["windows"]),
                 "limits": [*prepared_changes["limits"], *application["limits"]]}
+            if group_operations:
+                operation = source_profiles.prepare_operations(root, inventory_data["entries"],
+                    payload["review_ids"], ids, payload["snapshot_id"], packet["primary"]["windows"],
+                    source_contexts=packet["sweep"].get("source_contexts", []))
+                packet["primary"]["windows"] = source_profiles.combine(packet["primary"]["windows"], operation["windows"])
+                packet["primary"]["limits"].extend(operation["limits"])
+                packet["operation_groups"] = operation["groups"]
             for source in packet["sweep"].get("source_contexts", []):
                 fact = {"result_id":"mehscanSweepSource/v1:" + context.digest([payload["snapshot_id"], source]),
                     "origin_package_id":expected["package_id"], "origin_review_id":None,
@@ -1267,7 +1285,10 @@ def run_locked(args):
             raise ValueError("prepared reviewer context exceeds 2 MiB; split the authorized review work")
         with shared_lock:
             record.setdefault("prepared_contexts", []).append({"conversation_id": conversation_id, "bytes": packet_path.stat().st_size,
-                                                              "contract_id": packet["contract"]["contract_id"]})
+                "contract_id": packet["contract"]["contract_id"],
+                **({"operation_group_count": len(packet.get("operation_groups", [])),
+                    "operation_grouped_review_count": sum(len(g["review_ids"]) for g in packet.get("operation_groups", []))}
+                   if group_operations else {})})
         facts_path = output / ("facts-" + conversation_id + ".json")
         working_chain, progress = job.state.get("working_chain", ""), job.state.get("progress", [])
         feedback, corrections = (job.state.get("repair_countercheck") or job.state.get("research_budget_feedback")
@@ -1891,6 +1912,8 @@ def run_locked(args):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if group_operations:
+            recovery_binding["operation_groups"] = "v1"
         if second_mode != "off":
             recovery_binding["second_pass"] = {"mode":second_mode,
                 "scope":list(second_scope),
@@ -2566,6 +2589,7 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
+    parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
     parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
     parser.add_argument("--second-pass-scope", default="all", help="all or comma-separated issues,dismissals,pending from the first pass; filter before bundling")
     parser.add_argument("--first-pass", help="completed worker attempt to review instead of buying a new first pass")
