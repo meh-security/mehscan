@@ -237,6 +237,17 @@ applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
 
+For Python, Value can defer fixed SQL grammar questions and fixed Flask `.html`
+renders whose supplied bindings appear only as ordinary escaped text expressions
+in their discovered templates, or are unused there.
+Comprehensive retains these operations. Custom renderer settings, raw markup,
+script/style/attribute contexts and unresolved templates retain Value review.
+These scope hints do not certify application safety. Regenerate older inventories
+before reuse. ORM review packets can include bounded effect and import-bound
+caller excerpts; `review-inventory-list --group-by implementation` groups located
+Python ORM callables for source reading while preserving each review ID and its
+independent authorization decision.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security

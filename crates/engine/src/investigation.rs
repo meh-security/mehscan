@@ -47,6 +47,7 @@ mod frontend;
 mod imported_members;
 mod node_constant_admission;
 mod practical_admission;
+mod python_review;
 mod resource_helpers;
 mod review_admission;
 pub mod source_review;
@@ -437,7 +438,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "31";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "32";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v22";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -2025,6 +2026,7 @@ fn build_path_review_jobs_internal(
         share_csharp_filesystem_questions(entries);
         practical_admission::conservative_filesystem_scope(entries, &scan.evidence, &sources);
         share_csharp_destination_questions(entries);
+        python_review::apply_hints(entries, &scan.evidence, &sources);
         // Scope hints affect Value selection only. Strong relationships and
         // decision-critical operations remain active even in build components.
         if entries.iter().any(|e| {
@@ -9738,6 +9740,7 @@ fn build_observation_reviews(
     let groups = groups.into_iter().collect::<Vec<_>>();
     let file_content = file_content::Index::build(sources, all_evidence, &groups);
     let frontend_context = frontend::FrontendContext::build(sources, &groups);
+    let python_orm = python_review::OrmContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
     for fact in frontend_context.all_facts() {
         collect_review_reference_tokens(&fact.excerpt, &mut indexed_references);
@@ -10024,6 +10027,9 @@ fn build_observation_reviews(
         let (mut content_facts, content_truncated) = file_content.facts(sources, &group.evidence);
         context_truncated |= content_truncated;
         facts.append(&mut content_facts);
+        let (mut orm_facts, orm_truncated) = python_orm.facts(&group);
+        context_truncated |= orm_truncated;
+        facts.append(&mut orm_facts);
         if let Some(sink) = group
             .evidence
             .iter()
