@@ -261,6 +261,12 @@ preserve, replace or clear filtering. These bounded source excerpts do not
 establish actor authority or effective scoping; dynamic managers and queries
 passed through local aliases still require source review.
 
+ORM packets can also show a selection's assigned name, direct local aliases,
+selector input bindings and later writes or helper calls that reference those
+names. Observed rebinding stops navigation of that name. Branch alternatives,
+record identity, batch membership, query correlation and transaction freshness
+remain unverified; these excerpts do not establish authorization or taint flow.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security

@@ -1,9 +1,11 @@
 //! Python review scope and deciding context. These facts never certify safety.
 use super::*;
+mod selection;
 
 #[derive(Default)]
 pub(super) struct OrmContext {
     by_anchor: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
+    selection_by_anchor: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     truncated: BTreeSet<String>,
 }
 
@@ -123,6 +125,11 @@ impl OrmContext {
                     .entry(e.id.clone())
                     .or_default()
                     .push(context_fact(file, &call, "python_orm_effect_context"));
+                let (facts, cut) = selection::facts(file, &call, e);
+                result.selection_by_anchor.insert(e.id.clone(), facts);
+                if cut {
+                    result.truncated.insert(e.id.clone());
+                }
                 let Some(function) = owner(&call) else {
                     continue;
                 };
@@ -267,6 +274,15 @@ impl OrmContext {
                     .iter()
                     .any(|f: &ReviewNeighborhoodFact| f.location == fact.location)
                 {
+                    facts.push(fact.clone());
+                }
+            }
+            for fact in self.selection_by_anchor.get(id).into_iter().flatten() {
+                if !facts.iter().any(|f| {
+                    f.role == fact.role
+                        && f.location == fact.location
+                        && f.evidence_id == fact.evidence_id
+                }) {
                     facts.push(fact.clone());
                 }
             }
