@@ -3,6 +3,7 @@
 //! review work. No application-specific names or admission changes.
 use super::*;
 use std::ops::Range;
+mod querysets;
 
 type Py<'a> = Node<'a, StrDoc<SupportLang>>;
 type Key = (String, String);
@@ -455,6 +456,12 @@ impl PolicyContext {
             return result;
         }
         let index = Index::build(sources);
+        for (id, (facts, cut)) in querysets::contexts(&index, sources, &anchors) {
+            result.facts.insert(id.clone(), facts);
+            if cut {
+                result.truncated.insert(id);
+            }
+        }
         let mut packets: BTreeMap<Key, (Vec<ReviewNeighborhoodFact>, bool)> = BTreeMap::new();
         for e in anchors {
             let Some(file) = index.files.get(&e.location.path) else {
@@ -539,7 +546,11 @@ impl PolicyContext {
                 }
                 (packet.facts, packet.truncated)
             });
-            result.facts.insert(e.id.clone(), packet.0.clone());
+            result
+                .facts
+                .entry(e.id.clone())
+                .or_default()
+                .extend(packet.0.iter().cloned());
             if packet.1 {
                 result.truncated.insert(e.id.clone());
             }

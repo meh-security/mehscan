@@ -254,6 +254,13 @@ implementations, field construction and alternate direct callers. These are
 source contexts, not verified runtime dispatch, guard ordering or authorization
 controls. Missing policy, overrides and unresolved bases remain review work.
 
+For direct ORM receiver chains, packets can follow declared Django
+`Manager.from_queryset` and `QuerySet.as_manager` bindings to custom queryset
+methods, inherited delegates and supplied argument producers. A method may
+preserve, replace or clear filtering. These bounded source excerpts do not
+establish actor authority or effective scoping; dynamic managers and queries
+passed through local aliases still require source review.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security
