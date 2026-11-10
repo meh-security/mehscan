@@ -139,6 +139,14 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
     let mut directory = String::new();
     let mut bytes = 0;
     let mut limitations = Vec::new();
+    let parse_failed_files: BTreeSet<_> = inventory
+        .scan
+        .coverage
+        .files
+        .iter()
+        .filter(|file| file.status == mehscan_core::FileStatus::ParseFailed)
+        .map(|file| file.path.as_str())
+        .collect();
     let flush = |pending: &mut Vec<SourceWindow>,
                  assignments: &mut Vec<Assignment>|
      -> Result<(), EngineError> {
@@ -170,6 +178,12 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
                 && !s.included_files.iter().any(|c| c.path == file.path)
         }) {
             continue;
+        }
+        if parse_failed_files.contains(file.path.as_str()) {
+            limitations.push(format!(
+                "{}: native scanning reported incomplete parsing; source remains assigned. Use exact source reads and scoped text references if AST navigation fails.",
+                file.path
+            ));
         }
         let parent = file.path.rsplit_once('/').map_or("", |p| p.0);
         let rows: Vec<_> = file.source.lines().collect();

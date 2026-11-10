@@ -21,6 +21,17 @@ For JWT, session or API-key issuance/acceptance, expiry or cached identity, use
 For composed path/root guards or platform-dependent containment, use
 [path selection review](references/path-selection-review.md), available to workers
 as `guidance` with `name="path-selection"`.
+For library usage, start with Mehscan's native questions and the
+[parser/resource guide](references/categories/parser-resource.md): bind the API,
+effective configuration, hooks, input and consumer. For library implementation
+code or a custom serializer, converter, decoder or parser, activate the
+[shared deserialization source-review checks](references/deserialization-checks.md)
+and follow their language/format routing, even with zero native candidates.
+Workers start with `deserialization-libraries`. For XML implementation or custom
+XML processing, that route uses [XML parser checks](references/xml-parser-checks.md),
+available as `xml-parsers`, then its relevant platform section. Ordinary usage
+loads deeper guidance only for a concrete unresolved implementation relationship.
+All these checks use source reasoning without target execution.
 For Rust source, use [Rust security review](references/rust-security.md), available
 as `rust-security`. Load `rust-memory` or `rust-boundaries` for the relevant
 advisory-derived patterns and verification controls. Rust guidance applies to
@@ -114,6 +125,7 @@ separate authority/state question. Keep those claims distinct.
 | Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
 | Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
 | XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
+| Decoder internals, streaming progress, collection work, object graphs or construction hooks | [Deserialization source-review checks](references/deserialization-checks.md), `deserialization-libraries` |
 | Crypto, hashing, randomness, cookies, CORS | [Crypto/configuration](references/buckets/crypto-configuration.md), `crypto-configuration` |
 | C/C++ bounds, lifetime and ownership | [Native memory](references/buckets/native-memory.md), `native-memory` |
 | Rust safe APIs, Cargo/configuration applicability and soundness | [Rust review](references/rust-security.md), `rust-security` |

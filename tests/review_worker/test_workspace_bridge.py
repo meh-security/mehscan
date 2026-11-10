@@ -66,7 +66,9 @@ class NativeBridgeTests(unittest.TestCase):
                               stream="pilot",claim=str(self.claim_path),work_package=str(self.package_path),skill_root=str(self.skill),
                               provider_contract=str(self.provider_path),directory=str(self.base / "workspace"))
         self.limits = {"model_calls":3,"queries":4,"source_bytes":65536}
-        self.experiment = {"max_input_tokens":100000,"max_output_tokens":10000,"max_elapsed_seconds":600,"context_max_bytes":32768}
+        # These exercise bridge ownership/recovery, not a fixed guidance size.
+        # Keep room for the compiled contract; size-limit tests set their own cap.
+        self.experiment = {"max_input_tokens":100000,"max_output_tokens":10000,"max_elapsed_seconds":600,"context_max_bytes":65536}
 
     def native(self,*args):
         result = subprocess.run([str(self.scanner),*args],text=True,encoding="utf-8",capture_output=True)

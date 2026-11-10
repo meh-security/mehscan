@@ -7,8 +7,9 @@ For execution diagnosis, use [the trace guide](execution-trace.md).
 
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
-Regenerate older inventories with this executable: current admission uses
-inventory schema 25. Reuse verdicts only through a source-bound ledger.
+Regenerate incompatible inventories with the supplied executable; its emitted
+schema and binding checks are authoritative. Reuse verdicts only through a
+source-bound ledger.
 Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
 other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
 finalization, and validation do not accept `--journal`. Name the journal for
@@ -17,6 +18,11 @@ Mehscan appends the exact arguments, result or error, and elapsed milliseconds.
 Read shared source once and reuse its inspected location for related IDs rather
 than issuing the same query into each journal. The response cites only decisive
 source; the journals preserve the complete lookup history.
+
+For manual source discovery before a review ID exists, keep a separate shared
+source-query journal. Preserve it once with the run and report its work separately;
+per-ID report query counters do not include that research. Do not copy its queries
+into every resulting ID or repeat them to populate per-ID counters.
 
 Keep accounting output compact. Save reports, ledgers and large inventory lists
 to files; read counts and the relevant selected/reopened IDs, not the expanded
@@ -35,6 +41,9 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
+| Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions) |
+| Validate source proposals | `mehscan investigate source-review-check ROOT --inventory RUN/inventory --input ADMISSION.json` |
+| Admit source proposals | `mehscan investigate source-review-admit ROOT --inventory RUN/inventory --input ADMISSION.json --output NEXT/inventory` (new directory; exports inventory, overview and cache) |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
 | Inventory with supplied TS/JS context | `mehscan investigate review-inventory ROOT --output RUN/inventory --typescript-context CONTEXT --typescript-backend SCRIPT` |
 | Directed compiler evidence | `mehscan investigate csharp-semantic ROOT --inventory RUN/inventory --evidence-ids ID,ID --context CONTEXT --backend EXE --output FILE` (or `typescript-semantic` / SCRIPT); use card `anchor.id`, not review IDs. |
@@ -71,6 +80,10 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 
 Use `--format sarif` or `--format markdown` for those report projections.
+Source admission creates new review inputs. Export selected bundles from that
+new inventory and keep their finalized responses under `NEXT`; its
+`inventory/overview.json` binds history reuse to the augmented queue. Never copy
+an older overview into it to bypass a missing or stale binding.
 For configured SARIF partitions use `--sarif-category mehscan/triaged/pr-delta`
 or another stable analysis category; optional `--sarif-run-id attempt-2` identifies
 an attempt. Keep reviewer/model, PR number, revision and changing file sets out of

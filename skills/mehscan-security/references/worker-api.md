@@ -42,6 +42,25 @@ review; never cite a guide as application evidence.
 | [`html-output`](html-output-review.md) | Browser interpretation, HTML trust bypass, stored markup, templates or DOM output |
 | [`angular-output`](angular-output-review.md) | Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings |
 | [`parser-resource`](categories/parser-resource.md) | Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits |
+| [`xml-parsers`](xml-parser-checks.md) | XML implementation/custom processing or unresolved internal contracts for DTD/entities, resolvers, schema, XInclude, XSLT, pre-event work or namespace interpretation |
+| [`xml-native`](xml-platform-checks.md) | C/C++ or bindings using libxml2/Expat, effective option masks, callbacks, child parsers or reparse deferral |
+| [`xml-dotnet`](xml-platform-checks.md) | System.Xml readers, DTD/resolver settings, schema compilation or XslCompiledTransform load/transform boundaries |
+| [`xml-jvm`](xml-platform-checks.md) | Java/Kotlin JVM JAXP/StAX providers, feature/property precedence, resolver-returned sources or stage-specific external access |
+| [`xml-python`](xml-platform-checks.md) | Python stdlib/Expat or lxml XML, actual loaded library, parser/resolver context, inclusion or XSLT access controls |
+| [`xml-javascript`](xml-platform-checks.md) | JavaScript/TypeScript/TSX browser or Node XML, native bindings, per-document entity budgets or XML-to-object interpretation |
+| [`xml-go`](xml-platform-checks.md) | Go encoding/xml directives, Entity/CharsetReader hooks, namespace interpretation, borrowed tokens or custom XML binding |
+| [`xml-rust`](xml-platform-checks.md) | Rust XML crates, Reader versus NsReader pre-event state, feature/version-specific checks, DTD events, borrowing or Serde binding |
+| [`xml-php`](xml-platform-checks.md) | PHP XML extensions/libxml versions, parse flags, global loaders/stream wrappers, schema, XInclude or XSLT permissions |
+| [`deserialization-libraries`](deserialization-checks.md) | Decoder/serializer library implementation, custom parsers/converters/hooks or unresolved internal contracts for extents, token validation and work/graph budgets; applies with zero native candidates |
+| [`deserialization-native`](deserialization-native-checks.md) | C/C++ decoding, logical input versus SIMD padding/capacity, in-place DOM ownership, pointer aliases after growth, callbacks or parser failure cleanup |
+| [`deserialization-dotnet`](deserialization-dotnet-checks.md) | .NET decoder readers/resolvers, extension data, logical stream lengths, converter forwarding, metadata/reference handling, population or Type caches |
+| [`deserialization-java`](deserialization-java-checks.md) | Java decoding, Jackson frontend constraints, duplicate/framing policy, subtype validation, deferred binding or JDK object-input filters |
+| [`deserialization-javascript`](deserialization-javascript-checks.md) | JavaScript/TypeScript/TSX decoding, revivers, decoded keys reaching prototype writes, runtime schema/coercion, streaming reparsing or Buffer view ownership |
+| [`deserialization-python`](deserialization-python-checks.md) | Python decoding, pickle or YAML restoration, JSON/model hooks, framing and integer conversion, alias/work budgets or native buffer views |
+| [`deserialization-go`](deserialization-go-checks.md) | Go decoding, encoding/json v1/v2 compatibility, merge/error mutation, stream boundaries, custom methods or jsontext state |
+| [`deserialization-rust`](deserialization-rust-checks.md) | Rust decoding, serde_json/Serde visitors, untagged enum replay, allocation hints, recursion, borrowing or feature-specific semantics |
+| [`deserialization-php`](deserialization-php-checks.md) | PHP decoding, unserialize/session hooks, effective class/depth restrictions, JSON null/error and numeric interpretation, references or extension ownership |
+| [`deserialization-kotlin`](deserialization-kotlin-checks.md) | Kotlin decoding, platform-specific serializers, polymorphic registrations, defaults/coercion, stream sequences, construction hooks or option forwarding |
 | [`crypto-configuration`](buckets/crypto-configuration.md) | Signing/encryption, password hashing, randomness, cookie or CORS settings |
 | [`native-memory`](buckets/native-memory.md) | C/C++ bounds, lifetime, ownership or native parser state |
 | [`rust-security`](rust-security.md) | Rust safe APIs, soundness, Cargo features/targets, advisory applicability or source discovery without native candidates |

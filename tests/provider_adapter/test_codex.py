@@ -29,6 +29,10 @@ class Adapter(unittest.TestCase):
         self.body.update(contract="Review assigned original source.",primary={"windows":[{"path":"Widget.razor","start_line":1,"end_line":1,
             "text":"<p>@value</p>","artifact_id":"original"}]})
         self.task["research"].update(artifact_handles={"s0":"original"},source_artifact_handles=["s0"])
+        self.task["research"]["coverage_windows"] = {
+            "s0": {"path":"Widget.razor", "start_line":1, "end_line":1}}
+        self.task["research"]["citation_windows"] = {
+            "s0": {"path":"Widget.razor", "start_line":1, "end_line":1, "anchor":True}}
         self.packet.write_text(json.dumps(self.body))
         def factory(config,session):
             fake=self.factory(config,session)
@@ -36,14 +40,17 @@ class Adapter(unittest.TestCase):
             def invoke(*args,**kwargs):
                 response,events,stderr=original(*args,**kwargs)
                 for key in ("progress","routing"):response.pop(key,None)
-                response["draft"]={"results":[],"proposals":[],"coverage":[{"path":"Widget.razor","start_line":1,"end_line":1,
+                response["draft"]={"results":[],"proposals":[],"coverage":[{"window_ref":"s0",
                     "status":"examined","summary":"Ordinary escaped text output."}]}
                 return response,events,stderr
             fake.review=invoke
             return fake
         first=reviewer.run(self.config,self.task,factory)
         self.assertEqual(first["draft"]["proposals"],[])
+        self.assertEqual(first["draft"]["coverage"][0]["path"], "Widget.razor")
         self.task["research"].update(round=1,rounds_remaining=0,queries_remaining=0)
+        self.task["research"]["citation_windows"]["f1"] = {
+            "path":"helper.cs", "start_line":10, "end_line":20, "anchor":False}
         reviewer.run(self.config,self.task,factory)
         self.assertEqual([c[1] for c in self.calls],[None,THREAD])
         self.assertEqual(self.calls[0][2],self.calls[1][2])
@@ -51,6 +58,8 @@ class Adapter(unittest.TestCase):
         self.assertEqual(protocol.build_schema(self.task,bound_handles=False),protocol.build_schema(populated,bound_handles=False))
         self.assertIn("L1 | <p>@value</p>",self.calls[0][0])
         self.assertNotIn("L1 | <p>@value</p>",self.calls[1][0])
+        self.assertIn('"f1": {"path": "helper.cs"',self.calls[1][0])
+        self.assertNotIn("Cite original paths/line ranges.",self.calls[0][0])
 
     def test_second_pass_roles_use_primary_provider_and_retain_annotations(self):
         self.task.update(kind="native_bundle",review_ids=["id"],review_role="second_pass_fast",second_pass="fast")

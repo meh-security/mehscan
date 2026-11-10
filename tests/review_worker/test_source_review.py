@@ -442,6 +442,14 @@ print(json.dumps({'draft':{'results':rows,
             (self.base / "worker/source-review/summary.json").read_text()
         )
         self.assertEqual(summary["results"][0]["inspected"][0]["path"], "Widget.razor")
+        frame = json.loads(next((self.base / "worker/source-review/jobs").glob("*/1-input.json")).read_text())
+        citations = frame["research"]["citation_windows"]
+        self.assertTrue(citations["s0"]["anchor"])
+        self.assertNotIn("f0", citations)  # Guidance is not source evidence.
+        self.assertEqual(citations["f1"], {
+            "path": "Widget.razor", "start_line": 1, "end_line": 1, "anchor": False})
+        self.assertEqual(citations["f2"], {
+            "path": "context.reviewdata", "start_line": 1, "end_line": 1, "anchor": False})
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(len(report["decision_records"]), 1)
         admitted = json.loads(
@@ -628,6 +636,10 @@ print(json.dumps({'draft':{'results':rows,
         source_turn = next(p for p in turns if json.loads(p.read_text())["kind"] == "source_review")
         captured = next((output / "source-review/jobs").glob("*/*-input.json"))
         self.assertEqual(source_turn.read_bytes(), captured.read_bytes())
+        source_frame = json.loads(captured.read_text())
+        self.assertTrue(source_frame["research"]["coverage_windows"])
+        self.assertEqual(set(source_frame["research"]["coverage_windows"]["s0"]),
+                         {"path", "start_line", "end_line"})
         self.assertTrue(source_turn.with_name("0-facts.json").is_file())
         self.assertTrue(source_turn.with_name("0-response.json").is_file())
         self.assertTrue(source_turn.with_name("context.json").is_file())
