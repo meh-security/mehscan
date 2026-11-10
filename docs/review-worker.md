@@ -248,6 +248,12 @@ caller excerpts; `review-inventory-list --group-by implementation` groups locate
 Python ORM callables for source reading while preserving each review ID and its
 independent authorization decision.
 
+Python mutation packets can also include import-bound class/base declarations,
+`Meta.permissions`, permission helpers, `mutate` and `check_permissions`
+implementations, field construction and alternate direct callers. These are
+source contexts, not verified runtime dispatch, guard ordering or authorization
+controls. Missing policy, overrides and unresolved bases remain review work.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security

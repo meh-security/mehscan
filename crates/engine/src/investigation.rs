@@ -47,6 +47,7 @@ mod frontend;
 mod imported_members;
 mod node_constant_admission;
 mod practical_admission;
+mod python_policy;
 mod python_review;
 mod resource_helpers;
 mod review_admission;
@@ -438,7 +439,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "32";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "33";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v22";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
@@ -9741,6 +9742,7 @@ fn build_observation_reviews(
     let file_content = file_content::Index::build(sources, all_evidence, &groups);
     let frontend_context = frontend::FrontendContext::build(sources, &groups);
     let python_orm = python_review::OrmContext::build(sources, &groups);
+    let python_policy = python_policy::PolicyContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
     for fact in frontend_context.all_facts() {
         collect_review_reference_tokens(&fact.excerpt, &mut indexed_references);
@@ -10030,6 +10032,9 @@ fn build_observation_reviews(
         let (mut orm_facts, orm_truncated) = python_orm.facts(&group);
         context_truncated |= orm_truncated;
         facts.append(&mut orm_facts);
+        let (mut policy_facts, policy_truncated) = python_policy.facts(&group);
+        context_truncated |= policy_truncated;
+        facts.append(&mut policy_facts);
         if let Some(sink) = group
             .evidence
             .iter()

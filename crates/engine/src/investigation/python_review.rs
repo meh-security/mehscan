@@ -35,13 +35,13 @@ fn context_fact(file: &SourceFile, node: &PyNode<'_>, role: &str) -> ReviewNeigh
     }
 }
 
-fn module(path: &str) -> String {
+pub(super) fn module(path: &str) -> String {
     path.trim_end_matches(".py")
         .trim_end_matches("/__init__")
         .replace('/', ".")
 }
 
-fn imported_module(path: &str, imported: &str) -> Option<String> {
+pub(super) fn imported_module(path: &str, imported: &str) -> Option<String> {
     let dots = imported.bytes().take_while(|b| *b == b'.').count();
     if dots == 0 {
         return Some(imported.into());
@@ -353,7 +353,7 @@ mod tests {
     }
 }
 
-fn parse(file: &SourceFile) -> Option<AstGrep<StrDoc<SupportLang>>> {
+pub(super) fn parse(file: &SourceFile) -> Option<AstGrep<StrDoc<SupportLang>>> {
     (file.language == Some(Language::Python)
         && file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES)
         .then(|| StrDoc::try_new(&file.source, SupportLang::Python).ok())
