@@ -40,7 +40,7 @@ impl Packet<'_> {
     }
 }
 
-fn same_scope(node: &PyNode<'_>, function: &PyNode<'_>) -> bool {
+pub(super) fn same_scope(node: &PyNode<'_>, function: &PyNode<'_>) -> bool {
     for parent in node.ancestors() {
         if parent.range() == function.range() {
             return true;
@@ -69,11 +69,11 @@ fn simple_reference(node: &PyNode<'_>) -> Option<String> {
     (!name.is_empty() && name.split('.').all(is_plain_identifier)).then(|| name.into_owned())
 }
 
-fn value<'a>(node: &PyNode<'a>) -> Option<PyNode<'a>> {
+pub(super) fn value<'a>(node: &PyNode<'a>) -> Option<PyNode<'a>> {
     node.field("right").or_else(|| node.field("value"))
 }
 
-fn target<'a>(node: &PyNode<'a>) -> Option<PyNode<'a>> {
+pub(super) fn target<'a>(node: &PyNode<'a>) -> Option<PyNode<'a>> {
     match node.kind().as_ref() {
         "assignment"
         | "augmented_assignment"
@@ -87,7 +87,7 @@ fn target<'a>(node: &PyNode<'a>) -> Option<PyNode<'a>> {
 }
 
 // Attribute/subscript stores change an object, not the local binding itself.
-fn binds(node: &PyNode<'_>, name: &str) -> bool {
+pub(super) fn binds(node: &PyNode<'_>, name: &str) -> bool {
     if matches!(node.kind().as_ref(), "attribute" | "subscript") {
         return false;
     }
@@ -98,7 +98,7 @@ fn binds(node: &PyNode<'_>, name: &str) -> bool {
             .any(|n| binds(&n, name))
 }
 
-fn receiver_expression<'a>(call: &PyNode<'a>) -> PyNode<'a> {
+pub(super) fn receiver_expression<'a>(call: &PyNode<'a>) -> PyNode<'a> {
     let mut current = call.clone();
     for _ in 0..32 {
         let Some(parent) = current.parent() else {
@@ -208,7 +208,7 @@ fn uses(node: &PyNode<'_>, names: &BTreeMap<String, usize>) -> Option<String> {
         .map(|n| n.text().into_owned())
 }
 
-fn rebinds(node: &PyNode<'_>, name: &str) -> bool {
+pub(super) fn rebinds(node: &PyNode<'_>, name: &str) -> bool {
     if target(node).is_some_and(|t| binds(&t, name)) {
         return true;
     }

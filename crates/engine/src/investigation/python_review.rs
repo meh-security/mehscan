@@ -1,5 +1,6 @@
 //! Python review scope and deciding context. These facts never certify safety.
 use super::*;
+mod correlation;
 mod selection;
 
 #[derive(Default)]
@@ -108,6 +109,7 @@ impl OrmContext {
                 continue;
             };
             let root = ast.root();
+            let query_bindings = correlation::Bindings::build(&root);
             for e in anchors {
                 let Some(call) = root
                     .dfs()
@@ -125,9 +127,11 @@ impl OrmContext {
                     .entry(e.id.clone())
                     .or_default()
                     .push(context_fact(file, &call, "python_orm_effect_context"));
-                let (facts, cut) = selection::facts(file, &call, e);
+                let (mut facts, cut) = selection::facts(file, &call, e);
+                let (query_facts, query_cut) = correlation::facts(file, &query_bindings, &call, e);
+                facts.extend(query_facts);
                 result.selection_by_anchor.insert(e.id.clone(), facts);
-                if cut {
+                if cut || query_cut {
                     result.truncated.insert(e.id.clone());
                 }
                 let Some(function) = owner(&call) else {

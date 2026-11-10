@@ -267,6 +267,12 @@ names. Observed rebinding stops navigation of that name. Branch alternatives,
 record identity, batch membership, query correlation and transaction freshness
 remain unverified; these excerpts do not establish authorization or taint flow.
 
+For queries using directly imported Django `Exists`, `Subquery` and `OuterRef`,
+packets retain separate expression inputs, nested references, negation and
+bounded local query bindings. Separate existence predicates do not establish
+that one related row satisfies both. SQL scope and correlation still require
+review, including when no outer reference appears in the delivered excerpts.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security
