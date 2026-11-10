@@ -14,6 +14,13 @@ Use one of the offered capability categories. With controller-owned citations,
 return `source_ref` and `line`: select one original line for an anchor or focused
 evidence, or null for one complete offered evidence extent. Assigned s-references
 can anchor proposals; fetched f-references are supporting evidence only.
+Prefer the smallest sufficient evidence from source already inspected. For a
+multi-step relationship, cite its deciding statements or guards as separate
+single-line references within the evidence limit. Use null when the claim needs
+the complete extent, such as establishing that a relevant body lacks a guard;
+do not select a whole window merely because it contains the deciding line.
+Keep enough context to support the claim. Do not request source again solely to
+shorten a quotation when the deciding lines are already available.
 Otherwise use original path/inclusive line references. The controller attaches the exact bytes from
 source delivered to this investigation; do not retype source quotations. Prefer
 the decisive expression or guard. Keep each citation inside a delivered range;

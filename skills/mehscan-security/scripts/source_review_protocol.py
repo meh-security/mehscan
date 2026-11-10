@@ -242,6 +242,10 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             "Use an original line number for a precise single-line citation, or null for one complete "
             "offered evidence extent. Anchors require a specific line in an assigned s-reference; "
             "f-references are supporting evidence only. Cite separated extents separately. "
+            "Prefer deciding single lines from source already inspected; cite the steps of a "
+            "multi-step relationship separately within the evidence limit. Use null only when "
+            "the claim needs the complete extent, for example to establish a missing guard. "
+            "Keep sufficient proof context; do not repeat source lookups solely to shorten quotes. "
             "The controller supplies source citation extents:\n"
             + json.dumps(research["citation_windows"], ensure_ascii=False)
         )
