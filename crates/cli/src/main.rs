@@ -3794,7 +3794,41 @@ fn compact_helper_context(
         "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
     }));
     }
+    contexts.extend(compact_python_review_context(review, anchor));
     contexts
+}
+
+fn compact_python_review_context(
+    review: &serde_json::Value,
+    anchor: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    if review["language"] != "python" {
+        return Vec::new();
+    }
+    // These families are bounded by the engine and are source navigation only.
+    // Preserve their excerpts in cards and sweeps, as well as stored bundles.
+    review["facts"].as_array().into_iter().flatten().filter(|fact| {
+        fact["role"].as_str().is_some_and(|role|
+            role.starts_with("python_orm_") || role.starts_with("python_mutation_")
+                || role.starts_with("python_queryset_") || role == "python_permission_helper_context")
+            // Bundle assembly gives unbound source facts stable artifact IDs.
+            && fact["evidence_id"].as_str().is_none_or(|id| Some(id) == anchor["id"].as_str() || id.starts_with("fact-artifact-"))
+            && fact["excerpt"].as_str().is_some_and(|text| !text.is_empty())
+    }).map(|fact| {
+        let location = &fact["location"];
+        let exact = match (location["start"]["byte_offset"].as_u64(), location["end"]["byte_offset"].as_u64(), fact["excerpt"].as_str()) {
+            (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
+            _ => false,
+        };
+        serde_json::json!({
+            "role":fact["role"], "symbol":fact["symbol"], "provenance":fact["provenance"],
+            "evidence_id":fact["evidence_id"], "verified":false,
+            "location":{"path":location["path"], "start_line":location["start"]["line"], "end_line":location["end"]["line"],
+                "start_column":location["start"]["column"], "end_column":location["end"]["column"],
+                "start_byte_offset":location["start"]["byte_offset"], "end_byte_offset":location["end"]["byte_offset"]},
+            "excerpt":fact["excerpt"], "truncated":!exact || review["truncation"]["occurred"] == true,
+        })
+    }).collect()
 }
 
 // Path provenance is decision context, even when it is far from the sink.
@@ -4641,6 +4675,34 @@ mod tests {
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn python_views_keep_source_artifacts_and_reject_other_anchor_context() {
+        let anchor = serde_json::json!({"id":"selected"});
+        let fact = serde_json::json!({"role":"python_orm_selection_input_context", "evidence_id":"selected", "symbol":"key",
+            "location":{"path":"app.py","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":1,"column":2,"byte_offset":2}},"excerpt":"é"});
+        let mut unrelated = fact.clone();
+        unrelated["evidence_id"] = serde_json::json!("other-operation");
+        let mut artifact = fact.clone();
+        artifact["role"] = serde_json::json!("python_mutation_check_context");
+        artifact["evidence_id"] = serde_json::json!("fact-artifact-source");
+        let mut empty = fact.clone();
+        empty["excerpt"] = serde_json::json!("");
+        let review =
+            serde_json::json!({"language":"python","facts":[fact,unrelated,artifact,empty]});
+        let contexts = super::compact_helper_context(&review, &anchor);
+        assert_eq!(contexts.len(), 2);
+        assert!(
+            contexts
+                .iter()
+                .all(|c| c["verified"] == false && c["truncated"] == false)
+        );
+        assert_eq!(contexts[0]["excerpt"], "é");
+        assert_eq!(contexts[1]["evidence_id"], "fact-artifact-source");
+        let mut foreign = review.clone();
+        foreign["language"] = serde_json::json!("javascript");
+        assert!(super::compact_helper_context(&foreign, &anchor).is_empty());
+    }
 
     #[test]
     fn helper_view_preserves_complete_imported_members_for_ordinary_reviews() {

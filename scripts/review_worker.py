@@ -1715,7 +1715,7 @@ def run_locked(args):
                         def read_definition(values):
                             nonlocal native_queries
                             child = {**query, "tool":"source", "arguments":values}
-                            child_args = research_arguments(child, root, ids, journals)
+                            child_args = research_arguments(child, root, ids, journals, api=lookup_api)
                             prepared = source_lookup(child, remaining())
                             if prepared is not None:
                                 return prepared
@@ -1733,7 +1733,7 @@ def run_locked(args):
                             child = {**query, "tool":"references", "arguments":{
                                 **{k:v for k,v in values.items() if k != "name"},
                                 "symbol":values["name"]}}
-                            child_args = research_arguments(child, root, ids, journals)
+                            child_args = research_arguments(child, root, ids, journals, api=lookup_api)
                             native_queries += 1
                             try:
                                 return native(child_args, remaining())

@@ -476,13 +476,13 @@ else:
         self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
             "--source-root", str(self.root), "--generation", str(claim["generation"]), "--owner", self.owner]
 
-    def invoke_native_component(self, name="worker"):
+    def invoke_native_component(self, name="worker", phase="all"):
         """Exercise Changed/native context sharing after the source-stage boundary."""
         from argparse import Namespace
         args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
             store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
             reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
-            output=str(self.base / name), provider_contract=None, artifact_root=None, phase="all",
+            output=str(self.base / name), provider_contract=None, artifact_root=None, phase=phase,
             supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
             research_rounds=None, research_queries=None, research_bytes=None, workers=3, query_workers=2,
             expert_command=None, expert_workers=1, expert_review_ids=None, resume_from=None)
@@ -2059,6 +2059,33 @@ else:
         self.assertEqual(row["result"]["text_lookup"]["results"][0]["lines"],[205])
         self.assertEqual(row["reserved_query_units"],2)
         self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"],2)
+
+    def test_definition_followups_use_bound_catalog_with_relocated_controller(self):
+        for text_fallback in (False, True):
+            with self.subTest(text_fallback=text_fallback):
+                if text_fallback:
+                    self.extra_source_files = {"policy.txt":"# settings\n" * 204 + "decision_helper = enabled\n"}
+                    self.setUp()
+                name, path = ("decision_helper", "policy.txt") if text_fallback else ("handle", "app.js")
+                self.research_reviewer('[{"tool":"definition","review_id":task["review_ids"][0],'
+                    '"arguments":{"name":'+json.dumps(name)+',"path":'+json.dumps(path)+',"limit":10}}]')
+                if text_fallback:
+                    self.reviewer.write_text(self.reviewer.read_text().replace(
+                        'assert "eval" in json.dumps(task["research"]["results"])',
+                        'assert "text_lookup" in json.dumps(task["research"]["results"])'))
+                relocated = self.base / "isolated/scripts/review_worker.py"
+                relocated.parent.mkdir(parents=True)
+                shutil.copytree(ROOT / "scripts", relocated.parent, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__"))
+                self.assertFalse((relocated.parents[1] / "skills").exists())
+                with patch.object(worker, "__file__", str(relocated)):
+                    result = self.invoke_native_component(phase="native")
+                self.assertEqual(result["status"], "admitted", result)
+                audit = json.loads((self.base / "worker/research.jsonl").read_text().splitlines()[0])
+                self.assertEqual(audit["reserved_query_units"], 2)
+                self.assertEqual(audit["result"]["source_complete"], not text_fallback)
+                if text_fallback:
+                    self.assertEqual(audit["result"]["text_lookup"]["results"][0]["lines"], [205])
 
     def test_query_batch_uses_one_post_fence_including_cache_hits(self):
         self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'

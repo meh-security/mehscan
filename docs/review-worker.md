@@ -272,6 +272,8 @@ packets retain separate expression inputs, nested references, negation and
 bounded local query bindings. Separate existence predicates do not establish
 that one related row satisfies both. SQL scope and correlation still require
 review, including when no outer reference appears in the delivered excerpts.
+These Python excerpts also reach `review-card` and `review-sweep`, the compact
+views used by the ordinary worker, with their source-only qualification retained.
 
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
