@@ -378,7 +378,8 @@ w=windows[0]
 cite={k:w[k] for k in ('path','start_line','end_line')}
 assessment={'decision':'needs_review','confidence':'medium','summary':'Interpreter behavior needs source inspection.',
     'reason':'The custom callee behavior is not established by its name.',
-    'evidence':[cite], 'checks':['Read CustomInterpreter.Run to establish whether input is interpreted.'], 'blockers':[]}
+    'evidence':[cite], 'checks':['Read CustomInterpreter.Run to establish whether input is interpreted.'], 'blockers':[],
+    'followup':{'reason':'missing_local_evidence','question':'Read CustomInterpreter.Run to determine the actual interpreter contract.'}}
 if LOOKUP:assessment['evidence'].append({'path':'context.reviewdata','start_line':1,'end_line':1})
 proposals=[]
 if PROPOSAL:
@@ -438,6 +439,11 @@ print(json.dumps({'draft':{'results':rows,
         )
         record = json.loads((self.base / "worker/worker.json").read_text())
         self.assertEqual(record["source_review"]["source_questions"], 1)
+        options=json.loads((self.base / "worker/review-options.json").read_text())
+        self.assertEqual(options["review_origin"],"ai_source_only")
+        self.assertEqual(options["threat_model"]["source_context"]["native_selected_claims"],0)
+        self.assertEqual(len(options["fast"]["selected"]),1)
+        self.assertEqual(options["fast"]["selection_model_calls"],0)
         summary = json.loads(
             (self.base / "worker/source-review/summary.json").read_text()
         )
@@ -451,6 +457,8 @@ print(json.dumps({'draft':{'results':rows,
         self.assertEqual(citations["f2"], {
             "path": "context.reviewdata", "start_line": 1, "end_line": 1, "anchor": False})
         report = json.loads((self.base / "worker/findings.json").read_text())
+        self.assertEqual(options["fast"]["selected"][0]["review_id"],report["decision_records"][0]["response"]["review_id"])
+        self.assertNotIn("followup", report["decision_records"][0]["response"])
         self.assertEqual(len(report["decision_records"]), 1)
         admitted = json.loads(
             (self.base / "worker/source-review/admission-result.json").read_text()
@@ -489,7 +497,7 @@ print(json.dumps({'draft':{'results':rows,
 
     def test_no_leads_is_coverage_without_a_fake_not_issue(self):
         result = subprocess.run(
-            self.prepare_worker(proposal=False),
+            [*self.prepare_worker(proposal=False), "--second-pass", "fast"],
             capture_output=True,
             text=True,
             encoding="utf8",
@@ -499,6 +507,13 @@ print(json.dumps({'draft':{'results':rows,
         )
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(report.get("decision_records", []), [])
+        options=json.loads((self.base / "worker/review-options.json").read_text())
+        self.assertEqual(options["review_origin"],"ai_source_only")
+        self.assertFalse(options["threat_model"]["requires_claims"])
+        self.assertTrue(Path(options["threat_model"]["source_context"]["coverage_report"]).is_file())
+        fast=json.loads((self.base / "worker/second-pass.json").read_text())
+        self.assertEqual(fast["targeted"],0)
+        self.assertEqual(fast["accounting"]["second_pass"]["calls"],0)
         self.assertEqual(
             json.loads((self.base / "worker/source-review.json").read_text())[
                 "completed_assignments"
@@ -643,6 +658,40 @@ print(json.dumps({'draft':{'results':rows,
         self.assertTrue(source_turn.with_name("0-facts.json").is_file())
         self.assertTrue(source_turn.with_name("0-response.json").is_file())
         self.assertTrue(source_turn.with_name("context.json").is_file())
+
+    def test_ai_only_first_pass_can_resume_fast_without_repeating_discovery(self):
+        command=self.prepare_worker()
+        first=subprocess.run(command,capture_output=True,text=True,encoding="utf8",timeout=120)
+        self.assertEqual(first.returncode,0,first.stdout+first.stderr+self.debug_output())
+        initial=self.base/"worker"
+        saved=(initial/"findings.json").read_bytes()
+        summary=json.loads((initial/"source-review/summary.json").read_text())
+        self.assertEqual(summary["native_selected_claims"],0)
+        self.assertEqual(summary["origin"],"ai_source_only")
+        effective=summary["effective_args"]
+        claim=json.loads(Path(effective["claim"]).read_text())["result"]
+        work=self.native("state","work","--store",self.base/"state","--stream","source",
+            "--inventory",effective["inventory"],"--source-root",self.root,"--generation",claim["generation"],
+            "--owner",claim["owner"],"--skill-root",SKILL)
+        work_path=self.base/"fast-work.json";work_path.write_text(json.dumps(work))
+        changes={"--inventory":effective["inventory"],"--claim":effective["claim"],
+                 "--work-package":str(work_path),"--output":str(self.base/"fast-followup")}
+        for flag,value in changes.items():command[command.index(flag)+1]=value
+        command += ["--run",effective["run"],"--phase","native","--first-pass",str(initial),"--second-pass","fast","--supersede"]
+        followup=subprocess.run(command,capture_output=True,text=True,encoding="utf8",timeout=120)
+        self.assertEqual(followup.returncode,0,followup.stdout+followup.stderr)
+        output=self.base/"fast-followup"
+        fast=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(fast["checked"],1)
+        self.assertEqual(fast["accounting"]["first_pass"]["calls"],1)
+        self.assertEqual(fast["accounting"]["second_pass"]["calls"],1)
+        self.assertEqual((initial/"findings.json").read_bytes(),saved)
+        options=json.loads((output/"review-options.json").read_text())
+        self.assertEqual(options["review_origin"],"ai_source_only")
+        self.assertEqual(Path(options["threat_model"]["source_context"]["coverage_report"]),initial/"source-review.json")
+        turns=[json.loads(p.read_text()) for p in (output/"training-turns").glob("*/*-input.json")]
+        self.assertTrue(turns)
+        self.assertTrue(all(t.get("review_role")=="second_pass_fast" for t in turns))
 
 
 if __name__ == "__main__":

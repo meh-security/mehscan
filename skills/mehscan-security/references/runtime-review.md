@@ -48,7 +48,42 @@ If a deciding name is absent from a returned window, locate it with scoped
 `references` (or a failed definition's `text_lookup`) before reading more sibling
 branches. A satisfied range request does not establish that the body was inspected.
 Resolve only the missing relationship, not an exhaustive transitive caller set.
+
+<!-- runtime:control_consumers -->
+### Control-to-consumer checks
+
+For a claimed protection, inspect what it constrains and where that constraint
+is consumed. Authentication, attaching a subject ID and restricting a resource
+are separate facts. Read the applicable helper body; then check whether the
+actual lookup or mutation uses the derived subject to restrict that same object.
+An injected identity field that the operation ignores is not an owner check.
+A mismatch recorded as telemetry or challenge bookkeeping is not rejection.
+
+For a stored value reaching an interpreter, follow the write, model setter or
+normalizer, stored field and actual code/output operand. Judge the transformation
+against that consumer's grammar: removing HTML patterns does not establish safe
+code evaluation. Preserve the relevant writer and consumer branch/configuration
+conditions together. Conversely, a shown closed numeric/operator alphabet can
+settle a code-construction claim without a broader identity audit.
+
+For revocation, unpublishing, deletion or full synchronization, compare the
+authoritative desired state with the copies later used for access, publication
+or routing. An empty desired set can require removing previous state. Check
+whether an early return, partial enumeration or failed update leaves a relied-on
+copy effective. Bind any finding to the supported state change and security
+consequence; stale data alone does not establish harm. Use `workflow-state`
+when reconciliation, retries or compensation need deeper investigation.
+
+Use available cited source facts by default before repeating research. Check
+their snapshot, exact implementation and this caller's arguments, branch and
+effect; reuse source, not another review's verdict. If a named helper remains
+the deciding gap, request its body while research is available. Keep the exact
+gap pending when it cannot be retrieved or its binding remains unresolved.
+<!-- /runtime:control_consumers -->
+
 <!-- runtime:api_semantics -->
+### Effective API and runtime binding
+
 Apply established documented API semantics when the actual import, relevant
 version, options and runtime match. State contract knowledge as reviewer inference;
 do not claim to have inspected documentation, implementation or tests you did not
@@ -71,7 +106,30 @@ knowledge. If it remains uncertain, preserve the consequential question as
 needs_review rather than suppressing the lead or claiming the operation cannot
 execute. Do not require dependency source or runtime attestation for an ordinary
 documented contract with matching bindings.
+
+For an application claim that depends on invocation, bind the implicated handler
+or plugin to an actual registration, applicable profile and effective ordering.
+An exported symbol, discovery comment or legacy example does not establish that
+it runs; an earlier terminal handler may prevent it. Keep caller/configuration
+conditions compatible across the chain. Distinguish a supported optional path
+from a hypothetical integration requiring code changes. This does not require
+live deployment proof. A source-proven unsafe construction or failed library
+security guarantee can stand as a local defect without a deployed consumer;
+keep that conclusion separate from an asserted reachable application bypass.
 <!-- /runtime:api_semantics -->
+
+<!-- runtime:followup_selection -->
+When the assessment schema offers followup, use null for settled proofs. Otherwise
+nominate one exact question about this claim: conflicting_evidence for a concrete
+contradiction, control_applicability for an uncertain caller/check binding, or
+missing_local_evidence for a named deciding implementation still unread after
+this allowance. Use external_required or human_required when only unavailable
+evidence or policy can settle it; those do not enter automatic Fast. Base the
+note on inspected source and state what would change the assessment. Do not
+nominate every pending claim, invent doubt in a complete local proof, or postpone
+an available deciding read to obtain another pass. Scheduling notes grant no
+new budget or verdict authority; the controller selects a bounded subset.
+<!-- /runtime:followup_selection -->
 
 Reuse inspected source; shared facts need each caller's own applicability. Batch
 known independent lookups, then use their results for dependent reads. Prepared

@@ -38,7 +38,7 @@ review; never cite a guide as application evidence.
 | [`credential-lifecycle`](categories/credential-lifecycle.md) | Issuance, acceptance, recovery, rotation, expiry, consumption or revocation |
 | [`token-review`](token-review.md) | JWT/session/API-key issuance or acceptance, version-specific signing/verification options, expiry, cached identity, token purpose or revocation |
 | [`mass-assignment`](categories/mass-assignment.md) | Generic body binding, generated CRUD, privileged fields or sensitive object updates |
-| [`workflow-state`](categories/workflow-state.md) | Business-logic bypass, skipped/reordered steps, alternate representations, payment/approval, replay, batch allowances or concurrency |
+| [`workflow-state`](categories/workflow-state.md) | Business-logic bypass, skipped/reordered steps, alternate representations, payment/approval, replay, batch allowances, concurrency or state reconciliation across stores |
 | [`html-output`](html-output-review.md) | Browser interpretation, HTML trust bypass, stored markup, templates or DOM output |
 | [`angular-output`](angular-output-review.md) | Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings |
 | [`parser-resource`](categories/parser-resource.md) | Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits |

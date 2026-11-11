@@ -4,6 +4,10 @@ Review the assigned original-source ranges and the supplied native questions.
 Native questions guide work; they do not define all the security relationships
 in this source. A supported language, zero candidates or one closed local property
 does not establish that the operation is safe for other questions.
+When an AI review has no native candidates, still review the assigned source
+and record flows, controls and gaps. Source-discovered claims are assessed and
+source-validated here, then remain eligible for the same Fast/Full follow-ups.
+Scoped threat review can use coverage and cited source even with no claims.
 For web/API effects, distinguish object, function and property permissions from
 workflow prerequisites. Use `authorization` for the access boundary and
 `workflow-state` when a permitted actor can skip, replay or alter a consequential
@@ -37,13 +41,27 @@ The known-native-question catalog also lists questions outside the current nativ
 assignment. Use it to avoid duplicates; do not assess unassigned IDs. A different
 authority, content or workflow relationship can still warrant a distinct proposal.
 
-Start by identifying what the assigned code does. Use its public API, dispatcher,
-caller or configuration when the role is unclear. For a plausible security flow,
-name the entry point or caller, who supplies the input or authority, the effect,
-and the guard or configuration that would decide the question. Use that flow to
-choose the relevant guide and the next deciding lookup. A directory or language
-boundary may separate the entry point from its helper. When that relationship
-matters, follow the specific caller, dispatcher or helper into its source.
+Start by identifying what the assigned code does and what data, authority or
+resource it protects. Use its public API, dispatcher, caller or configuration
+when the role is unclear. Name the relevant actor, input or stored authority,
+protected effect and intended restriction. Derive the restriction from source,
+an applicable contract or an explicit requirement; do not invent business policy.
+Native categories do not replace this first-pass reasoning.
+
+Choose a concrete challenge suited to that flow: can the actor change the
+object, tenant, protected field or execution mode while retaining authority;
+skip or repeat a prerequisite; or retain access after revocation? For a cache,
+replica or external synchronization, consider deletion and an empty desired set,
+not only creation. For a queued or retryable benefit, inspect consumption and
+partial failure. For interpreted input, bind the actual value and grammar.
+These are prompts for applicable relationships, not a checklist for every file.
+Credit a deciding control that blocks the challenge and preserve its conditions.
+
+Use the challenge to choose the relevant guide and next deciding lookup. A
+cross-file edge belongs in this first investigation when it can settle the
+question: follow the specific registration, producer, shared guard, consumer or
+state store. Do not defer an available deciding read to a later pass or build a
+whole-application map or add a separate planning response.
 
 Classify decoder-related code by what it implements. For ordinary library usage,
 start with Mehscan's native questions and `parser-resource`: inspect the API,
@@ -94,7 +112,10 @@ even when outline or symbol extraction fails.
 
 Within an assignment, reuse a helper's inspected source from the assigned
 windows or earlier lookups. Check each caller's arguments, configuration and
-effect separately. For an explicit handoff between chunks on the same snapshot,
+effect separately. Apply the [control-to-consumer checks](runtime-review.md#control-to-consumer-checks)
+during this first investigation, including stored-value transformations and
+whether the actual resource operation consumes the derived identity.
+For an explicit handoff between chunks on the same snapshot,
 the operator can [save and reload a cited fact](pattern-sweep.md#reuse-facts-between-chunks),
 including a helper discovered in a zero-candidate assignment. Ordinary worker
 assignments get their own source, available native facts and their lookup

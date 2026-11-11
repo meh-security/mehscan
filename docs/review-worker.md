@@ -18,6 +18,14 @@ The controller validates original paths, hashes, ranges and inspected citations,
 assigns identities and applies the ordinary finalizer. Source validation establishes
 the cited bytes, not a vulnerability or a native flow proof.
 
+With zero selected scanner candidates, this same default phase runs an AI-only
+source first pass over the requested scope. AI-discovered claims receive normal
+source-bound IDs and can enter automatic Fast or Full follow-up. The options
+report records `ai_source_only` origin and source-coverage context; scoped threat
+review can use those flows/gaps even when no AI claims are retained. No fake
+candidate is needed. An empty Fast queue makes no model call. Explicit native-only
+or candidate-scan requests retain their narrower scope.
+
 New questions and source assessments are retained under `source-review/`. The
 controller derives a new native state generation for the augmented inventory;
 its private claim stays in the state store. Completed assessments are finalized
@@ -94,8 +102,8 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
-| `fast` | Records a proof audit, then resolves actionable objections with targeted lookups in the same conversation. Supported results finish in one call. | Keep or correct the verdict and proof, including resolving pending claims. A deciding fact that remains unavailable or beyond the allowance stays pending. |
-| `full` | A fresh source-backed assessment without the original verdict, using the normal research allowance, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
+| `fast` | Automatically selects a capped queue from first-pass proof questions, then audits and resolves actionable objections with targeted lookups. | Keep or correct selected claims; other first-pass results remain unchanged. |
+| `full` | Reviews every claim in the chosen scope through a fresh source-backed assessment without the original verdict, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
 
 Fast first records an audit checkpoint using the first investigation's evidence
 and trace. Supported proofs can finish in that call. Concrete objections move
@@ -128,12 +136,26 @@ results keep the deciding question alongside the reason work stopped.
 
 ### Choose which results to check
 
+During existing first-pass calls, the bundled adapter offers nullable `followup`
+metadata: a typed reason and one exact deciding question. The controller keeps
+it outside native verdict/evidence schemas. Fast ranks concrete conflicting
+evidence, control applicability and named missing local evidence, then assessed
+severity. Pending status or low confidence alone is insufficient. External/human
+blockers are excluded. These are scheduling hypotheses, not detected proof errors.
+
+Fast selects at most 25% of eligible claims, rounded up, with a maximum of 20.
+Lower the maximum with `--fast-max-claims N` (1–20). It makes no selection-model
+call, never expands an empty queue to all claims and records cap deferrals.
+Full applies no automatic cap. Older/custom reviewers without nomination metadata
+remain supported; they produce no automatic Fast targets.
+
 `--second-pass-scope` selects decisions from the first pass, within the chosen
-work package:
+work package. This defines Fast's eligible pool; automatic selection then narrows
+it. Full checks all members of the pool:
 
 | Scope | First-pass decision |
 | --- | --- |
-| `all` (default) | Every selected claim, including dismissals and unresolved items. |
+| `all` (default) | All verdict classes are eligible, including dismissals and unresolved items. |
 | `issues` | Reported findings (`issue`). |
 | `dismissals` | Dismissed candidates (`not_issue`). |
 | `pending` | Unresolved claims (`needs_review`). |
@@ -147,12 +169,21 @@ The summary separates all first-pass claims, targeted claims and checked claims.
 An empty target scope makes no second-pass model call. Completion applies to the
 requested scope, not every candidate in the application.
 
-For a first review followed immediately by a Fast check of findings, add these
+For a first review followed immediately by automatic Fast selection among findings, add these
 options to the [normal worker invocation](#run-the-worker):
 
 ```text
 --second-pass fast --second-pass-scope issues
 ```
+
+After first pass, `review-options.json` and `review-options.md` show label counts,
+the proposed Fast queue with reasons, deferrals and the broader Full scope.
+Selection itself costs no model call. With the default `--second-pass off`, the
+worker finishes first pass and exits; the calling agent presents results and asks
+which follow-up scope to run. Explicit Fast/Full requests execute directly. An
+explicit threat-model request is handled by the skill's scoped source-review
+workflow; it is not a new CLI second-pass mode. Follow-ups inherit the requested
+scope/budget; they do not create authorization for another full scan.
 
 ### Recheck a completed attempt
 

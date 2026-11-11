@@ -240,6 +240,12 @@ def build_schema(task, *, bound_handles=True):
                 "security_relevance":{"type":"string","maxLength":500},
                 "distinct_from_review":{"type":"string","maxLength":500},
                 "evidence":object_schema({"path":text,"start_line":integer,"end_line":integer})})}})
+        if task.get("followup_selection") and task.get("review_role", "investigator") == "investigator":
+            entry["properties"]["followup"] = {"anyOf":[object_schema({
+                "reason":{"type":"string", "enum":["conflicting_evidence", "control_applicability",
+                    "missing_local_evidence", "external_required", "human_required"]},
+                "question":{"type":"string", "minLength":1, "maxLength":300}}), {"type":"null"}]}
+            entry["required"].append("followup")
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else review_id_schema(task["review_ids"], bound_handles=bound_handles)
     query_variants = []

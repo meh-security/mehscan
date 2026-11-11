@@ -33,10 +33,10 @@ refilling a slot when its independent package completes. Keep a shared producer
 and its caller/effect checks in one job; split different producers or controls.
 Do not launch one reviewer per occurrence. Queue status is ready, running,
 completed, or blocked on a named fact; unstarted IDs remain unreviewed.
-Default to Value review: map the attack surface, then cover distinct security
-relationships across relevant lanes, including access, output, data exposure,
-and state changes without a hard severity cutoff. Review distinct consequential
-relationships; an occurrence count is not a target for Value coverage. Keep
+Default to Value review: use enough surface context to rank work, then cover
+distinct security relationships across relevant lanes, including access, output,
+data exposure and state changes. Review distinct consequential relationships;
+an occurrence count is not a target for Value coverage. Keep
 stronger signals, clearly justified fixes and promising high-impact leads in Value.
 Ordinary directory setup/listing, normal data decoding, syntax-only unsafe/extern,
 nonsecurity hashes, positive controls and generic log formatting are supporting
@@ -377,6 +377,10 @@ when grouping shared implementations or adding missing source.
 
 ## Map the surface and define scope
 
+Keep this as lightweight review navigation, updated during first pass. It does
+not require a separate model call, complete architecture or threat-model report
+before inspecting source. Exact-ID and bounded source assignments start directly.
+
 Inspect main manifests, entrypoints, route registration, and a few relevant
 files. Cross the largest inventory categories with those surfaces; top-level
 directory counts alone do not show exposure. Record only roles that change
@@ -405,8 +409,8 @@ Choose a review mode:
 Pre-assessment must state the review scope before building bundles. Its inputs
 are the source tree (manifests, framework configuration, entrypoints, routes,
 and relevant files), the Mehscan inventory, and same-fingerprint review history.
-Output a compact stack/deployment summary, a source-backed map of entrypoints,
-dispatch and access boundaries, and a heat map of inventory concentrations by
+Record a compact stack/deployment summary, source-backed entrypoint,
+dispatch and access clues, and inventory concentrations by
 capability/CWE, evidence strength, and component. A hot count shows review
 cost or concentration, not risk by itself. If a consequential source-observed
 operation has no inventory ID, record a coverage lead separately; do not
@@ -475,7 +479,7 @@ run. Put this short status at the top, then keep any detailed map below it:
 | Field | Record |
 | --- | --- |
 | Goal and scope | User's objective, mode, included/conditional/deferred selection tests, any explicit limit, source root and fingerprint. |
-| Big picture | Stack/deployment limits, source-backed attack-surface map, total admitted IDs, coverage limits, compact capability/CWE/strength/component heat map, important gaps, and observed yield. |
+| Big picture | Stack/deployment limits, source-backed entrypoint/boundary clues, total admitted IDs, coverage limits, compact inventory concentrations, important gaps, and observed yield. |
 | Progress | Prior same-fingerprint verdicts, newly selected, finalized (`issue` / `not_issue` / `needs_review`), in progress, deferred, and still unselected counts; name the owner of active ID groups. |
 | Ranked queue | A few category/component lanes tagged in-now, conditional, or deferred, with rank, status, rough remaining scope, next selection test, and reason. Include follow-ups separately when their missing fact differs from unselected work. |
 | Stop condition | What completes the requested scope, or why work is paused and how to resume. |
@@ -499,6 +503,10 @@ The CLI's `work.complete` describes one selected chunk; use this ledger for
 whole-repository progress.
 
 In auto mode, carry out the next authorized action without a confirmation loop.
+This includes finishing the requested first-pass scope and any explicitly
+requested follow-ups. At the completed first-pass checkpoint, use
+[finalize and report](finish-review.md#first-pass-checkpoint): present results
+and ask for a next scope only when no further pass is already authorized.
 Tell the user the big picture and next step after the pilot and at meaningful
 chunk checkpoints, using observed work to describe cost rather than inventing
 an ETA. If the user has not specified exhaustive scope, continue the stated
@@ -533,6 +541,42 @@ Across revisions, check the operation and each decisive caller, control, and
 dependency in the new source before reusing the conclusion. Reopen affected
 IDs when supporting evidence changes, even if the operation retains its ID.
 Separate unselected IDs from finalized `needs_review` decisions in the counts.
+
+## Scoped flow follow-up
+
+Native candidates and confirmed findings are not prerequisites. For an AI-only
+first pass, use `review-options.json`'s source_context coverage report to locate
+the examined flows and exact remaining gaps. Reuse applicable cited facts and
+read the deciding source; coverage summaries alone are not vulnerability proof.
+
+Use when first-pass facts expose a consequential coverage gap around an
+identified flow: shared authority across entrypoints, mutable approved fields,
+revocation across stores, or retry/compensation behavior. Investigate a named
+invariant and realistic misuse sequence; feature presence or a list of possible
+threats alone does not justify another phase. An available deciding edge belongs
+in the current investigation first.
+
+Carry forward only the relevant snapshot-bound source citations, established
+controls, affected claims/leads and missing relationships. Findings and candidate
+labels are hypotheses. Scope one flow with its actor, entry/effect, state or key,
+and the question that could change the assessment. Choose the next cross-file
+read from that question; do not reload all findings or enumerate every threat
+category. Use the remaining authorized research/time budget, without an
+automatic fresh allowance. If more work is warranted, queue its exact question
+and expected deciding evidence within the user's overall scope and budget.
+
+Stop when the sequence is supported, blocked by an applicable control or limited
+by a named unavailable fact/budget. Keep that result with existing coverage and
+lead records; no separate map or threat-model artifact is required. Preserve
+exact-ID decisions and source-assignment anchor limits. Route a distinct new
+mechanism through ordinary source proposals or lead follow-up; use explicitly
+requested [Fast](second-pass-review.md) for automatically selected existing claim
+proofs. An explicit scoped threat-review request authorizes this follow-up;
+proceed without asking for confirmation again. A first-pass request alone does
+not authorize an additional threat-model phase.
+Group repeated effects by failed control and repair point, preserving caller
+conditions. This is a scoped investigation technique, not a new controller mode
+or a substitute for a separately requested full threat model.
 
 ## Follow up on reviewer-origin leads
 

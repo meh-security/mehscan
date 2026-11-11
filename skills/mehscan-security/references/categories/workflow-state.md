@@ -15,6 +15,7 @@ enumerate speculative workflows.
 | Alternate representation | Unknown/omitted modes, duplicate parameters or different checked/consumed IDs select a path to the effect. Trace parsing and defaults rather than assuming which representation wins. |
 | Replay/parallel/batch use | The same grant, balance or allowance can fund multiple effects. Bind consumption to the transaction and accepted batch; check idempotency and failure/rollback semantics. |
 | Value substitution | Type-correct amounts, quantities, role or status fields violate a server-owned restriction. Follow recomputation and persistence before claiming a bypass. |
+| Revocation/reconciliation | Deletion, expiry, unpublishing or an empty desired set leaves an earlier grant, published object or external effect active in a copy the system still uses. |
 
 Inspect denial before the first consequential effect, including queued work and
 earlier committed writes. A later error or a failed secondary step does not
@@ -30,6 +31,15 @@ predicate and consumption, including equality boundaries and retries.
 Do not infer race safety from a transaction name or a race exploit from two
 statements. Establish conditional update, uniqueness, locking or isolation
 semantics; preserve a decisive unknown rather than inventing an interleaving.
+
+When the guarantee spans stores, follow the authoritative change through cache
+invalidation, replication or external synchronization to the later consumer.
+Check last-item removal, zero eligible items, paginated enumeration and partial
+failure when they can leave protected state effective. A successful local write
+or sync response does not establish convergence. Credit authoritative reads,
+effective expiry and rejecting fallbacks where they prevent the consequence.
+State the activation conditions, stale state actually consumed and violated
+security restriction; routine eventual consistency alone is not a finding.
 
 An intended workflow requirement must come from source policy, tests,
 documentation or an explicit requirement. A product preference is not a security

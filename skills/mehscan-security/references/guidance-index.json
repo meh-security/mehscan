@@ -8,7 +8,7 @@
   "credential-lifecycle":{"path":"categories/credential-lifecycle.md","when":"Issuance, acceptance, recovery, rotation, expiry, consumption or revocation"},
   "token-review":{"path":"token-review.md","when":"JWT/session/API-key issuance or acceptance, version-specific signing/verification options, expiry, cached identity, token purpose or revocation"},
   "mass-assignment":{"path":"categories/mass-assignment.md","when":"Generic body binding, generated CRUD, privileged fields or sensitive object updates"},
-  "workflow-state":{"path":"categories/workflow-state.md","when":"Business-logic bypass, skipped/reordered steps, alternate representations, payment/approval, replay, batch allowances or concurrency"},
+  "workflow-state":{"path":"categories/workflow-state.md","when":"Business-logic bypass, skipped/reordered steps, alternate representations, payment/approval, replay, batch allowances, concurrency or state reconciliation across stores"},
   "html-output":{"path":"html-output-review.md","sections":["chain","frontend","dom","writers","decisions"],"when":"Browser interpretation, HTML trust bypass, stored markup, templates or DOM output"},
   "angular-output":{"path":"angular-output-review.md","when":"Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings"},
   "parser-resource":{"path":"categories/parser-resource.md","when":"Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits"},

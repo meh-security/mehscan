@@ -430,7 +430,8 @@ if task["kind"]=="source_review":
     packet=json.loads(Path(task["evidence_packet"]).read_text())
     print(json.dumps({"draft":{"results":[{"review_id":i,"decision":"issue","confidence":"medium",
         "summary":"Synthetic operation issue for controller acceptance.","reason":"The current code passes request.query.code into eval.",
-        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for i in task["review_ids"]],
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
+        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}} for i in task["review_ids"]],
         "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},
             "status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}}))
     sys.exit()
@@ -441,7 +442,8 @@ if task["kind"]=="change_pass":
 else:
     print(json.dumps({"results":[{"review_id":review_id,"decision":"issue","confidence":"medium",
         "summary":"Synthetic operation issue for controller acceptance.","reason":"The current code passes request.query.code into eval.",
-        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for review_id in task["review_ids"]]}))
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
+        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}} for review_id in task["review_ids"]]}))
 ''')
         self.command = self.base / "reviewer-command.json"
         self.command.write_text(json.dumps([sys.executable, str(self.reviewer)]))
@@ -539,6 +541,67 @@ print(json.dumps(value))
         audits=[j for j in jobs if j["binding"]["role"]=="second_pass_fast"]
         self.assertTrue(audits)
         self.assertTrue(all(j["calls"]==1 and j["queries"]==0 and j["fast_phase"]=="complete" for j in audits))
+
+    def prepare_auto_followup_claims(self):
+        (self.root / "app.js").write_text("function first(request) { eval(request.query.one); }\n"
+                                          "function second(request) { eval(request.query.two); }\n")
+        self.inventory, self.store, self.run = [self.base / name for name in ("auto-inventory", "auto-state", "auto-run")]
+        self.native("investigate", "review-inventory", str(self.root), "--repository-key", "evaluation:worker", "--output", str(self.inventory))
+        claim=self.native("state", "claim", "--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--attempt-id", "auto", "--expected-generation", "0", "--operation-key", "claim")
+        self.claim.write_text(json.dumps(claim))
+        self.common=["--store",str(self.store),"--stream","local-review","--inventory",str(self.inventory),
+            "--source-root",str(self.root),"--generation","1","--owner",claim["result"]["owner"]]
+        plan=self.native("state","plan-template","--inventory",str(self.inventory),"--source-root",str(self.root),
+            "--policy","comprehensive","--skill-root",str(ROOT/"skills/mehscan-security"))
+        self.ids=plan["selected_review_ids"]
+        self.assertEqual(len(self.ids),2)
+        path=self.base/"auto-plan.json";path.write_text(json.dumps(plan))
+        self.native("state","plan",*self.common,"--input",str(path),"--operation-key","plan")
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        self.native("investigate","review-bundles",str(self.root),"--inventory",str(self.inventory),
+            "--review-ids",",".join(self.ids),"--output",str(self.run))
+
+    def test_auto_fast_rebundles_only_selected_claim_and_preserves_capped_sibling(self):
+        self.prepare_auto_followup_claims()
+        self.second_pass_provider()
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual((summary["targeted"],summary["outside_scope"]),(1,1))
+        self.assertEqual(len(summary["selection"]["deferred"]),1)
+        unselected=next(r for r in summary["results"] if r.get("selection_reason")=="fast_cap")
+        self.assertEqual(unselected["first_decision"],unselected["final_decision"])
+        self.assertEqual(unselected["stages"],[])
+        jobs=[json.loads(p.read_text()) for p in (output/"jobs").glob("*.json")]
+        audited={rid for j in jobs if j["binding"]["role"]=="second_pass_fast" for rid in j["binding"]["review_ids"]}
+        self.assertEqual(len(audited),1)
+        self.assertNotIn(unselected["review_id"],audited)
+
+    def test_full_does_not_apply_automatic_fast_cap(self):
+        self.prepare_auto_followup_claims()
+        self.second_pass_provider()
+        value=self.invoke(extra=["--phase","native","--second-pass","full"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual((summary["targeted"],summary["checked"]),(2,2))
+        self.assertNotIn("selection",summary)
+        self.assertEqual(summary["outcomes"]["corrected"],2)
+
+    def test_no_nominations_stop_after_first_pass_even_when_fast_is_requested(self):
+        # A legacy adapter has no scheduling signal; it must not trigger an all-claim fallback.
+        self.reviewer.write_text(self.reviewer.read_text().replace(
+            ',\n        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}', ''))
+        self.second_pass_provider(fail=True)
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["targeted"],0)
+        self.assertEqual(summary["accounting"]["second_pass"]["calls"],0)
+        self.assertTrue((output/"review-options.md").is_file())
 
     def test_fast_audit_exhaustion_preserves_the_deciding_question(self):
         plan=self.native("state","plan-template","--inventory",str(self.inventory),

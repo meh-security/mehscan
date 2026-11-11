@@ -10,6 +10,14 @@ the assigned original source, assess existing questions and investigate addition
 consequential relationships in the same context. The default AI controller assigns
 source even when the scanner finds no candidates. New proposals require validated
 source and ordinary finalization; examined coverage is separate from verdicts.
+During first pass, identify the protected effect and challenge the applicable
+authority, lifecycle or interpretation boundary. Follow a deciding cross-file
+edge in that investigation; a separate threat model is not a prerequisite.
+With no scanner candidates, continue the same requested source scope as an
+AI-only first pass; an empty candidate list does not end the review. AI-discovered
+claims and pending questions use the same Fast/Full follow-up path after source
+validation. Scoped threat review can also use examined flows and coverage gaps
+when the AI pass produces no claims. Do not manufacture candidates to enable it.
 
 For an exact-ID source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
@@ -77,7 +85,8 @@ next missing edge through Mehscan. Start component-scoped references with
 `--summary true`, then inspect decisive source. Widen for missing edges,
 cross-component callers or truncation. Research is not limited to bundle text.
 
-Reuse inspected facts, checking each ID's actor, producer, branch, operand,
+Reuse available cited source facts by default, checking the same source snapshot
+and each ID's actor, producer, branch, operand,
 control and effect. A shared fact is not a shared verdict. Journal code-evidence
 queries under the ID that prompted them; do not repeat a query to populate
 another journal. Preserve consequential adjacent questions as separate
@@ -87,6 +96,9 @@ journal. Wait for results before choosing dependent queries; keep batches focuse
 Prioritize the fact that decides the selected claim. An inspected complete control
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
+Use the [control-to-consumer checks](references/runtime-review.md#control-to-consumer-checks)
+to distinguish identity attachment from resource restriction and a stored-value
+transformation from protection at its eventual interpreter.
 Stop once the selected relationship is settled or its decisive gap is explicit.
 Before finalizing, apply the concise [final proof check](references/final-proof-check.md)
 within the current investigation. Workers receive it in their compiled contract.
@@ -121,7 +133,7 @@ separate authority/state question. Keep those claims distinct.
 | Object/function/property permissions, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
 | Issuance, recovery, expiry, rotation, revocation | [Credential lifecycle](references/categories/credential-lifecycle.md), `credential-lifecycle` |
 | Generic updates, generated CRUD, sensitive writable fields | [Mass assignment](references/categories/mass-assignment.md), `mass-assignment` |
-| Business-logic bypass, skipped steps, payment/approval, replay or batch allowances | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
+| Business-logic bypass, payment/approval, replay, batch allowances or state reconciliation | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
 | Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
 | Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
 | XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
@@ -142,6 +154,23 @@ to inspect review progress and separate mechanical completion from review qualit
 For an explicitly requested Fast or Full second pass, read
 [second-pass review](references/second-pass-review.md). It audits completed claims,
 retains the first results and separates model-reviewed labels from training approval.
+Fast automatically selects a bounded queue from first-pass scheduling notes;
+Full audits every claim in the chosen scope. For an
+identified flow whose threat coverage needs enrichment, use
+[scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
+within the authorized scope and budget.
+
+Finish the requested first-pass scope and present findings, grouped root causes,
+pending facts, coverage limits and recorded usage before proposing more work.
+Start with the worker's compact `review-options.md` for the proposed Fast queue
+and reasons; read JSON only for needed selection details. If no follow-up was
+requested and more work is useful, recommend a concrete next scope and ask
+the user to choose Fast, a broader Full audit, a scoped threat review or stopping.
+When no useful follow-up is identified, state that and finish.
+Do not start another pass merely because work is pending. If the user already
+requested any of these follow-ups, execute the requested sequence without another
+confirmation, within the stated scope/budget. A repository-wide first pass or
+Comprehensive scope alone does not request a Full second-pass audit.
 
 ## New scan or repository-wide review
 
@@ -159,8 +188,10 @@ Honor Comprehensive or a requested category. Value prioritizes stronger signals,
 clearly justified fixes and promising high-impact leads, including useful medium
 issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
 not a queue for every raw sink occurrence. Excluded observations remain supporting
-facts, not safe verdicts or mandatory deferred reviews. Planning maps the stack and attack
-surface and workload before triage; use a small first chunk to measure review
+facts, not safe verdicts or mandatory deferred reviews. Planning records enough
+stack, entrypoint and workload context to rank work; develop it as source is
+reviewed rather than requiring a separate architecture or threat-model pass.
+Use a small first chunk to measure review
 pace and plan the next pass within the user's time budget.
 Planning ranks work, accounts for deferred IDs and chooses small chunks or
 disjoint agent assignments when requested. Read it for repository scope or

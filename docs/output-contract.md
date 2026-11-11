@@ -271,6 +271,19 @@ complete for its requested scope while other claims remain unchecked. An executi
 failure leaves the first decision in place and the supplemental check incomplete.
 These outcomes are model assessments, not independently verified correctness.
 
+The worker also writes `review-options.json` and `review-options.md` at the
+first-pass checkpoint. They contain the proposed automatic Fast queue, each
+claim's deciding question/reason, cap-deferred nominations, exclusions and the
+broader Full scope. Fast's `second-pass.json` retains this plan under `selection`
+and gives unchecked claims a `selection_reason`. Unselected results retain their
+first-pass verdict and are never counted as confirmations. Full has no automatic
+narrowing. Scheduling notes and next-step artifacts are advisory; they do not
+change canonical findings or authorize a follow-up run.
+For source first passes, `review_origin` distinguishes AI-only and hybrid work.
+The threat-review option includes `source_context` with source-stage counts and
+the exact coverage-report path. This remains available with zero claim records;
+coverage supplies navigation and limits, not a vulnerability verdict.
+
 `training-labels.json` links the decisions to source/runtime identity, rule and
 location metadata, evidence references and captured `training-turns/`. It separates
 `model_reviewed` from `first_pass_only` authority and `candidate` from `excluded`

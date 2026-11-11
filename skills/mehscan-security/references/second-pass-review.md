@@ -4,12 +4,47 @@ Use only when the user requests Fast or Full second-pass review. The default is
 off; this option is independent of Value/Comprehensive. Keep exact claim IDs and
 their actor, operand, branch, selected property and effect separate.
 
+## Automatic Fast selection
+
+First-pass assessments can return a nullable `followup` scheduling note with a
+typed reason and one deciding question. Native and source-discovered claims use
+the same mechanism. These notes are hypotheses, separate from native verdicts.
+An AI-only source first pass needs no scanner candidate to enable follow-up:
+its admitted source-discovered claims carry the same scheduling notes and cited
+facts. With no claims, Fast has nothing to audit; scoped threat review can still
+examine a source-backed flow or coverage gap without inventing a claim.
+The controller selects conflicting evidence, uncertain control applicability or
+named missing local evidence, in that order; assessed severity breaks ties.
+Confidence or a pending label alone does not select a claim. External/human-only
+blockers do not enter Fast without changed evidence.
+
+Fast selects at most 25% of the eligible claim pool (rounded up), capped at 20
+claims. `--fast-max-claims N` can lower that cap. These are workload limits, not
+coverage guarantees. Every selected claim has its question/reason in
+`review-options.json`; cap-deferred and unselected claims retain their first
+results. Selection makes no additional model call. Legacy results without notes
+produce an empty Fast queue; never fall back to all claims. Full has no automatic
+narrowing and retains its independent-assessment/comparison behavior.
+
+Fast checks the selected claim's proof and repairs actionable gaps. It can
+follow a relevant cross-file producer, guard or consumer; it does not perform
+fresh application-wide threat discovery. Use ordinary source/lead review for a
+distinct new mechanism. Keep a locally effective control separate from an
+upstream weakness and group effects under their actual repair point.
+Fast has a bounded research allowance, not a guaranteed latency or cost saving.
+The user or calling agent chooses Fast/Full and the eligible work package; the
+controller owns Fast's exact selected subset. Use Full for an all-claim audit.
+
 ## Run with the local worker
 
 Add `--second-pass fast` or `--second-pass full` to the normal worker command.
 The worker retains the first source-validated responses before reviewing them.
+Choose the eligible IDs with the normal work package/bundles, then optionally
+narrow their verdict classes with the scope filter below. Fast still applies
+automatic selection inside that pool; Full checks every member of it.
 Use `--second-pass-scope issues|dismissals|pending` or comma-separated combinations
-to narrow the first-pass decisions checked. Default: `all`. Scope filters before
+to narrow eligible first-pass decisions. Default: `all` eligible verdict classes,
+not an all-claim Fast audit. Scope and automatic selection filter before
 rebundling, so other claims consume no second-pass calls and retain their original
 result marked outside scope. TP/FP aliases refer to the first labels, not truth.
 To check an already admitted attempt, refresh `state work` for the chosen IDs,

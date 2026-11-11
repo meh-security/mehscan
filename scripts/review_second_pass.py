@@ -18,6 +18,149 @@ PROOFS = ("supported", "unsupported", "undetermined")
 INVESTIGATIONS = ("sufficient", "missing_available_evidence", "external_blocker", "budget_limited", "execution_failed")
 ERRORS = ("wrong_property", "relied_on_unread_guard", "caller_constraint_ignored", "invalid_counterexample",
           "unsupported_impact", "lost_adjacent_lead", "unnecessary_research")
+FOLLOWUP_REASONS = ("conflicting_evidence", "control_applicability", "missing_local_evidence",
+                    "external_required", "human_required")
+FAST_MAX_CLAIMS = 20
+FAST_FRACTION = 0.25
+
+
+def take_followups(draft):
+    """Scheduling metadata never enters native verdicts or substitutes for proof."""
+    notes = []
+    for row in draft.get("results", []):
+        note = row.pop("followup", None)
+        if note is None:
+            continue
+        if (not isinstance(note, dict) or set(note) != {"reason", "question"}
+                or note["reason"] not in FOLLOWUP_REASONS
+                or not isinstance(note["question"], str) or not note["question"].strip() or len(note["question"]) > 300):
+            raise ValueError("follow-up nomination needs a typed reason and bounded deciding question")
+        if note["reason"] in ("external_required", "human_required") and row["decision"] != "needs_review":
+            raise ValueError("unavailable follow-up requires a pending assessment")
+        notes.append({"review_id":row["review_id"], **note})
+    return notes
+
+
+def followup_notes(directory, ids):
+    selected = set(ids)
+    notes = []
+    for _, job, _ in original_jobs(directory):
+        if job.get("binding", {}).get("role", "investigator") != "investigator":
+            continue
+        bound = set(job.get("binding", {}).get("review_ids", []))
+        for note in job.get("followups", []):
+            if note.get("review_id") not in bound:
+                raise ValueError("follow-up nomination is outside its original job")
+            if note["review_id"] not in selected:
+                continue
+            probe = {"review_id":note["review_id"], "decision":"needs_review",
+                     "followup":{k:note[k] for k in ("reason", "question")}}
+            notes.extend(take_followups({"results":[probe]}))
+    return notes
+
+
+def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"), max_claims=FAST_MAX_CLAIMS):
+    """No inference: rank exact first-pass nominations and expose all omissions."""
+    if type(max_claims) is not int or not 1 <= max_claims <= FAST_MAX_CLAIMS:
+        raise ValueError("Fast claim cap must be between 1 and 20; use Full for a broader audit")
+    by_id = {r["review_id"]:r for r in rows}
+    if len(by_id) != len(rows):
+        raise ValueError("follow-up planning requires unique claim IDs")
+    nominated = {}
+    for note in notes:
+        rid = note["review_id"]
+        if rid not in by_id:
+            raise ValueError("follow-up nomination is outside the selected first pass")
+        # A later authorized quality stage may have resolved an original blocker.
+        # Validate the note as scheduling data, then test its current applicability.
+        validated = take_followups({"results":[{"review_id":rid, "decision":"needs_review",
+            "followup":{k:note[k] for k in ("reason", "question")}}]})[0]
+        if validated not in nominated.setdefault(rid, []):
+            nominated[rid].append(validated)
+    eligible = [r for r in rows if r["decision"] in scope]
+    cap = min(max_claims, math.ceil(len(eligible) * FAST_FRACTION))
+    ranks = {reason:i for i,reason in enumerate(FOLLOWUP_REASONS[:3])}
+    severity = {s:i for i,s in enumerate(("critical", "high", "medium", "unknown", "low", "note"))}
+    candidates, excluded = [], []
+    for row in rows:
+        rid = row["review_id"]
+        own = nominated.get(rid, [])
+        actionable = [n for n in own if n["reason"] in ranks]
+        unavailable = [n for n in own if n["reason"] not in ranks]
+        if row["decision"] not in scope:
+            reason = "outside_verdict_scope"
+        elif unavailable:
+            reason = "unavailable_deciding_fact" if row["decision"] == "needs_review" else "resolved_blocker_nomination"
+        elif not actionable:
+            reason = "no_actionable_nomination"
+        else:
+            candidates.append({"review_id":rid, "decision":row["decision"], "reasons":actionable})
+            continue
+        excluded.append({"review_id":rid, "reason":reason, "notes":own})
+    candidates.sort(key=lambda n:(min(ranks[r["reason"]] for r in n["reasons"]),
+        severity.get((by_id[n["review_id"]].get("diagnosis") or {}).get("severity", "unknown"), 3), n["review_id"]))
+    chosen, deferred = candidates[:cap], candidates[cap:]
+    return {"schema_version":"1", "policy":"first-pass-nominations/v1", "authority":"scheduling_hypotheses",
+        "scope":list(scope), "first_pass_claims":len(rows), "eligible_claims":len(eligible),
+        "claim_labels":dict(Counter(r["decision"] for r in rows)),
+        "limits":{"max_claims":max_claims, "fraction":FAST_FRACTION, "effective_cap":cap},
+        "selected":chosen, "deferred":[{**n,"reason":"fast_cap"} for n in deferred],
+        "excluded":excluded, "full_claims":len(eligible), "selection_model_calls":0}
+
+
+def source_review_context(directory):
+    """Locate first-pass coverage even when no scanner or AI claims exist."""
+    directory = Path(directory)
+    for name in ("source-review.json", "source-review/summary.json"):
+        path = directory / name
+        if not path.is_file():
+            continue
+        source = read(path)
+        return {"origin":source.get("origin", "ai_source_review"),
+            "native_selected_claims":source.get("native_selected_claims"),
+            "ai_discovered_claims":source["source_questions"],
+            "assignments":source["assignments"], "completed_assignments":source["completed_assignments"],
+            "coverage_counts":dict(Counter(w["status"] for w in source["coverage"])),
+            "coverage_report":str(path.resolve())}
+    return None
+
+
+def write_options(output, plan, rows, write, *, source_directory=None):
+    """Prepare a reviewable first-pass checkpoint, without starting another stage."""
+    output = Path(output)
+    source = source_review_context(source_directory or output)
+    leads = [lead for r in rows for lead in (r.get("investigation") or {}).get("reviewer_origin_leads", [])]
+    options = {"schema_version":"1", "first_pass":plan["claim_labels"], "fast":plan,
+        "review_origin":source["origin"] if source else "native_claims",
+        "full":{"claims":plan["full_claims"], "automatic_narrowing":False},
+        "threat_model":{"execution":"agent_scoped_source_review", "leads":leads,
+                        "source_context":source, "requires_claims":False,
+                        "scope":"One identified flow/invariant and its deciding cross-file relationships."},
+        "authorization":"Present results and next-step choices after the requested first pass. Execute only already requested follow-ups without another confirmation."}
+    write(output / "review-options.json", options)
+    lines = ["# First-pass results and next steps", "",
+        "First pass: " + ("AI source review with no selected scanner claims." if source and source["origin"] == "ai_source_only" else
+            "AI source review with scanner questions." if source else "Selected claim review."),
+        "Claim labels: " + (", ".join(f"{k}={v}" for k,v in sorted(plan["claim_labels"].items())) or "none") + ".",
+        "These counts are review decisions, not independent defect or ground-truth counts.", "",
+        f"- Fast: {len(plan['selected'])} automatically selected claims; {len(plan['deferred'])} actionable nominations deferred by the cap.",
+        f"- Full: audit all {plan['full_claims']} claims in the requested verdict scope, including dismissals and pending claims when scope is all.",
+        "- Scoped threat review: examine an identified flow/invariant using cited facts and targeted cross-file reads.", "",
+        "Fast uses existing first-pass nominations; selection makes no model call. Unselected claims retain their first results.",
+        "First-pass coverage limits and unresolved facts remain in the findings/source reports.", "", "## Proposed Fast queue", ""]
+    for item in plan["selected"]:
+        for note in item["reasons"]:
+            question = " ".join(note["question"].split())
+            lines.append(f"- `{item['review_id']}` ({note['reason']}): {question}")
+    if not plan["selected"]:
+        lines.append("No actionable Fast nominations. Do not broaden Fast to all claims as a fallback.")
+    if source:
+        lines += ["", f"AI source coverage: {source['completed_assignments']}/{source['assignments']} assignments completed; "
+                  f"{source['ai_discovered_claims']} source-discovered claims.",
+                  "Scoped threat review can start from the recorded source flows and coverage gaps even when there are no claims.",
+                  "Read the source_context coverage report in review-options.json for the exact first-pass ranges and limits."]
+    lines += ["", "Stop after the requested first-pass scope and present these choices unless a follow-up is already authorized.", ""]
+    (output / "review-options.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def review_scope(value):
@@ -336,7 +479,8 @@ def fast_research_rounds(phase, rounds_remaining, countercheck_started=False):
 
 
 def run(*, mode, requests, baselines, first_directory, output, task_base, execute_stage,
-        finalize, write, workers, byte_limit, outside_scope=(), scope=("issue", "not_issue", "needs_review"), archive_baselines=True):
+        finalize, write, workers, byte_limit, outside_scope=(), scope=("issue", "not_issue", "needs_review"),
+        selection=None, archive_baselines=True):
     """Independent bundle failures preserve baseline results and exact unchecked coverage."""
     started = time.monotonic(); output = Path(output); rows = []; failures = []
     (output / "first-pass").mkdir(exist_ok=True)
@@ -349,7 +493,7 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
         filename, request, data = item; ids = data["review_ids"]; baseline = baselines[filename]
         related_paths = {a["location"]["path"] for row in baseline["results"]
             for a in row.get("investigation", {}).get("decisive_artifacts", [])}
-        deciding_paths = related_paths if tuple(scope) != review_scope("all") else None
+        deciding_paths = related_paths if selection is not None or tuple(scope) != review_scope("all") else None
         handoff, trace, frozen = prior_material(first_directory, ids, byte_limit, deciding_paths,
             jobs=jobs, related_paths=related_paths if mode == "fast" else ())
         task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":ids,
@@ -412,6 +556,12 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
         "outcomes":{k:counts[k] for k in OUTCOMES}, "results":sorted(rows, key=lambda r:r["review_id"]),
         "failures":failures, "elapsed_seconds":time.monotonic()-started,
         "label_authority":"model_reviewed" if targeted-incomplete else "first_pass_only", "semantic_ground_truth":False}
+    if selection is not None:
+        summary["selection"] = selection
+        excluded = {r["review_id"]:r["reason"] for r in [*selection["excluded"], *selection["deferred"]]}
+        for row in summary["results"]:
+            if row.get("reason") == "outside_scope":
+                row["selection_reason"] = excluded[row["review_id"]]
     write(output / "second-pass.json", summary)
     write(output / "second-pass-status.json", {k:summary[k] for k in ("mode", "status", "selected", "targeted", "checked", "outside_scope")})
     return summary

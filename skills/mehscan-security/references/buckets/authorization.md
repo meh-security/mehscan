@@ -23,6 +23,13 @@ resolver member, rather than a callback merely near mutation-related text.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+Read the bodies of the applicable authentication and identity-attachment helpers.
+Record whether each verifies credentials, derives a subject, compares ownership
+or stops the request. Then follow the derived subject into the actual resource
+predicate or mutation. Writing a trusted UserId into the request does not scope
+a lookup performed only with a route ID. A mismatch recorded for telemetry or
+challenge progress does not reject the operation. Reuse these helper facts across
+compatible callers while checking each caller's actual resource selection.
 
 Choose the relationship being challenged before widening the review:
 

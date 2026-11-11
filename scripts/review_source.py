@@ -246,7 +246,7 @@ def run(args, legacy, worker):
     )
     contract += (
         "\n"
-        + context.sections(skill / "references/runtime-review.md", ["api_semantics"])[
+        + context.sections(skill / "references/runtime-review.md", ["api_semantics", "control_consumers", "followup_selection"])[
             "text"
         ]
     )
@@ -391,6 +391,7 @@ def run(args, legacy, worker):
                     "work_package": str(args.work_package),
                     "review_ids": assignment["review_ids"],
                     "review_role": "investigator",
+                    "followup_selection": True,
                     "evidence_packet": str(directory / "context.json"),
                     "shared_facts": str(directory / "facts.json"),
                     "provider_metrics": str(
@@ -576,6 +577,15 @@ def run(args, legacy, worker):
                 raise ValueError("source assessments changed native membership")
             visible = [*assignment["windows"], *inspected]
 
+            followups = worker.second_pass.take_followups(last)
+            proposal_followups = {}
+            for proposal in last["proposals"]:
+                assessed = proposal["assessment"]
+                notes = worker.second_pass.take_followups({"results":[{**assessed, "review_id":proposal["key"]}]})
+                assessed.pop("followup", None)
+                if notes:
+                    proposal_followups[proposal["key"]] = notes[0]
+
             def citations(assessment):
                 result = []
                 for cite in assessment.get("evidence", []):
@@ -641,6 +651,8 @@ def run(args, legacy, worker):
                 "proofs": proofs,
                 "proposals": proposals,
                 "facts": facts,
+                "followups": followups,
+                "proposal_followups": proposal_followups,
                 "queries": queries,
                 "bytes": received,
                 "calls": calls,
@@ -713,6 +725,7 @@ def run(args, legacy, worker):
         for row in r["draft"]["results"]
     }
     priorities = {}
+    followups = [note for r in successful for note in r.get("followups", [])]
     for result in successful:
         for proposal in result["draft"]["proposals"]:
             identity = admitted["mapping"][
@@ -723,6 +736,8 @@ def run(args, legacy, worker):
                 raise ValueError("duplicate questions have conflicting assessments")
             assessments[identity] = row
             priorities[identity] = proposal["priority"]
+            if proposal["key"] in result.get("proposal_followups", {}):
+                followups.append({**result["proposal_followups"][proposal["key"]], "review_id":identity})
             question_assignments.setdefault(identity, []).append(
                 result["assignment_id"]
             )
@@ -871,6 +886,8 @@ def run(args, legacy, worker):
     worker.write(bundles / "manifest.json", manifest)
     summary = {
         "schema_version": "1",
+        "origin": "ai_source_only" if not ids else "hybrid",
+        "native_selected_claims": len(ids),
         "plan_id": plan["plan_id"],
         "source_fingerprint": plan["source_fingerprint"],
         "parent_work_package_id": package["package_id"],
@@ -881,6 +898,7 @@ def run(args, legacy, worker):
         "coverage": coverage,
         "results": results,
         "assessments": assessments,
+        "followups": followups,
         "question_assignments": question_assignments,
         "source_questions": len(priorities),
         "calls": sum(r["calls"] for r in results),

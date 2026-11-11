@@ -23,6 +23,23 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_first_pass_scheduling_field_is_typed_and_absent_from_quality_roles(self):
+        self.task.update(kind="native_bundle", review_ids=["one"], followup_selection=True)
+        schema=protocol.build_schema(self.task)
+        entry=schema["properties"]["draft"]["anyOf"][0]["properties"]["results"]["items"]
+        self.assertIn("followup", entry["required"])
+        reasons=entry["properties"]["followup"]["anyOf"][0]["properties"]["reason"]["enum"]
+        self.assertIn("external_required", reasons)
+        self.task.update(review_role="second_pass_fast", second_pass="fast")
+        entry=protocol.build_schema(self.task)["properties"]["draft"]["anyOf"][0]["properties"]["results"]["items"]
+        self.assertNotIn("followup", entry["properties"])
+        self.task.update(kind="source_review", review_role="investigator", second_pass=None)
+        draft=protocol.build_schema(self.task)["properties"]["draft"]["anyOf"][0]
+        native=draft["properties"]["results"]["items"]["anyOf"][0]
+        proposal=draft["properties"]["proposals"]["items"]["properties"]["assessment"]["anyOf"][0]
+        self.assertIn("followup", native["properties"])
+        self.assertIn("followup", proposal["properties"])
+
     def test_source_assignment_resumes_with_stable_schema_without_native_ids(self):
         self.task.update(kind="source_review",review_ids=[])
         self.config.update(schema_mode="stable",source_presentation="line-addressed-v1")

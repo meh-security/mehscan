@@ -127,3 +127,22 @@ Use the actual ledger's `reviewed` map to count reviewed IDs and check `conflict
 do not print the whole queue or guess coverage from response filenames. For
 cross-run reuse and reopened dependencies, follow [review planning](review-planning.md).
 Keep separately discovered existing IDs unreviewed until their own evidence check.
+
+## First-pass checkpoint
+
+After completing the requested first-pass scope, present the actual findings and
+grouped defects, pending questions, coverage and recorded tokens/time/cost when
+available. The worker emits `review-options.json` and `review-options.md` without
+buying another model pass. Show the proposed Fast claim count and deciding
+questions, any cap-deferred work, the broader Full scope and a specific useful
+flow for threat review when one is supported. Do not invent price estimates.
+
+If no follow-up was requested, stop here and ask which concrete next scope the
+user wants. This checkpoint is after the authorized first pass, not between
+ordinary bundles. If Fast, Full or threat modeling was already requested,
+continue directly within that authorization and budget. Fast uses automatic
+selection; Full checks the whole chosen claim pool. A requested threat review
+uses the [scoped flow follow-up](review-planning.md#scoped-flow-follow-up) when its
+scope is an identified concern; honor an explicitly broader threat-model scope.
+Reusing a first pass requires the current source/runtime binding. Scheduling
+notes are navigation, not source evidence or vulnerability proof.
