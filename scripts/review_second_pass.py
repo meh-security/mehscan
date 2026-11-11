@@ -672,6 +672,10 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
         task.update(review_role="second_pass_fast" if mode == "fast" else "second_pass_compare",
             assessment_cycle="second_pass_" + mode + "_check",
             stage_context=comparison_context(baseline, proposed if mode == "full" else None, trace))
+        if mode == "fast" and selection is not None:
+            task["stage_context"]["selection_questions"] = [copy.deepcopy(r) for r in selection["selected"]
+                if r["review_id"] in ids]
+            task["stage_context"]["selection_authority"] = "Scheduling hypotheses to test against source, not evidence or required verdicts."
         checked = execute_stage(task); stages.append(checked)
         for path, digest in frozen:
             if context.digest(read(path)) != digest:

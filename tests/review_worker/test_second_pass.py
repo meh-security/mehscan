@@ -267,6 +267,27 @@ class SecondPass(unittest.TestCase):
             self.assertEqual(summary["outcomes"]["confirmed"],1)
             self.assertEqual(saved["bad"],baselines["bad"])
 
+    def test_fast_receives_its_exact_deciding_questions_without_leaking_them_into_full(self):
+        for mode in ("fast","full"):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as name:
+                root=Path(name);tasks=[];baseline={"results":[result()]}
+                def write(path,value):path.write_text(json.dumps(value))
+                def stage(task):
+                    tasks.append(copy.deepcopy(task))
+                    return {"response":baseline,"checks":[check()],"receipt":{"job_id":"test"}}
+                selected={"review_id":"one","decision":"not_issue","selection_source":"first_pass_nomination",
+                    "reasons":[{"review_id":"one","reason":"control_applicability","question":"Does this exact guard reject?"}]}
+                selection={"selected":[selected,{**selected,"review_id":"peer"}],"excluded":[],"deferred":[]}
+                summary=review.run(mode=mode,requests=[("bundle",root/"request",{"review_ids":["one"]})],
+                    baselines={"bundle":baseline},first_directory=None,output=root,task_base={},execute_stage=stage,
+                    finalize=lambda *args:None,write=write,workers=1,byte_limit=1024,
+                    selection=selection if mode=="fast" else None)
+                self.assertEqual(summary["status"],"complete")
+                if mode=="fast":self.assertEqual(tasks[0]["stage_context"]["selection_questions"],[selected])
+                else:
+                    self.assertNotIn("stage_context",tasks[0])
+                    self.assertNotIn("selection_questions",tasks[1]["stage_context"])
+
     def test_empty_scope_is_complete_without_model_calls_and_preserves_labels(self):
         with tempfile.TemporaryDirectory() as name:
             def write(path,value):
