@@ -114,6 +114,10 @@ else:
             "reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],
             "checks":["Additional deployment proof required."] if pending else [],"blockers":[],"diagnosis":None,"source_leads":[]} for i in ids]}
+    entry = shape.get("results",{}).get("items",{})
+    entry = entry.get("anyOf",[entry])[0]
+    if "followup" in entry.get("properties",{}):
+        for row in draft["results"]:row["followup"]=None
     response={"action":"final","research":[],"draft":draft,"working_chain":"Inspected supplied source."}
     if "proposals" not in shape:response.update(progress=[],routing=[])
     pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps(response))
