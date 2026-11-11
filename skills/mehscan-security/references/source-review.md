@@ -19,6 +19,12 @@ or concrete unresolved relationships within the assignment. Use the same source
 context for both. Keep independent questions separate and do not repeat an existing
 native question as a proposal. The controller assigns new identities and validates
 source references; proposals are model reasoning, never native flow proof.
+When offered, populate claim_context under the
+[repair/applicability contract](runtime-review.md#repair-point-applicability-and-impact).
+Its cited shared repair point may be outside the assignment's proposal anchor
+when already inspected and included in the assessment evidence; this never
+changes the allowed proposal anchor. The controller retains metadata separately
+from native verdicts and groups presentation without merging questions.
 Use one of the offered capability categories. With controller-owned citations,
 return `source_ref` and `line`: select one original line for an anchor or focused
 evidence, or null for one complete offered evidence extent. Assigned s-references

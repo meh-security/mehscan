@@ -118,6 +118,45 @@ security guarantee can stand as a local defect without a deployed consumer;
 keep that conclusion separate from an asserted reachable application bypass.
 <!-- /runtime:api_semantics -->
 
+<!-- runtime:claim_context -->
+### Repair point, applicability and impact
+
+When the first-pass schema offers claim_context, record the inspected failed
+control/repair point separately from the selected local anchor. Its root must
+also appear in this assessment's ordinary evidence. Cite a precise line (a small
+range only when needed); wrappers, schemas and consumers of the same failure
+should point to that shared control. Use null when no defensible locator/context
+is established, rather than inventing a root to group similar titles or CWEs.
+Grouping is a presentation hypothesis: retain each caller, operand, branch,
+authority and reaching condition. A representative's verdict does not decide
+siblings, and different failures in one helper need different root locators.
+
+Record applicability from actual bindings: active requires a compatible registered
+path/order; supported_optional requires a valid configuration, not editing code
+to invent an integration; dormant covers unregistered/incompatible examples;
+unresolved names the deciding binding gap. local_contract describes an
+implementation/security guarantee assessed without a deployed caller. An example
+label alone proves neither activation nor inapplicability.
+
+Distinguish an application_path from local_unsafe_construction, security_contract
+or configuration_exposure. impact=source_supported identifies the shown
+consequence; conditional states compatible necessary conditions; unresolved
+names the missing protected effect/actor relationship. Record conditions and
+binding basis briefly. Do not combine an optional writer, different credential
+branch and unrelated privileged consumer into one fictitious exploit path.
+
+Assess severity from the demonstrated protected effect and feasible actor, not
+the dangerous API, scanner default or number of occurrences. Direct HTTP behind
+an unknown proxy, seed credentials, storage encryption and development assets
+retain their actual exposure conditions. A functional success/failure mismatch
+needs a security consequence. Supported library guarantees can fail severely
+without an application consumer; conditional does not mean harmless. A local
+shell construction alone does not prove a lower-trust web actor can invoke it.
+If a decisive application binding or impact remains unknown, keep that question
+pending rather than supplying a high-severity application bypass by assumption.
+These annotations do not change the ordinary verdict/evidence standard.
+<!-- /runtime:claim_context -->
+
 <!-- runtime:followup_selection -->
 When the assessment schema offers followup, use null for settled proofs. Otherwise
 nominate one exact question about this claim: conflicting_evidence for a concrete
@@ -129,6 +168,11 @@ note on inspected source and state what would change the assessment. Do not
 nominate every pending claim, invent doubt in a complete local proof, or postpone
 an available deciding read to obtain another pass. Scheduling notes grant no
 new budget or verdict authority; the controller selects a bounded subset.
+The controller can also select an issue whose explicit claim_context conflicts
+with its application activation/impact claim or leaves a severe conditional
+effect unbound. This is a bounded proof check, not an automatic false-positive
+label. Do not omit conditions or claim context to avoid review. A settled
+conditional local/security-contract finding needs no invented application path.
 <!-- /runtime:followup_selection -->
 
 Reuse inspected source; shared facts need each caller's own applicability. Batch

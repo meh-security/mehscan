@@ -246,7 +246,7 @@ def run(args, legacy, worker):
     )
     contract += (
         "\n"
-        + context.sections(skill / "references/runtime-review.md", ["api_semantics", "control_consumers", "followup_selection"])[
+        + context.sections(skill / "references/runtime-review.md", ["api_semantics", "control_consumers", "claim_context", "followup_selection"])[
             "text"
         ]
     )
@@ -578,13 +578,21 @@ def run(args, legacy, worker):
             visible = [*assignment["windows"], *inspected]
 
             followups = worker.second_pass.take_followups(last)
+            context_errors = []
+            claim_contexts = worker.second_pass.take_claim_contexts(last, errors=context_errors)
             proposal_followups = {}
+            proposal_contexts = {}
             for proposal in last["proposals"]:
                 assessed = proposal["assessment"]
-                notes = worker.second_pass.take_followups({"results":[{**assessed, "review_id":proposal["key"]}]})
+                wrapped = {"results":[{**assessed, "review_id":proposal["key"]}]}
+                notes = worker.second_pass.take_followups(wrapped)
+                contexts = worker.second_pass.take_claim_contexts(wrapped, errors=context_errors)
                 assessed.pop("followup", None)
+                assessed.pop("claim_context", None)
                 if notes:
                     proposal_followups[proposal["key"]] = notes[0]
+                if contexts:
+                    proposal_contexts[proposal["key"]] = contexts[0]
 
             def citations(assessment):
                 result = []
@@ -652,7 +660,10 @@ def run(args, legacy, worker):
                 "proposals": proposals,
                 "facts": facts,
                 "followups": followups,
+                "claim_contexts": claim_contexts,
+                "claim_context_errors": context_errors,
                 "proposal_followups": proposal_followups,
+                "proposal_contexts": proposal_contexts,
                 "queries": queries,
                 "bytes": received,
                 "calls": calls,
@@ -726,6 +737,8 @@ def run(args, legacy, worker):
     }
     priorities = {}
     followups = [note for r in successful for note in r.get("followups", [])]
+    claim_contexts = [value for r in successful for value in r.get("claim_contexts", [])]
+    context_errors = [value for r in successful for value in r.get("claim_context_errors", []) if value["review_id"] in assessments]
     for result in successful:
         for proposal in result["draft"]["proposals"]:
             identity = admitted["mapping"][
@@ -738,6 +751,10 @@ def run(args, legacy, worker):
             priorities[identity] = proposal["priority"]
             if proposal["key"] in result.get("proposal_followups", {}):
                 followups.append({**result["proposal_followups"][proposal["key"]], "review_id":identity})
+            if proposal["key"] in result.get("proposal_contexts", {}):
+                claim_contexts.append({**result["proposal_contexts"][proposal["key"]], "review_id":identity})
+            context_errors.extend({**error,"review_id":identity} for error in result.get("claim_context_errors", [])
+                                  if error["review_id"] == proposal["key"])
             question_assignments.setdefault(identity, []).append(
                 result["assignment_id"]
             )
@@ -899,6 +916,8 @@ def run(args, legacy, worker):
         "results": results,
         "assessments": assessments,
         "followups": followups,
+        "claim_contexts": claim_contexts,
+        "claim_context_errors": context_errors,
         "question_assignments": question_assignments,
         "source_questions": len(priorities),
         "calls": sum(r["calls"] for r in results),

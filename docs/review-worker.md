@@ -138,15 +138,27 @@ results keep the deciding question alongside the reason work stopped.
 
 During existing first-pass calls, the bundled adapter offers nullable `followup`
 metadata: a typed reason and one exact deciding question. The controller keeps
-it outside native verdict/evidence schemas. Fast ranks concrete conflicting
-evidence, control applicability and named missing local evidence, then assessed
-severity. Pending status or low confidence alone is insufficient. External/human
+it outside native verdict/evidence schemas. The same calls offer nullable
+`claim_context`: a cited repair point/property, applicability and binding basis,
+claim kind, impact basis and conditions. Its root must also be in the ordinary
+validated evidence. Metadata is retained in bound job checkpoints and never
+enters native verdict schemas. Source proposals receive the same metadata
+after their keys map to admitted IDs.
+An invalid advisory annotation is omitted and recorded in job checkpoints and
+the grouped report; it does not discard otherwise source-valid review work.
+
+Fast prioritizes positive proof signals from explicit activation/impact conflicts
+or severe conditional local/optional claims, then concrete conflicting-evidence,
+control-applicability and missing-local-evidence nominations, then assessed
+severity. These are targeted audit questions, not inferred false-positive labels.
+It selects one representative per explicit repair point before repeated claims;
+unselected siblings remain unaudited. Pending status or low confidence alone is insufficient. External/human
 blockers are excluded. These are scheduling hypotheses, not detected proof errors.
 
 Fast selects at most 25% of eligible claims, rounded up, with a maximum of 20.
 Lower the maximum with `--fast-max-claims N` (1–20). It makes no selection-model
-call, never expands an empty queue to all claims and records cap deferrals.
-Full applies no automatic cap. Older/custom reviewers without nomination metadata
+call, never expands an empty queue to all claims and records cap/shared-root deferrals.
+Full applies no automatic cap. Older/custom reviewers without nomination or claim-context metadata
 remain supported; they produce no automatic Fast targets.
 
 `--second-pass-scope` selects decisions from the first pass, within the chosen
@@ -178,6 +190,13 @@ options to the [normal worker invocation](#run-the-worker):
 
 After first pass, `review-options.json` and `review-options.md` show label counts,
 the proposed Fast queue with reasons, deferrals and the broader Full scope.
+`finding-groups.md/json` presents proposed families by explicit shared repair
+locator/property and verdict, with every claim's conditions retained. Missing
+context stays singleton; grouping changes no native verdict and certifies no
+unique vulnerability count. First-pass metadata remains explicitly historical
+after a later proof repair. Scoped threat suggestions contain at most three
+named leads, preserve the total/deferred leads and use the remaining authorized
+budget; they do not start another model phase automatically.
 Selection itself costs no model call. With the default `--second-pass off`, the
 worker finishes first pass and exits; the calling agent presents results and asks
 which follow-up scope to run. Explicit Fast/Full requests execute directly. An

@@ -48,6 +48,8 @@ def schema(task, base, api, guidance, bound_handles=True):
     entry = copy.deepcopy(native_draft["properties"]["results"]["items"])
     entry["properties"]["evidence"]["items"] = citation
     entry["properties"]["source_leads"]["items"]["properties"]["evidence"] = citation
+    if "claim_context" in entry["properties"]:
+        entry["properties"]["claim_context"]["anyOf"][0]["properties"]["root"] = citation
     assessment = copy.deepcopy(entry)
     assessment["properties"].pop("review_id")
     assessment["required"].remove("review_id")
@@ -325,6 +327,8 @@ def envelope(response, task):
 
         def assessment_citations(assessment):
             assessment["evidence"] = [expand(c) for c in assessment["evidence"]]
+            if assessment.get("claim_context") is not None:
+                assessment["claim_context"]["root"] = expand(assessment["claim_context"]["root"])
             for lead in assessment.get("source_leads", []):
                 lead["evidence"] = expand(lead["evidence"])
 

@@ -114,11 +114,20 @@ State the root, selected-source limits and whether every manifest ID was reviewe
 Only confirmed issues are findings; retain unresolved reviews.
 
 For reports covering multiple operations or revisions, give the issue verdict
-count and the distinct defect count separately. Group confirmed rows only when
+count and the proposed causal-family count separately; use a distinct defect
+count only after source adjudication supports it. Group confirmed rows only when
 they show the same failed control at the same repair point. Keep review IDs,
 affected revisions, entry points and authority boundaries with the group. Two
 callers of the same faulty dependency can share a defect while exposing
 different effects. Similar effects with independent fixes count separately.
+For worker output, start with `finding-groups.md/json`; every member retains its
+ID, decision, applicability, impact conditions and original finding. The shared
+locator is a model proposal, not certification of one defect or every caller.
+Keep active application effects, supported optional/library guarantees and
+conditional local constructions distinguishable in the handoff and severity.
+First-pass annotations remain historical after later repairs; inspect the final
+proof before carrying those conditions forward. No extra pass is needed merely
+to format groups, and a group never grants permission to drop unresolved work.
 
 When an inventory ledger is requested, run `mehscan investigate review-ledger
 --inventory RUN/inventory --history CHUNK --output RUN/review-ledger.json`.

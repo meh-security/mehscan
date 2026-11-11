@@ -13,16 +13,23 @@ An AI-only source first pass needs no scanner candidate to enable follow-up:
 its admitted source-discovered claims carry the same scheduling notes and cited
 facts. With no claims, Fast has nothing to audit; scoped threat review can still
 examine a source-backed flow or coverage gap without inventing a claim.
-The controller selects conflicting evidence, uncertain control applicability or
-named missing local evidence, in that order; assessed severity breaks ties.
+The controller selects exact nominations for conflicting evidence, uncertain
+control applicability or named missing local evidence. Explicit claim_context
+can also nominate a positive proof check: unresolved/dormant activation asserted
+as an application path, unresolved impact, or severe local/optional claims whose
+reaching conditions need checking. These signals question the proof, not the
+verdict; a conditional library defect can remain a valid severe finding.
+Positive proof signals rank first, then nomination reason and assessed severity.
+Prefer one representative per cited repair point to repeated checks of the same
+failure. Unselected siblings remain unaudited; no verdict is propagated.
 Confidence or a pending label alone does not select a claim. External/human-only
 blockers do not enter Fast without changed evidence.
 
 Fast selects at most 25% of the eligible claim pool (rounded up), capped at 20
 claims. `--fast-max-claims N` can lower that cap. These are workload limits, not
-coverage guarantees. Every selected claim has its question/reason in
-`review-options.json`; cap-deferred and unselected claims retain their first
-results. Selection makes no additional model call. Legacy results without notes
+coverage guarantees. Every selected claim has its question/reason and selection
+source in `review-options.json`; cap/shared-root deferred and unselected claims
+retain their first results. Selection makes no additional model call. Legacy results without notes or context
 produce an empty Fast queue; never fall back to all claims. Full has no automatic
 narrowing and retains its independent-assessment/comparison behavior.
 
@@ -63,7 +70,11 @@ evaluation and training-data review. Neither mode approves training labels.
 
 Read `second-pass.md` and `second-pass.json`: first/final decisions, confirmed,
 corrected, reopened, unresolved and not-checked outcomes, objections and receipts.
-`findings.json` is the native final report. First responses remain in `first-pass/`;
+`findings.json` is the native final report. `finding-groups.md/json` proposes
+causal families while retaining every claim and its conditions; it does not
+deduplicate native decisions or certify unique vulnerability totals. First-pass
+annotations remain explicitly historical after a later proof change.
+First responses remain in `first-pass/`;
 original completed attempts are unchanged. A failed check retains the original
 decision marked not checked. Native state is authoritative after admission.
 

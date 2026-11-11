@@ -383,12 +383,15 @@ assessment={'decision':'needs_review','confidence':'medium','summary':'Interpret
 if LOOKUP:assessment['evidence'].append({'path':'context.reviewdata','start_line':1,'end_line':1})
 proposals=[]
 if PROPOSAL:
+    assessment['claim_context']={'root':cite,'property':'input_interpretation','applicability':'local_contract',
+        'basis':'The assigned implementation calls the custom interpreter.', 'kind':'security_contract',
+        'impact':'unresolved','conditions':'The exact interpretation contract remains unread.'}
     proposals=[{'key':'interpreter','capability':'dynamic_code_execution','cwes':['CWE-94'],
         'question':'Does the interpreter execute caller-controlled instructions?',
         'mechanism':'Input is passed to the custom interpreter.','consequence':'Execution if untrusted text is interpreted.',
         'priority':'value','anchor':cite,
         'evidence':[cite],'assessment':assessment}]
-rows=[dict(assessment,review_id=q['review_id'],evidence=[{'path':q['path'],'start_line':q['line'],'end_line':q['line']}]) for q in packet['native_questions']]
+rows=[dict(assessment,review_id=q['review_id'],evidence=[{'path':q['path'],'start_line':q['line'],'end_line':q['line']},*([cite] if PROPOSAL else [])]) for q in packet['native_questions']]
 print(json.dumps({'draft':{'results':rows,
     'proposals':proposals,'coverage':[{**{k:w[k] for k in ('path','start_line','end_line')},'status':'examined','summary':'Inspected the assigned source.'} for w in windows]}}))
 """.replace("PROPOSAL", repr(proposal))
@@ -459,6 +462,11 @@ print(json.dumps({'draft':{'results':rows,
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(options["fast"]["selected"][0]["review_id"],report["decision_records"][0]["response"]["review_id"])
         self.assertNotIn("followup", report["decision_records"][0]["response"])
+        self.assertNotIn("claim_context", report["decision_records"][0]["response"])
+        grouped=json.loads((self.base / "worker/finding-groups.json").read_text())
+        member=grouped["groups"][0]["members"][0]
+        self.assertEqual(member["review_id"],report["decision_records"][0]["response"]["review_id"])
+        self.assertEqual(member["first_pass_context"]["root"]["path"],"Widget.razor")
         self.assertEqual(len(report["decision_records"]), 1)
         admitted = json.loads(
             (self.base / "worker/source-review/admission-result.json").read_text()

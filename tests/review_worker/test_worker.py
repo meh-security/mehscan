@@ -562,6 +562,26 @@ print(json.dumps(value))
         self.native("investigate","review-bundles",str(self.root),"--inventory",str(self.inventory),
             "--review-ids",",".join(self.ids),"--output",str(self.run))
 
+    def test_positive_context_selects_fast_without_a_followup_nomination(self):
+        metadata={"root":{"path":"app.js","start_line":1,"end_line":1},"property":"input_interpretation",
+            "applicability":"unresolved","basis":"The callable is shown but registration needs checking.",
+            "kind":"application_path","impact":"conditional","conditions":"An untrusted caller reaches the operation."}
+        original=',\n        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}'
+        self.assertIn(original,self.reviewer.read_text())
+        self.reviewer.write_text(self.reviewer.read_text().replace(original,',\n        "claim_context":'+json.dumps(metadata)))
+        self.second_pass_provider(objection=False)
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["checked"],1)
+        self.assertEqual(summary["selection"]["selected"][0]["selection_source"],"positive_proof_signal")
+        report=json.loads((output/"findings.json").read_text())
+        self.assertNotIn("claim_context",report["decision_records"][0]["response"])
+        grouped=json.loads((output/"finding-groups.json").read_text())
+        self.assertEqual(grouped["claim_count"],len(report["decision_records"]))
+        self.assertEqual(grouped["groups"][0]["members"][0]["first_pass_context"]["root"],metadata["root"])
+
     def test_auto_fast_rebundles_only_selected_claim_and_preserves_capped_sibling(self):
         self.prepare_auto_followup_claims()
         self.second_pass_provider()

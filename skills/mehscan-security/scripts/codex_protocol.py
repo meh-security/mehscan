@@ -241,6 +241,17 @@ def build_schema(task, *, bound_handles=True):
                 "distinct_from_review":{"type":"string","maxLength":500},
                 "evidence":object_schema({"path":text,"start_line":integer,"end_line":integer})})}})
         if task.get("followup_selection") and task.get("review_role", "investigator") == "investigator":
+            entry["properties"]["claim_context"] = {"anyOf":[object_schema({
+                "root":object_schema({"path":text,"start_line":integer,"end_line":integer}),
+                "property":{"type":"string","enum":["authorization","output_encoding","input_interpretation",
+                    "session_lifecycle","sensitive_storage","transport","resource_bounds","configuration","workflow_state","other"]},
+                "applicability":{"type":"string","enum":["active","supported_optional","local_contract","dormant","unresolved"]},
+                "basis":{"type":"string","minLength":1,"maxLength":300},
+                "kind":{"type":"string","enum":["application_path","local_unsafe_construction","security_contract","configuration_exposure"]},
+                "impact":{"type":"string","enum":["source_supported","conditional","unresolved"]},
+                "conditions":{"type":"string","minLength":1,"maxLength":500}
+            }), {"type":"null"}]}
+            entry["required"].append("claim_context")
             entry["properties"]["followup"] = {"anyOf":[object_schema({
                 "reason":{"type":"string", "enum":["conflicting_evidence", "control_applicability",
                     "missing_local_evidence", "external_required", "human_required"]},

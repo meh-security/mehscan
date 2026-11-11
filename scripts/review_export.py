@@ -85,6 +85,12 @@ def export_review(plan, directory, record, reviewer, execute, env):
     if source.is_file():
         write(directory/"source-review.json",json.loads(source.read_text(encoding="utf-8")))
         files.append("source-review.json")
+    # Advisory presentation only; native findings/SARIF remain authoritative.
+    for name in ("finding-groups.json", "finding-groups.md"):
+        source = directory / "review" / name
+        if source.is_file():
+            (directory / name).write_bytes(source.read_bytes())
+            files.append(name)
     run = directory / "review/run"
     native_export = "rendered"
     if not run.exists():

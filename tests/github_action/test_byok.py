@@ -118,6 +118,8 @@ else:
     entry = entry.get("anyOf",[entry])[0]
     if "followup" in entry.get("properties",{}):
         for row in draft["results"]:row["followup"]=None
+    if "claim_context" in entry.get("properties",{}):
+        for row in draft["results"]:row["claim_context"]=None
     response={"action":"final","research":[],"draft":draft,"working_chain":"Inspected supplied source."}
     if "proposals" not in shape:response.update(progress=[],routing=[])
     pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps(response))
@@ -168,6 +170,9 @@ else:
         self.assertEqual(usage["reported_token_sums"]["input_tokens"],200)
         self.assertIsNone(usage["cost"])
         manifest=json.loads((directory / "artifacts.json").read_text())
+        self.assertTrue({"finding-groups.json","finding-groups.md"} <= {r["path"] for r in manifest["files"]})
+        groups=json.loads((directory / "finding-groups.json").read_text())
+        self.assertEqual(groups["claim_count"],1)
         import hashlib
         for entry in manifest["files"]:
             self.assertEqual(hashlib.sha256((directory / entry["path"]).read_bytes()).hexdigest(),entry["sha256"])

@@ -488,6 +488,8 @@ Use `ready`, `active`, `sampled`, `waiting`, and `deprioritized` as working
 statuses, not verdicts. Rank by plausible impact, evidence strength, component
 exposure, and observed yield; volume alone does not set priority. Keep the
 table small by grouping related IDs, usually by capability/CWE and component.
+These are workload lanes, not causal finding groups or shared verdicts; reported
+families require the cited failed control/repair point.
 Show a sample count as a sample, not as completion of the lane. Mark a
 follow-up `waiting` when the needed fact is outside the available source and
 move to another ready lane. A newly found lead can enter the queue without
@@ -564,6 +566,14 @@ read from that question; do not reload all findings or enumerate every threat
 category. Use the remaining authorized research/time budget, without an
 automatic fresh allowance. If more work is warranted, queue its exact question
 and expected deciding evidence within the user's overall scope and budget.
+Use the compact proposed_scopes in review-options.json when they identify a
+relevant cited lead; they are suggestions, not a complete threat inventory.
+Choose one named flow at a time. Record the invariant/question, actual cited
+facts and established controls, one next deciding relationship, remaining
+allowance and stop condition. A useful bounded question can span a producer,
+authority check and consumer across files; it does not require rebuilding a
+global map. Ask for additional scope only when the authorized allowance cannot
+cover the next consequential question, not before an already requested follow-up.
 
 Stop when the sequence is supported, blocked by an applicable control or limited
 by a named unavailable fact/budget. Keep that result with existing coverage and

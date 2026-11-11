@@ -154,7 +154,8 @@ to inspect review progress and separate mechanical completion from review qualit
 For an explicitly requested Fast or Full second pass, read
 [second-pass review](references/second-pass-review.md). It audits completed claims,
 retains the first results and separates model-reviewed labels from training approval.
-Fast automatically selects a bounded queue from first-pass scheduling notes;
+Fast automatically selects a bounded queue from first-pass scheduling notes and
+explicit applicability/impact proof signals;
 Full audits every claim in the chosen scope. For an
 identified flow whose threat coverage needs enrichment, use
 [scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
@@ -162,6 +163,11 @@ within the authorized scope and budget.
 
 Finish the requested first-pass scope and present findings, grouped root causes,
 pending facts, coverage limits and recorded usage before proposing more work.
+Use `finding-groups.md` for proposed causal families with every member's
+conditions. Raw issue labels and proposed group counts are different measures;
+neither is an independently adjudicated vulnerability total. The
+[repair/applicability contract](references/runtime-review.md#repair-point-applicability-and-impact)
+defines the first-pass annotations and preserves conditional library findings.
 Start with the worker's compact `review-options.md` for the proposed Fast queue
 and reasons; read JSON only for needed selection details. If no follow-up was
 requested and more work is useful, recommend a concrete next scope and ask

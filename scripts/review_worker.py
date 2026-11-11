@@ -1167,6 +1167,8 @@ def run_locked(args):
                     material.extend({**fact,"origin_package_id":prepared["plan_id"],"origin_review_id":None,
                         "origin_kind":"source_assignment","source_assignment_id":assignment["id"]} for fact in facts)
                 job.save(results=material,source_assignment_ids=sorted(assignment_ids),
+                    claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
+                    claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
                     followups=[n for n in prepared.get("followups", []) if n["review_id"] in task["review_ids"]])
                 return job.complete(draft)
         if job.state.get("unknown_provider_calls"):
@@ -1599,10 +1601,14 @@ def run_locked(args):
                         elif value.get("review_checks"):
                             raise ValueError("review checks require a second-pass audit role")
                         nominations = second_pass.take_followups(value["draft"])
+                        context_errors = []
+                        claim_contexts = second_pass.take_claim_contexts(value["draft"], errors=context_errors)
+                        if claim_contexts and (task["kind"] != "native_bundle" or role != "investigator"):
+                            raise ValueError("only first-pass assessments supply claim context")
                         if nominations and (task["kind"] != "native_bundle" or role != "investigator"):
                             raise ValueError("only first-pass assessments nominate follow-ups")
                         if role == "investigator":
-                            job.save(followups=nominations)
+                            job.save(followups=nominations, claim_contexts=claim_contexts, claim_context_errors=context_errors)
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
                         if any(item["reason"] in {"external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
                                and decisions.get(item["review_id"]) != "needs_review" for item in [*reported_routing, *routing]):
@@ -1640,9 +1646,13 @@ def run_locked(args):
                     if role in ("research", "collection"):
                         raise ValueError("research tasks return scoped knowledge, not verdicts")
                     nominations = second_pass.take_followups(value)
+                    context_errors = []
+                    claim_contexts = second_pass.take_claim_contexts(value, errors=context_errors)
+                    if claim_contexts and (task["kind"] != "native_bundle" or role != "investigator"):
+                        raise ValueError("only first-pass assessments supply claim context")
                     if nominations and (task["kind"] != "native_bundle" or role != "investigator"):
                         raise ValueError("only first-pass assessments nominate follow-ups")
-                    job.save(followups=nominations)
+                    job.save(followups=nominations, claim_contexts=claim_contexts, claim_context_errors=context_errors)
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
                 queries = value["research"]
                 if role == "second_pass_fast" and frame["fast_phase"] == "audit":
@@ -2326,10 +2336,12 @@ def run_locked(args):
                     outside_scope = []
                     scoped_responses = {}
                     all_rows = {r["review_id"]:r for b in baselines.values() for r in b["results"]}
+                    claim_contexts = second_pass.claim_contexts(first_directory or output, all_rows)
                     selection = second_pass.select_followups(list(all_rows.values()),
-                        second_pass.followup_notes(first_directory or output, all_rows), scope=second_scope, max_claims=fast_max_claims)
+                        second_pass.followup_notes(first_directory or output, all_rows), scope=second_scope,
+                        max_claims=fast_max_claims, contexts=claim_contexts)
                     second_pass.write_options(output, selection, list(all_rows.values()), write,
-                        source_directory=first_directory or output)
+                        source_directory=first_directory or output, contexts=claim_contexts)
                     narrowed = second_mode == "fast" or second_scope != second_pass.review_scope("all")
                     if narrowed:
                         scope_ids = ([r["review_id"] for r in selection["selected"]] if second_mode == "fast" else
@@ -2602,12 +2614,18 @@ def run_locked(args):
             record["partial_export_error"] = type(error).__name__
     if record["status"] in ("admitted", "source_validated"):
         try:
+            report = read(output / "findings.json") if (output / "findings.json").is_file() else {}
+            rows = [r["response"] for r in report.get("decision_records", [])]
+            claim_contexts = second_pass.claim_contexts(first_directory or output, [r["review_id"] for r in rows])
+            annotation_errors = [error for _,job,_ in second_pass.original_jobs(first_directory or output)
+                if job.get("binding", {}).get("role", "investigator") == "investigator"
+                for error in job.get("claim_context_errors", []) if error["review_id"] in {r["review_id"] for r in rows}]
             if not (output / "review-options.json").exists():
-                report = read(output / "findings.json") if (output / "findings.json").is_file() else {}
-                rows = [r["response"] for r in report.get("decision_records", [])]
                 options = second_pass.select_followups(rows, second_pass.followup_notes(output, [r["review_id"] for r in rows]),
-                    max_claims=fast_max_claims)
-                second_pass.write_options(output, options, rows, write)
+                    max_claims=fast_max_claims, contexts=claim_contexts)
+                second_pass.write_options(output, options, rows, write, contexts=claim_contexts)
+            second_pass.write_groups(output, rows, claim_contexts, write, annotation_errors=annotation_errors)
+            record["finding_groups"] = "finding-groups.json"
             record["review_options"] = "review-options.json"
         except (OSError, ValueError, KeyError, TypeError) as error:
             # Advisory export cannot undo already admitted decisions.

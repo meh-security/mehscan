@@ -22,6 +22,142 @@ FOLLOWUP_REASONS = ("conflicting_evidence", "control_applicability", "missing_lo
                     "external_required", "human_required")
 FAST_MAX_CLAIMS = 20
 FAST_FRACTION = 0.25
+CLAIM_PROPERTIES = ("authorization", "output_encoding", "input_interpretation", "session_lifecycle",
+                    "sensitive_storage", "transport", "resource_bounds", "configuration", "workflow_state", "other")
+
+
+def validate_claim_context(value):
+    fields = {"root", "property", "applicability", "basis", "kind", "impact", "conditions"}
+    if (not isinstance(value, dict) or set(value) != fields
+            or value["property"] not in CLAIM_PROPERTIES
+            or value["applicability"] not in ("active", "supported_optional", "local_contract", "dormant", "unresolved")
+            or value["kind"] not in ("application_path", "local_unsafe_construction", "security_contract", "configuration_exposure")
+            or value["impact"] not in ("source_supported", "conditional", "unresolved")
+            or any(not isinstance(value[k], str) or not value[k].strip() or len(value[k]) > limit
+                   for k,limit in (("basis",300), ("conditions",500)))):
+        raise ValueError("invalid claim applicability/repair context")
+    root = value["root"]
+    if (not isinstance(root,dict) or set(root) != {"path", "start_line", "end_line"}
+            or not isinstance(root["path"],str) or not root["path"].strip()
+            or any(type(root[k]) is not int for k in ("start_line","end_line"))
+            or not 1 <= root["start_line"] <= root["end_line"] or root["end_line"]-root["start_line"] >= 20):
+        raise ValueError("claim root needs a small cited source locator")
+    return copy.deepcopy(value)
+
+
+def take_claim_contexts(draft, *, errors=None):
+    """Strip advisory metadata; its root must already be native-validated evidence."""
+    values = []
+    for row in draft.get("results", []):
+        value = row.pop("claim_context", None)
+        if value is None:
+            continue
+        try:
+            value = validate_claim_context(value)
+            root = value["root"]
+            if not any(e.get("path") == root["path"] and e["start_line"] <= root["start_line"]
+                       <= root["end_line"] <= e["end_line"] for e in row.get("evidence", [])):
+                raise ValueError("claim root must be included in this assessment's inspected evidence")
+        except (ValueError,KeyError,TypeError) as error:
+            if errors is None:
+                raise
+            errors.append({"review_id":row["review_id"],"reason":str(error)})
+            continue  # Invalid presentation metadata cannot discard source-valid review work.
+        values.append({"review_id":row["review_id"], **value})
+    return values
+
+
+def claim_contexts(directory, ids):
+    selected, values = set(ids), {}
+    for _, job, _ in original_jobs(directory):
+        if job.get("binding", {}).get("role", "investigator") != "investigator":
+            continue
+        bound = set(job.get("binding", {}).get("review_ids", []))
+        for row in job.get("claim_contexts", []):
+            rid = row.get("review_id")
+            if rid not in bound:
+                raise ValueError("claim context is outside its original job")
+            if rid not in selected:
+                continue
+            value = {"review_id":rid, **validate_claim_context({k:v for k,v in row.items() if k != "review_id"})}
+            if rid in values and values[rid] != value:
+                raise ValueError("conflicting first-pass claim contexts")
+            values[rid] = value
+    return list(values.values())
+
+
+def repair_key(value):
+    root = value["root"]
+    return (root["path"], root["start_line"], value["property"])
+
+
+def group_claims(rows, contexts):
+    """Proposed causal families; never discard claims or propagate a verdict."""
+    by_id = {r["review_id"]:r for r in contexts}
+    groups = {}
+    for row in rows:
+        rid, decision = row["review_id"], row["decision"]
+        metadata = by_id.get(rid)
+        key = ("cited", *repair_key(metadata), decision) if metadata else ("ungrouped", rid)
+        identity = "claim-group-" + context.digest(key)[:16]
+        group = groups.setdefault(identity, {"group_id":identity, "decision":decision,
+            "basis":"cited_repair_locator" if metadata else "no_context_singleton",
+            "root":metadata["root"] if metadata else None,
+            "property":metadata["property"] if metadata else None, "members":[]})
+        group["members"].append({"review_id":rid, "summary":row["summary"],
+            "severity":(row.get("diagnosis") or {}).get("severity", "unknown"),
+            "first_pass_context":metadata, "checks":row.get("checks", [])})
+    return {"schema_version":"1", "authority":"proposed_presentation_groups",
+        "context_stage":"first_pass; conditions may need revision after a later verdict/proof change",
+        "claim_labels":dict(Counter(r["decision"] for r in rows)),
+        "claim_count":len(rows), "group_count":len(groups), "groups":list(groups.values()),
+        "limits":"Shared locator/property proposes a family, not a certified unique defect. Caller, branch and repair variants remain separate members. Missing context remains singleton; grouping changes no native decision."}
+
+
+def write_groups(output, rows, contexts, write, *, annotation_errors=()):
+    output = Path(output)
+    grouped = group_claims(rows, contexts)
+    grouped["annotation_errors"] = list(annotation_errors)
+    write(output / "finding-groups.json", grouped)
+    lines = ["# Proposed finding families", "", grouped["limits"], "",
+        f"{grouped['claim_count']} claims in {grouped['group_count']} proposed groups. Raw labels: " +
+        ", ".join(f"{k}={v}" for k,v in sorted(grouped["claim_labels"].items())) + ".", "",
+        "Applicability and conditions below are first-pass annotations; inspect subsequent repairs before reusing them.", ""]
+    if annotation_errors:
+        lines += [f"{len(annotation_errors)} invalid annotations were omitted; native review results were retained. See annotation_errors in the JSON and bound job checkpoints.", ""]
+    for group in grouped["groups"]:
+        root = group["root"]
+        label = f"{root['path']}:{root['start_line']} ({group['property']})" if root else "No shared repair locator"
+        lines += [f"## {group['group_id']} — {group['decision']} — {label}", ""]
+        for member in group["members"]:
+            metadata = member["first_pass_context"]
+            summary = " ".join(member["summary"].split())
+            lines.append(f"- `{member['review_id']}`: {summary}")
+            if metadata:
+                lines.append("  " + " ".join(f"{metadata['applicability']}; {metadata['kind']}; impact={metadata['impact']}. "
+                    f"{metadata['basis']} Conditions: {metadata['conditions']}".split()))
+        lines.append("")
+    (output / "finding-groups.md").write_text("\n".join(lines),encoding="utf-8")
+    return grouped
+
+
+def positive_audit_notes(row, value):
+    """Proof-specific questions, not automatic false-positive labels."""
+    if row["decision"] != "issue":
+        return []
+    root = value["root"]
+    where = f"{root['path']}:{root['start_line']}"
+    questions = []
+    if value["kind"] == "application_path" and value["applicability"] in ("dormant", "unresolved", "local_contract"):
+        questions.append(("conflicting_evidence" if value["applicability"] == "dormant" else "control_applicability",
+            f"At {where}, does a compatible registered caller reach the claimed protected effect?"))
+    if value["impact"] == "unresolved":
+        questions.append(("conflicting_evidence", f"At {where}, which inspected actor-to-effect chain supports the claimed impact?"))
+    if ((row.get("diagnosis") or {}).get("severity") in ("high", "critical")
+            and (value["kind"] == "local_unsafe_construction" or
+                 value["impact"] == "conditional" and value["applicability"] in ("supported_optional", "local_contract"))):
+        questions.append(("control_applicability", f"At {where}, do the stated reaching conditions support this severity and protected effect?"))
+    return [{"review_id":row["review_id"], "reason":reason, "question":question[:300]} for reason,question in questions]
 
 
 def take_followups(draft):
@@ -59,8 +195,8 @@ def followup_notes(directory, ids):
     return notes
 
 
-def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"), max_claims=FAST_MAX_CLAIMS):
-    """No inference: rank exact first-pass nominations and expose all omissions."""
+def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"), max_claims=FAST_MAX_CLAIMS, contexts=()):
+    """No inference: rank nominations/proof signals and expose all omissions."""
     if type(max_claims) is not int or not 1 <= max_claims <= FAST_MAX_CLAIMS:
         raise ValueError("Fast claim cap must be between 1 and 20; use Full for a broader audit")
     by_id = {r["review_id"]:r for r in rows}
@@ -77,6 +213,13 @@ def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"
             "followup":{k:note[k] for k in ("reason", "question")}}]})[0]
         if validated not in nominated.setdefault(rid, []):
             nominated[rid].append(validated)
+    metadata = {r["review_id"]:r for r in contexts}
+    if not set(metadata) <= set(by_id):
+        raise ValueError("claim context is outside the selected first pass")
+    audit = {}
+    for rid,value in metadata.items():
+        validate_claim_context({k:v for k,v in value.items() if k != "review_id"})
+        audit[rid] = positive_audit_notes(by_id[rid], value)
     eligible = [r for r in rows if r["decision"] in scope]
     cap = min(max_claims, math.ceil(len(eligible) * FAST_FRACTION))
     ranks = {reason:i for i,reason in enumerate(FOLLOWUP_REASONS[:3])}
@@ -86,6 +229,7 @@ def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"
         rid = row["review_id"]
         own = nominated.get(rid, [])
         actionable = [n for n in own if n["reason"] in ranks]
+        actionable += [n for n in audit.get(rid, []) if n not in actionable]
         unavailable = [n for n in own if n["reason"] not in ranks]
         if row["decision"] not in scope:
             reason = "outside_verdict_scope"
@@ -94,17 +238,28 @@ def select_followups(rows, notes, *, scope=("issue", "not_issue", "needs_review"
         elif not actionable:
             reason = "no_actionable_nomination"
         else:
-            candidates.append({"review_id":rid, "decision":row["decision"], "reasons":actionable})
+            candidates.append({"review_id":rid, "decision":row["decision"], "reasons":actionable,
+                "selection_source":"positive_proof_signal" if audit.get(rid) else "first_pass_nomination"})
             continue
         excluded.append({"review_id":rid, "reason":reason, "notes":own})
-    candidates.sort(key=lambda n:(min(ranks[r["reason"]] for r in n["reasons"]),
+    candidates.sort(key=lambda n:(0 if n["selection_source"] == "positive_proof_signal" else 1,
+        min(ranks[r["reason"]] for r in n["reasons"]),
         severity.get((by_id[n["review_id"]].get("diagnosis") or {}).get("severity", "unknown"), 3), n["review_id"]))
-    chosen, deferred = candidates[:cap], candidates[cap:]
-    return {"schema_version":"1", "policy":"first-pass-nominations/v1", "authority":"scheduling_hypotheses",
+    chosen, deferred, seen = [], [], set()
+    for candidate in candidates:
+        rid = candidate["review_id"]
+        key = repair_key(metadata[rid]) if rid in metadata else ("claim",rid)
+        reason = "shared_repair_point" if key in seen else "fast_cap"
+        if key not in seen and len(chosen) < cap:
+            chosen.append(candidate)
+            seen.add(key)
+        else:
+            deferred.append({**candidate,"reason":reason})
+    return {"schema_version":"1", "policy":"first-pass-evidence/v2", "authority":"scheduling_hypotheses",
         "scope":list(scope), "first_pass_claims":len(rows), "eligible_claims":len(eligible),
         "claim_labels":dict(Counter(r["decision"] for r in rows)),
         "limits":{"max_claims":max_claims, "fraction":FAST_FRACTION, "effective_cap":cap},
-        "selected":chosen, "deferred":[{**n,"reason":"fast_cap"} for n in deferred],
+        "selected":chosen, "deferred":deferred,
         "excluded":excluded, "full_claims":len(eligible), "selection_model_calls":0}
 
 
@@ -125,16 +280,21 @@ def source_review_context(directory):
     return None
 
 
-def write_options(output, plan, rows, write, *, source_directory=None):
+def write_options(output, plan, rows, write, *, source_directory=None, contexts=()):
     """Prepare a reviewable first-pass checkpoint, without starting another stage."""
     output = Path(output)
     source = source_review_context(source_directory or output)
     leads = [lead for r in rows for lead in (r.get("investigation") or {}).get("reviewer_origin_leads", [])]
+    grouped = write_groups(output, rows, contexts, write)
     options = {"schema_version":"1", "first_pass":plan["claim_labels"], "fast":plan,
         "review_origin":source["origin"] if source else "native_claims",
+        "grouping":{"report":"finding-groups.json", "claims":len(rows), "proposed_groups":grouped["group_count"],
+                    "authority":"presentation_hypotheses; native verdicts unchanged"},
         "full":{"claims":plan["full_claims"], "automatic_narrowing":False},
         "threat_model":{"execution":"agent_scoped_source_review", "leads":leads,
                         "source_context":source, "requires_claims":False,
+                        "proposed_scopes":[{"lead":lead,"stop":"Settle this named invariant or retain its exact unavailable fact within remaining authorized budget."} for lead in leads[:3]],
+                        "additional_leads":max(0,len(leads)-3), "automatic_execution":False,
                         "scope":"One identified flow/invariant and its deciding cross-file relationships."},
         "authorization":"Present results and next-step choices after the requested first pass. Execute only already requested follow-ups without another confirmation."}
     write(output / "review-options.json", options)
@@ -143,17 +303,18 @@ def write_options(output, plan, rows, write, *, source_directory=None):
             "AI source review with scanner questions." if source else "Selected claim review."),
         "Claim labels: " + (", ".join(f"{k}={v}" for k,v in sorted(plan["claim_labels"].items())) or "none") + ".",
         "These counts are review decisions, not independent defect or ground-truth counts.", "",
-        f"- Fast: {len(plan['selected'])} automatically selected claims; {len(plan['deferred'])} actionable nominations deferred by the cap.",
+        f"- Fast: {len(plan['selected'])} automatically selected claims; {len(plan['deferred'])} actionable claims deferred by cap/shared repair point.",
         f"- Full: audit all {plan['full_claims']} claims in the requested verdict scope, including dismissals and pending claims when scope is all.",
         "- Scoped threat review: examine an identified flow/invariant using cited facts and targeted cross-file reads.", "",
-        "Fast uses existing first-pass nominations; selection makes no model call. Unselected claims retain their first results.",
+        "Fast uses first-pass nominations and explicit positive proof signals; selection makes no model call. Unselected claims retain their first results.",
+        "Proposed causal families and per-caller applicability/impact conditions: finding-groups.md. Group counts are not unique vulnerability totals.",
         "First-pass coverage limits and unresolved facts remain in the findings/source reports.", "", "## Proposed Fast queue", ""]
     for item in plan["selected"]:
         for note in item["reasons"]:
             question = " ".join(note["question"].split())
             lines.append(f"- `{item['review_id']}` ({note['reason']}): {question}")
     if not plan["selected"]:
-        lines.append("No actionable Fast nominations. Do not broaden Fast to all claims as a fallback.")
+        lines.append("No actionable Fast nominations or positive proof signals. Do not broaden Fast to all claims as a fallback.")
     if source:
         lines += ["", f"AI source coverage: {source['completed_assignments']}/{source['assignments']} assignments completed; "
                   f"{source['ai_discovered_claims']} source-discovered claims.",
