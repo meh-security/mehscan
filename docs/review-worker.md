@@ -71,6 +71,13 @@ native model call. Source-stage usage contributes to total input, cache and outp
 accounting. A source-stage interruption before handoff is retained for diagnosis;
 automatic continuation of those interrupted source conversations is not yet supported.
 
+Use `--reuse-source-results PRIOR_OUTPUT` to reuse completed source assignments
+from a separate attempt after matching source, native selection, policy, provider
+and allowance bindings and revalidating their cited proofs. Reused results retain
+their prior provenance and usage; they are not new reviews under current guidance.
+Assignments overlapping interrupted or unknown-usage work remain deferred, with
+no automatic replacement call. Partial conversations are not resumed by this option.
+
 The bundled reviewer reports coverage using controller-owned `window_ref` identities
 from `research.coverage_windows`. The adapter supplies their original paths and
 ranges before native admission. Lookup ranges belong in evidence; they cannot be

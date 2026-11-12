@@ -1169,8 +1169,10 @@ def run_locked(args):
                     facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
                         "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
                         "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
-                    material.extend({**fact,"origin_package_id":prepared["plan_id"],"origin_review_id":None,
-                        "origin_kind":"source_assignment","source_assignment_id":assignment["id"]} for fact in facts)
+                    for index, fact in enumerate(facts):
+                        reuse = result.get("reuse") if index < len(result["facts"]) else None
+                        material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
+                            "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
                 job.save(results=material,source_assignment_ids=sorted(assignment_ids),
                     claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
                     claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
@@ -2667,6 +2669,7 @@ def main():
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
+    parser.add_argument("--reuse-source-results", help="reuse matching completed source assignments from a prior attempt; defer overlapping incomplete work")
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
     parser.add_argument("--expert-workers", type=int, default=1)
     parser.add_argument("--expert-review-ids", help="route these exact IDs' bounded bundles directly to the expert")

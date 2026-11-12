@@ -29,6 +29,45 @@ def validate_assignment_scope(plan):
         raise ValueError("queryable-only source cannot enter default assignment windows")
 
 
+def reused_source_result(assignment, previous, plan):
+    """Reconstruct and validate the completed result's source-backed envelope."""
+    if previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
+        raise ValueError("only completed source assignments with known usage are reusable")
+    if previous.get("assignment_id") != assignment["id"]:
+        raise ValueError("reused source assignment identity changed")
+    draft = previous["draft"]
+    expected = {(w["path"], w["start_line"], w["end_line"]) for w in assignment["windows"]}
+    coverage = [(w["path"], w["start_line"], w["end_line"]) for w in draft["coverage"]]
+    ids = [row["review_id"] for row in draft["results"]]
+    if len(coverage) != len(set(coverage)) or set(coverage) != expected or len(ids) != len(set(ids)) or set(ids) != set(assignment["review_ids"]):
+        raise ValueError("reused source coverage or assessment membership changed")
+    visible = [*assignment["windows"], *previous["inspected"]]
+    def citations(assessment):
+        result = []
+        for cite in assessment.get("evidence", []):
+            lines = {w["start_line"] + i: line for w in visible if w["path"] == cite["path"]
+                     for i, line in enumerate(w["text"].split("\n"))}
+            first, last = cite["start_line"], cite["end_line"]
+            if not 1 <= first <= last or last - first >= 400 or any(n not in lines for n in range(first, last + 1)):
+                raise ValueError("reused assessment cites unseen source")
+            result.append({**{k: cite[k] for k in ("path", "start_line", "end_line")},
+                           "quote": "\n".join(lines[n] for n in range(first, last + 1))})
+        return result
+    proofs = [c for row in draft["results"] for c in citations(row)]
+    proposals = []
+    for proposal in draft["proposals"]:
+        proofs.extend(citations(proposal["assessment"]))
+        proposals.append({k: v for k, v in proposal.items() if k != "assessment"} | {
+            "assignment_id": assignment["id"],
+            "anchor": citations({"evidence": [proposal["anchor"]]})[0],
+            "evidence": citations({"evidence": proposal["evidence"]}),
+        })
+    if proofs != previous["proofs"] or proposals != previous["proposals"]:
+        raise ValueError("reused source proof or proposal differs from completed draft")
+    return {"plan": plan, "inspected": previous["inspected"], "proposals": proposals,
+            "assessment_evidence": proofs}
+
+
 def retain_training_turns(summary, output):
     """Copy observed source turns without rewriting inputs or replaying models."""
     stage = Path(summary).parent
@@ -70,6 +109,8 @@ def retain_training_turns(summary, output):
 def run(args, legacy, worker):
     root = Path(args.source_root).resolve(strict=True)
     output = worker.outside(args.output, root, False)
+    if getattr(args, "reuse_source_results", None) and (getattr(args, "first_pass", None) or args.phase != "all" or getattr(args, "resume_from", None)):
+        raise ValueError("source-result reuse requires a fresh all-phase source attempt")
     if getattr(args, "first_pass", None) or args.phase != "all":
         return legacy(args)
     if getattr(args, "validate_only", False) or getattr(args, "source_profile", None):
@@ -278,10 +319,77 @@ def run(args, legacy, worker):
     api = context.research_api(skill)
     guidance = context.guidance_catalog(skill)
     source_metrics = []
+    reuse_jobs = {}
+    partial_windows = []
+    reuse_path = getattr(args, "reuse_source_results", None)
+    if reuse_path:
+        prior = worker.outside(reuse_path, root)
+        if prior.resolve() == output.resolve():
+            raise ValueError("source reuse requires a separate prior attempt")
+        prior_stage = prior / "source-review"
+        prior_plan = worker.read(prior_stage / "plan.json")
+        for key in ("source_fingerprint", "inventory_fingerprint", "selected_review_ids"):
+            if prior_plan[key] != plan[key]:
+                raise ValueError("prior source plan binding differs from current plan")
+        prior_assignments = {a["id"]: a for a in prior_plan["assignments"]}
+        for directory in (prior_stage / "jobs").iterdir():
+            if not directory.is_dir():
+                continue
+            old = prior_assignments.get(directory.name)
+            if old is None:
+                raise ValueError("prior source job is absent from its plan")
+            result_path = directory / "result.json"
+            previous = worker.read(result_path) if result_path.is_file() else None
+            if previous is None or previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
+                partial_windows.extend(old["windows"])
+                continue
+            frame = worker.read(directory / "0-input.json")
+            prior_work = worker.read(Path(frame["work_package"]))["payload"]
+            prior_runtime = prior_work["runtime"]
+            prior_context = worker.read(directory / "context.json")
+            prior_windows = [{key: window[key] for key in ("path", "start_line", "end_line", "source_sha256", "text")}
+                             for window in prior_context["primary"]["windows"]]
+            if (prior_work["policy"] != payload["policy"] or
+                any(prior_runtime.get(key) != runtime.get(key) for key in ("provider", "policy", "worker_protocol", "limits")) or
+                frame.get("review_ids") != old["review_ids"] or prior_context["work"]["policy"] != prior_work["policy"] or
+                prior_context["work"]["runtime"] != prior_runtime or prior_context["work"]["review_ids"] != old["review_ids"] or
+                prior_context.get("source_assignment_id") != old["id"] or prior_windows != old["windows"]):
+                raise ValueError("prior source reviewer policy, provider or membership differs")
+            reuse_jobs[directory.name] = (old, previous, result_path)
+
+    def overlaps_partial(assignment):
+        return any(w["path"] == p["path"] and w["start_line"] <= p["end_line"] and p["start_line"] <= w["end_line"]
+                   for w in assignment["windows"] for p in partial_windows)
 
     def assignment_job(assignment):
         directory = stage / "jobs" / assignment["id"]
         directory.mkdir(parents=True)
+        prior_job = reuse_jobs.get(assignment["id"])
+        if overlaps_partial(assignment):
+            result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
+                      "error": "PriorPartialSource", "detail": "Prior incomplete source work overlaps; no automatic replacement call.",
+                      "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
+                      "prior_source_attempt": str(prior)}
+            worker.write(directory / "result.json", result)
+            return result
+        if prior_job and prior_job[0] == assignment:
+            _, previous, prior_result = prior_job
+            try:
+                admission = reused_source_result(assignment, previous, plan)
+                worker.write(directory / "admission.json", admission)
+                native(["investigate", "source-review-check", root, "--inventory", inventory,
+                        "--input", directory / "admission.json"])
+                result = {**previous, "calls": 0, "queries": 0, "bytes": 0, "seconds": 0,
+                          "unknown_provider_calls": 0,
+                          "reuse": {"prior_result": str(prior_result), "prior_plan_id": prior_plan["plan_id"], "prior_calls": previous["calls"],
+                                    "note": "Previously completed assessment; not a new review under current guidance. Prior usage remains in the original attempt."}}
+            except Exception as error:
+                result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
+                          "error": type(error).__name__, "detail": str(error), "queries": 0, "bytes": 0,
+                          "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
+                          "prior_source_attempt": str(prior)}
+            worker.write(directory / "result.json", result)
+            return result
         known = [
             {**entries[i], **native_cards.get(i, {})} for i in assignment["review_ids"]
         ]
@@ -927,6 +1035,12 @@ def run(args, legacy, worker):
         f"{counts['deferred']} deferred ranges. Source coverage is distinct from vulnerability verdicts; "
         "no findings does not establish source safety. See source-review.json for range records."
     )
+    reused_count = sum("reuse" in result for result in successful)
+    if reused_count:
+        manifest["scope"].append(
+            f"{reused_count} completed source assignments reuse prior assessments; "
+            "these are not new reviews under current guidance. Prior usage remains in the original attempt."
+        )
     worker.write(bundles / "manifest.json", manifest)
     summary = {
         "schema_version": "1",
@@ -939,6 +1053,7 @@ def run(args, legacy, worker):
         "elapsed_ms": round((time.monotonic() - started_run) * 1000),
         "assignments": len(plan["assignments"]),
         "completed_assignments": len(successful),
+        "reused_assignments": reused_count,
         "limitations": plan["limitations"],
         "coverage": coverage,
         "results": results,

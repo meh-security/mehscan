@@ -15,6 +15,34 @@ SKILL = ROOT / "skills/mehscan-security"
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(SKILL / "scripts"))
 
+import review_source
+
+
+class SourceReuse(unittest.TestCase):
+    def test_reconstructed_source_proof_rejects_membership_and_quote_changes(self):
+        window = {"path":"app.js", "start_line":1, "end_line":1,
+                  "source_sha256":"hash", "text":"safe();"}
+        assignment = {"id":"one", "windows":[window], "review_ids":["id"]}
+        cite = {"path":"app.js", "start_line":1, "end_line":1}
+        result = {"assignment_id":"one", "status":"complete", "unknown_provider_calls":0,
+                  "inspected":[], "proofs":[{**cite, "quote":"safe();"}], "proposals":[],
+                  "draft":{"coverage":[{**cite, "status":"examined"}],
+                           "results":[{"review_id":"id", "evidence":[cite]}], "proposals":[]}}
+        admission = review_source.reused_source_result(assignment, result, {"plan_id":"current"})
+        self.assertEqual(admission["assessment_evidence"], result["proofs"])
+        changed = copy.deepcopy(result)
+        changed["proofs"][0]["quote"] = "invented"
+        with self.assertRaises(ValueError):
+            review_source.reused_source_result(assignment, changed, {})
+        changed = copy.deepcopy(result)
+        changed["draft"]["results"][0]["review_id"] = "other"
+        with self.assertRaises(ValueError):
+            review_source.reused_source_result(assignment, changed, {})
+        changed = copy.deepcopy(result)
+        changed["unknown_provider_calls"] = 1
+        with self.assertRaises(ValueError):
+            review_source.reused_source_result(assignment, changed, {})
+
 
 class SourceReview(unittest.TestCase):
     def test_supporting_source_is_queryable_but_native_questions_are_not_reviewed(self):
