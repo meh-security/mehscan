@@ -948,7 +948,7 @@ else:
 
     def tiered_provider(self, calls, conflict=False, reject_unverified=False):
         original = worker.execute
-        def execute(command, cwd, env, timeout, payload=None):
+        def execute(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 packet = json.loads(Path(task["evidence_packet"]).read_text())
@@ -974,7 +974,7 @@ else:
                 path.write_text(json.dumps(receipt))
                 try:
                     with self.assertRaises(worker.CommandFailure) as rejected:
-                        original(command, cwd, env, timeout, payload)
+                        original(command, cwd, env, timeout, payload, **kwargs)
                     self.assertIn("two independent", rejected.exception.stderr)
                 finally:
                     path.write_bytes(saved)
@@ -988,23 +988,23 @@ else:
                 path.write_text(json.dumps(receipt))
                 try:
                     with self.assertRaises(worker.CommandFailure):
-                        original(command, cwd, env, timeout, payload)
+                        original(command, cwd, env, timeout, payload, **kwargs)
                 finally:
                     path.write_bytes(saved)
                     stage.write_bytes(stage_bytes)
-            return original(command, cwd, env, timeout, payload)
+            return original(command, cwd, env, timeout, payload, **kwargs)
         return execute
 
     def quality_provider(self, calls, reopen=False, interrupt_qa=False):
         base = self.tiered_provider(calls, conflict=True)
         original, qa_turns, interrupted = worker.execute, [], []
         qa_id = worker.context.digest(["native_bundle", self.ids, "expert", "final_qa"])
-        def execute(command, cwd, env, timeout, payload=None):
+        def execute(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 role = task["review_role"]
                 if role in ("investigator", "verification"):
-                    return base(command, cwd, env, timeout, payload)
+                    return base(command, cwd, env, timeout, payload, **kwargs)
                 calls.append((task["profile"], role))
                 packet = json.loads(Path(task["evidence_packet"]).read_text())
                 self.assertIn(role, [s for row in packet["contract"]["sources"] for s in row["sections"]])
@@ -1029,7 +1029,7 @@ else:
                     self.assertEqual(packet["stage_context"]["baseline"]["results"][0]["decision"], "issue")
                     self.assertIn("related_reviews", packet["stage_context"])
                 return response
-            result = original(command, cwd, env, timeout, payload)
+            result = original(command, cwd, env, timeout, payload, **kwargs)
             if interrupt_qa and command[1:3] == ["investigate", "review-bundle-finalize"] and not interrupted:
                 target = Path(command[command.index("--output") + 1])
                 if target.name == qa_id + ".json":
@@ -1041,9 +1041,9 @@ else:
     def test_stage_exhaustion_reuses_source_and_expert_resolution_is_terminal(self):
         args = self.configure_tiered(run_calls=6, quality=True, research_rounds=1)
         original, calls = worker.execute, []
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command, cwd, env, timeout, payload)
+                return original(command, cwd, env, timeout, payload, **kwargs)
             task = json.loads(payload)
             role = task["review_role"]
             calls.append((task["profile"], role))
@@ -1116,9 +1116,9 @@ else:
         args.source_collector_profile = "routine"
         original, calls, interrupted = worker.execute, [], []
         first_caller, caller_lock, research_started = [], threading.Lock(), threading.Event()
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command,cwd,env,timeout,payload)
+                return original(command,cwd,env,timeout,payload,**kwargs)
             task = json.loads(payload)
             packet = json.loads(Path(task["evidence_packet"]).read_text())
             role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
@@ -1200,9 +1200,9 @@ else:
     def test_native_citation_feedback_repairs_once_without_an_expert_or_budget_reset(self):
         args = self.configure_tiered(run_calls=3,quality=True,research_rounds=2,audit_percent=0,final_qa=False)
         original, calls = worker.execute, []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command,cwd,env,timeout,payload)
+                return original(command,cwd,env,timeout,payload,**kwargs)
             task = json.loads(payload)
             calls.append(task["profile"])
             if len(calls) == 1:
@@ -1241,7 +1241,7 @@ else:
             research_bytes=262144,workers=1,query_workers=1,expert_command=None,expert_workers=1,
             expert_review_ids=None,resume_from=None,source_collector_profile=None)
         original, calls, interrupted = worker.execute, [], []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if command == [sys.executable,str(self.reviewer)]:
                 task=json.loads(payload);calls.append(task)
                 if len(calls)>1:
@@ -1271,7 +1271,7 @@ else:
             if interrupt and not interrupted and command[1:3]==["investigate","review-bundle-finalize"]:
                 interrupted.append(True)
                 raise worker.CommandFailure(1,"injected interruption after saving the candidate")
-            return original(command,cwd,env,timeout,payload)
+            return original(command,cwd,env,timeout,payload,**kwargs)
         with patch.object(worker,"execute",side_effect=provider):result=worker.run(args)
         if interrupt:
             self.assertEqual(result["status"],"incomplete",result)
@@ -1317,7 +1317,7 @@ else:
     def run_revalidation_case(self, reopening=False, interrupt=False):
         args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)
         original, calls, interrupted = worker.execute, [], []
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 role, fresh = task["review_role"], task.get("assessment_cycle") == "revalidation"
@@ -1360,9 +1360,9 @@ else:
                     else:detail["reason"] = "new_source_verdict" if reopening else "quality_reopening"
                     path.write_text(json.dumps(receipt))
                     try:
-                        with self.assertRaises(worker.CommandFailure):original(command,cwd,env,timeout,payload)
+                        with self.assertRaises(worker.CommandFailure):original(command,cwd,env,timeout,payload,**kwargs)
                     finally:path.write_bytes(saved)
-            result = original(command,cwd,env,timeout,payload)
+            result = original(command,cwd,env,timeout,payload,**kwargs)
             if interrupt and not interrupted and command[1:3] == ["investigate","review-bundle-finalize"]:
                 expected = worker.context.digest(["native_bundle",self.ids,"expert","verification","revalidation"])
                 if Path(command[command.index("--output")+1]).name == expected+".json":
@@ -1397,7 +1397,7 @@ else:
     def test_pending_only_quality_skips_qa_without_fabricating_an_approval(self):
         args = self.configure_tiered(run_calls=4, quality=True)
         original, calls = worker.execute, []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload); calls.append(task["review_role"])
                 return {"draft":{"results":[{"review_id":identity,"decision":"needs_review","confidence":"low",
@@ -1405,7 +1405,7 @@ else:
                     "checks":["Confirm the external authority."],"blockers":[],
                     "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for identity in self.ids]},
                     "progress":[],"working_chain":"","routing":[{"review_id":identity,"reason":"external_required"} for identity in self.ids]}
-            return original(command,cwd,env,timeout,payload)
+            return original(command,cwd,env,timeout,payload,**kwargs)
         with patch.object(worker,"execute",side_effect=provider):result = worker.run(args)
         self.assertEqual(result["status"],"admitted",result)
         self.assertEqual(calls,["investigator"])
@@ -1419,7 +1419,7 @@ else:
         calls = []
         provider = self.quality_provider(calls)
         original = worker.execute
-        def guarded(command, cwd, env, timeout, payload=None):
+        def guarded(command, cwd, env, timeout, payload=None, **kwargs):
             if command[1:3] == ["state", "record"]:
                 path = Path(command[command.index("--review-execution") + 1])
                 saved = path.read_bytes()
@@ -1435,7 +1435,7 @@ else:
                     path.write_text(json.dumps(receipt))
                     try:
                         with self.assertRaises(worker.CommandFailure) as rejected:
-                            original(command, cwd, env, timeout, payload)
+                            original(command, cwd, env, timeout, payload, **kwargs)
                         self.assertIn(diagnostic, rejected.exception.stderr)
                     finally:
                         path.write_bytes(saved)
@@ -1981,6 +1981,17 @@ print(json.dumps({'results':results}))
                 worker.execute([sys.executable, str(script)], self.base, dict(os.environ), 1)
         finally:
             worker._cancelled = False
+
+    def test_command_output_limit_allows_larger_trusted_native_json(self):
+        script = self.base / "large_output.py"
+        script.write_text('import json; print(json.dumps({"value": "x" * 64}))\n')
+        command = [sys.executable, str(script)]
+        self.assertEqual(worker.REVIEWER_OUTPUT_LIMIT, 8 * 1024 * 1024)
+        self.assertEqual(worker.NATIVE_OUTPUT_LIMIT, 64 * 1024 * 1024)
+        with self.assertRaisesRegex(ValueError, "bounded intake"):
+            worker.execute(command, self.base, dict(os.environ), 5, output_limit=32)
+        self.assertEqual(worker.execute(command, self.base, dict(os.environ), 5,
+                                        output_limit=128), {"value": "x" * 64})
 
     def test_pending_native_answers_are_registered_without_resolving_security(self):
         text = self.reviewer.read_text()

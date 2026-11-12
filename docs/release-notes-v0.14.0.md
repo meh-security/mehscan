@@ -10,5 +10,6 @@
 
 - Improve Python ORM query coverage and reduce duplicate candidates.
 - Preserve valid review results when optional grouping annotations are invalid.
+- Fix AI review startup on large repositories.
 
 [Full changelog](https://github.com/meh-security/mehscan/compare/v0.13.0...v0.14.0)

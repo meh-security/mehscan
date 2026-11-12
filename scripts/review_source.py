@@ -123,7 +123,8 @@ def run(args, legacy, worker):
             raise ValueError("trusted scanner changed during source review")
         try:
             return worker.execute(
-                [str(scanner), *map(str, arguments)], stage, env, timeout
+                [str(scanner), *map(str, arguments)], stage, env, timeout,
+                output_limit=worker.NATIVE_OUTPUT_LIMIT,
             )
         except worker.CommandFailure as error:
             error.step = "native/" + "/".join(map(str, arguments[:2]))

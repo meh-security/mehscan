@@ -834,7 +834,11 @@ def definition_result(discovery, read_source, find_references=None):
     return result
 
 
-def execute(command, cwd, env, timeout, payload=None):
+REVIEWER_OUTPUT_LIMIT = 8 * 1024 * 1024
+NATIVE_OUTPUT_LIMIT = 64 * 1024 * 1024
+
+
+def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_OUTPUT_LIMIT):
     if _cancelled:
         raise InterruptedError("review cancelled")
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
@@ -853,8 +857,8 @@ def execute(command, cwd, env, timeout, payload=None):
                 supplied = True
         if process.returncode:
             raise CommandFailure(process.returncode, diagnostic)
-        if len(output) > 8 * 1024 * 1024:
-            raise ValueError("reviewer output exceeds bounded intake")
+        if len(output) > output_limit:
+            raise ValueError("command output exceeds bounded intake")
         return json.loads(output) if output.strip() else None
     finally:
         if process.poll() is None:
@@ -1028,7 +1032,8 @@ def run_locked(args):
             trace_subject = {"draft":draft_name, "job_id":draft_name.removeprefix("draft-")}
         execution_trace.emit("native_started", operation=operation, **trace_subject)
         try:
-            value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout)
+            value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout,
+                            output_limit=NATIVE_OUTPUT_LIMIT)
             execution_trace.emit("native_completed", operation=operation, **trace_subject)
         except Exception as error:
             execution_trace.emit("native_failed", operation=operation, error=type(error).__name__, **trace_subject)
