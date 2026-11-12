@@ -34,7 +34,7 @@ The composite Action accepts:
 | `scan-root` | Authorized directory within that checkout; default `.`. Parent traversal and external symlinks are rejected. |
 | `pull-request` | Explicit PR number on `workflow_dispatch`; automatic PR events supply their number. |
 | `base`, `target` | Both required for a manual release delta; mutually exclusive with `pull-request`. |
-| `review-mode` | `native` (default), `value` or `comprehensive`. The latter prepare active review work; `provider-config` additionally invokes the bundled worker. Value requires a bounded source selection before provider review. |
+| `review-mode` | `native` (default), `value` or `comprehensive`. The latter prepare active review work; `provider-config` additionally invokes the bundled worker. Value requires a bound coverage plan before provider review. |
 | `skill-root` | Trusted security skill outside target source; defaults to the pinned Action package. |
 | `provider-contract` | Optional descriptor for a separate trusted handoff consumer. Mutually exclusive with `provider-config`. |
 | `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and invoke the bundled worker; Value can stop at its zero-AI selection checkpoint. |
@@ -190,13 +190,16 @@ as explicit unreviewed deferrals with reasons; Comprehensive uses conservative
 eligibility and keeps every admitted ID, with inventory-bound exclusions recorded
 separately. Deferrals and exclusions are not safe verdicts. Manual Value plan
 templates retain their all-ID default unless selection is requested explicitly.
-These native priority hints do not choose the source operations for Value.
+These native admission hints do not choose additional AI-discovery operations.
 The default Value worker `all` phase requires `--source-selection FILE`; without
 it, invocation prepares `source-review/plan.json`, `selection-options.json` and
 `checkpoint.json` with `selection_required` and zero AI calls. The Action does
 not automatically make this host-agent choice. Use the
 [bounded selection workflow](review-worker.md#bounded-value-selection) to inspect
-source and supply the selected operations to the worker. A selection checkpoint
+source, retain the native Value queue and supply additional discovery operations
+and a native assignment ranking to the worker. Discovery selection does not remove
+native candidates. The local worker starts with an adjustable 80/20 native/discovery
+allocation within a shared budget; the Action inputs do not set that mix. A selection checkpoint
 ends the Action's active claim without marking the source reviewed. A follow-up
 must create a fresh claim/work package for the same unchanged inventory, then
 use the bound selection with a new worker output directory. Comprehensive explicitly requests the

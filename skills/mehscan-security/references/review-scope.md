@@ -2,24 +2,32 @@
 
 Use when choosing repository scope or reconsidering a noisy review family.
 The scanner supplies initial priority hints; source research can change priority.
-Apply the user's scope and bounded operation selection before this admission
-policy. It describes intended relationship membership; a current
+Apply the user's requested scope before this admission policy. Bounded AI
+discovery selection does not remove native Value candidates. This policy
+describes intended relationship membership; a current
 queue entry is not proof that it deserves its assigned priority.
 
 ## Two public modes
 
-Value is the default bounded review of 4–6 named operations selected from actual
-source bodies and native leads in the same queue. Comprehensive is explicitly
-requested systematic review of the broader admitted scope. It retains completed
+Value is the default review of admitted native candidates plus bounded additional
+AI discovery. A compact application-aware plan prioritizes both within a shared
+budget, initially allocating 80% to native review and 20% to additional discovery.
+The mix is adjustable; unused allocation can transfer when a queue finishes.
+Explicit AI-only/native-only requests limit scheduling to that queue; they do not
+automatically enable the other queue when work finishes.
+Choose additional discovery operations from actual source bodies, normally a few
+named operations. Native candidates need no second discovery-selection gate.
+Comprehensive is explicitly requested systematic review of the broader admitted
+scope. It retains completed
 Value work within matching scope and adds admitted relationships. A Changed,
 component or category filter constrains either mode; it is not a third mode.
 Cheap source orientation happens in the host agent's context and does not require
 a separate full provider pass. See [review planning](review-planning.md) for the
-selection checkpoint, operation ownership and shared limits.
+planning checkpoint, operation ownership and shared limits.
 
 | Queue | Include when | Rationale |
 | --- | --- | --- |
-| **Value** | Within selected operations, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the bounded first review budget on useful findings and conclusions. Useful medium issues can qualify; actor, effect, conditions and source evidence decide priority, rather than severity alone. |
+| **Value** | Keep in-scope native Value candidates. For additional AI discovery, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the bounded first review budget on useful findings and conclusions. Useful medium issues can qualify; actor, effect, conditions and source evidence decide priority, rather than severity alone. Budget deferral is not a policy exclusion. |
 | **Comprehensive** | Across the broader admitted scope, a plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next deciding fact. | Extend Value's matched-scope work systematically while excluding source-established ordinary reads. Raw native profile hints can differ; they do not discard completed Value facts or verdicts. |
 | **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
 
@@ -73,7 +81,7 @@ are also supporting context rather than executable-deserialization reviews.
 Neither mechanism removes raw scan evidence or certifies adjacent properties.
 
 Record **Value**, **Comprehensive-only**, or **excluded**, and the reason, when
-ranking an admitted relationship after the scope gate. Supporting sources/guards/Resource facts
+ranking an admitted relationship after the user-scope gate. Supporting sources/guards/Resource facts
 own no independent review. A relationship follows its concrete sink and evidence;
 its CWE name alone does not settle the bucket. Preserve the inventory's exact ID
 and initial selection hint when planning reviews.

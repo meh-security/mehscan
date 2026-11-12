@@ -280,11 +280,11 @@ def run_native(root, unit, opts, inputs, bridge, ledger):
     uid=unit["id"];directory=root/"treatment/native"/uid
     command=worker.read(opts["command"]);original=worker.execute;provider=bridge.runtime["provider"]
     offer=ledger.offer(uid)
-    def execute(argv,cwd,env,timeout,payload=None):
+    def execute(argv,cwd,env,timeout,payload=None,**kwargs):
         if argv!=command:
             seconds=min(timeout,ledger.seconds(uid))
             if seconds<=0: raise ValueError("hybrid native deadline reached")
-            return original(argv,cwd,env,seconds,payload)
+            return original(argv,cwd,env,seconds,payload,**kwargs)
         ledger.observe_bytes(uid,_native_bytes(directory))
         task=json.loads(payload)
         return _metrics_call(ledger,uid,task,lambda frame,seconds:original(argv,cwd,env,seconds,json.dumps(frame)),cwd,timeout,provider)

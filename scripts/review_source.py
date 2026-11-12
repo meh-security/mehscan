@@ -9,6 +9,7 @@ import time
 
 import review_context as context
 import review_budget
+import review_scheduler
 
 
 def selection_options(plan):
@@ -17,7 +18,7 @@ def selection_options(plan):
             "assignments": [{"assignment_id": a["id"], "review_ids": a["review_ids"],
                              "windows": [{k: w[k] for k in ("path", "start_line", "end_line", "source_sha256")}
                                          for w in a["windows"]]} for a in plan["assignments"]],
-            "next_step": "Inspect source and choose one to six named operations, normally four to six. Supply --source-selection FILE in a new output attempt with source_plan_id, source_fingerprint, ranked assignment_ids and matching assignments containing assignment_id, owner_path, start_line, end_line, question, protected_effect, area, reason, next_deciding_fact and signal (kind and original-source evidence ranges)."}
+            "next_step": "Inspect the application and native queue, then supply --source-selection FILE in a new output attempt. Keep all native Value candidates; choose zero to six additional source-backed AI operations using assignment_ids and matching assignments. Include source_plan_id and source_fingerprint. Optional native_assignment_ids ranks every native investigation without removing members. --native-share sets the initial native/AI call allocation (default 80)."}
 
 
 def validate_selection(selection, plan):
@@ -25,9 +26,9 @@ def validate_selection(selection, plan):
             (("source_plan_id", "plan_id"), ("source_fingerprint", "source_fingerprint"))):
         raise ValueError("source selection differs from the current native plan or source fingerprint")
     selected = selection.get("assignment_ids")
-    if (not isinstance(selected, list) or not 1 <= len(selected) <= 6 or
+    if (not isinstance(selected, list) or not 0 <= len(selected) <= 6 or
             any(not isinstance(i, str) for i in selected) or len(set(selected)) != len(selected)):
-        raise ValueError("source selection requires one to six distinct ranked assignments")
+        raise ValueError("source selection requires zero to six distinct ranked AI assignments")
     rows = selection.get("assignments")
     if not isinstance(rows, list) or len(rows) != len(selected):
         raise ValueError("source selection requires one named operation per assignment")
@@ -68,6 +69,19 @@ def validate_selection(selection, plan):
     if set(focus) != set(selected):
         raise ValueError("source operation membership differs from ranked selection")
     return selected, focus
+
+
+def investigation_queues(plan, native_ids, ai_ids, selection, native_share):
+    """Rank investigations without changing native admission or sharing verdicts."""
+    native_ids = set(native_ids)
+    native = [a["id"] for a in plan["assignments"] if native_ids.intersection(a["review_ids"])]
+    ranked = selection.get("native_assignment_ids", native)
+    if (not isinstance(ranked, list) or any(not isinstance(i, str) for i in ranked)
+            or len(ranked) != len(set(ranked)) or set(ranked) != set(native)):
+        raise ValueError("native ranking must preserve every admitted native investigation")
+    # An AI focus on a native investigation is resolved there, without a second job.
+    ai = [i for i in ai_ids if i not in native] if native_share else list(ai_ids)
+    return {"native": ranked if native_share else [], "ai": ai if native_share < 100 else []}
 
 
 def scoped_native_ids(ids, entries, focus):
@@ -344,27 +358,41 @@ def run(args, legacy, worker):
     selected = [a["id"] for a in plan["assignments"]]
     focus = {}
     budget_path = None
+    queues = None
+    native_share = getattr(args, "native_share", 80)
     if selection_path:
         selection = worker.read(worker.outside(selection_path, root))
         selected, focus = validate_selection(selection, plan)
         worker.write(stage / "selection.json", selection)
         worker.write(stage / "selection-plan.json", plan)
-        entries = worker.read(inventory / "inventory.json")["entries"]
-        ids = scoped_native_ids(ids, entries, focus)
-        plan = source_plan(ids)
-        validate_assignment_scope(plan)
-        # Assignment identities derive from original windows, independently of
-        # native question membership. Recheck ranges after native regeneration.
-        validate_selection({**selection, "source_plan_id": plan["plan_id"]}, plan)
-        worker.write(stage / "plan.json", plan)
+        admitted = [rid for rid in ids if rid not in excluded_native_questions(plan)]
+        queues = investigation_queues(plan, admitted, selected, selection, native_share)
+        if native_share == 0:
+            # Explicit AI-only review does not turn nearby native candidates into tasks.
+            ids = []
+            plan = source_plan(ids)
+            validate_assignment_scope(plan)
+            validate_selection({**selection, "source_plan_id": plan["plan_id"]}, plan)
+            worker.write(stage / "plan.json", plan)
+        selected = queues["native"] + queues["ai"]
         budget_path = stage / "budget.json"
-        review_budget.initialize(budget_path)
+        review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
+            input_limit=getattr(args, "input_token_budget", 1_500_000),
+            admission_seconds=getattr(args, "admission_seconds", 1200), native_percent=native_share)
         args._review_budget = str(budget_path)
     selected_set = set(selected)
     by_id = {a["id"]: a for a in plan["assignments"]}
     excluded_ids = excluded_native_questions(plan)
-    selected_native_ids = {rid for a in plan["assignments"] if a["id"] in selected_set for rid in a["review_ids"]}
-    ids = [rid for rid in ids if rid not in excluded_ids and rid in selected_native_ids]
+    # Native admission is independent of the additional AI discovery selection.
+    ids = [rid for rid in ids if rid not in excluded_ids]
+    selected_native_ids = set(ids)
+    lane_by_id = {identity: lane for lane, members in (queues or {}).items() for identity in members}
+    if queues is not None:
+        worker.write(stage / "schedule.json", {
+            "native_share": native_share, "native_candidate_ids": ids,
+            "native_candidate_count": len(ids), "native_investigations": queues["native"],
+            "ai_investigations": queues["ai"], "coverage_plan": selection.get("coverage_plan"),
+            "authority": "Prioritization and shared context only; every native candidate retains its own decision. Unfinished work remains unreviewed."})
     entries = {
         e["review_id"]: e for e in worker.read(inventory / "inventory.json")["entries"]
     }
@@ -562,11 +590,15 @@ def run(args, legacy, worker):
                 for w in assignment["windows"]
             )
         ]
-        if focus:
+        if assignment["id"] in focus:
             packet["review_focus"] = focus[assignment["id"]]
             packet["contract"] += ("\nInvestigate the named operation and question in review_focus. Assigned windows provide context; "
                 "coverage applies only to that question, and unrelated functions were not audited. Treat the focus as a question, "
                 "not evidence or an expected answer. Inspect deciding relationships within the existing allowance.")
+        if assignment["review_ids"]:
+            packet["contract"] += ("\nAssess every assigned native question independently, preserving its actor, operands, guards and effect. "
+                "Any additional review_focus supplements these questions and cannot remove them. Shared source is not a shared verdict. "
+                "Do not audit unrelated functions merely because they occur in the supplied context windows.")
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
             [package["package_id"], "source_review", assignment["id"], str(output)]
@@ -689,7 +721,17 @@ def run(args, legacy, worker):
                 }
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
-                lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
+                lease = review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None
+                if budget_path:
+                    budget_state = review_budget.snapshot(budget_path)
+                    remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"]
+                    lane_state = budget_state.get("lanes", {}).get(lane_by_id.get(assignment["id"]))
+                    if lane_state:
+                        remaining_calls = min(remaining_calls, lane_state["allocation"] - lane_state["reserved_calls"])
+                    frame["research"]["rounds_remaining"] = min(frame["research"]["rounds_remaining"], remaining_calls)
+                    if remaining_calls == 0:
+                        frame["research"]["queries_remaining"] = 0
+                    worker.write(directory / (str(turn) + "-input.json"), frame)
                 calls += 1
                 unknown_calls += 1
                 response = worker.execute_provider(command, directory, env, remaining(), frame,
@@ -963,11 +1005,17 @@ def run(args, legacy, worker):
                 "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
                for a in plan["assignments"] if a["id"] not in selected_set]
     worker.write(stage / "progress.json", results)
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(assignment_job, by_id[identity]) for identity in selected]
-        for future in as_completed(futures):
-            results.append(future.result())
+    if queues is not None:
+        jobs = {lane: [by_id[identity] for identity in members] for lane, members in queues.items()}
+        for assignment, result in review_scheduler.run(jobs, assignment_job, workers=args.workers, budget_path=budget_path):
+            results.append(result)
             worker.write(stage / "progress.json", results)
+    else:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = [pool.submit(assignment_job, by_id[identity]) for identity in selected]
+            for future in as_completed(futures):
+                results.append(future.result())
+                worker.write(stage / "progress.json", results)
     if native(["state", "work", *common, *runtime_options]) != package:
         raise ValueError("source work changed before native handoff")
     successful = [r for r in results if r["status"] == "complete"]
@@ -1195,6 +1243,9 @@ def run(args, legacy, worker):
         "reused_assignments": reused_count,
         "selected_assignment_ids": selected,
         "selected_assignments": len(selected),
+        "schedule": "schedule.json" if queues is not None else None,
+        "native_admitted_ids": ids,
+        "native_unreviewed_ids": sorted(set(ids) - set(assessments)),
         "budget_path": str(budget_path) if budget_path else None,
         "limitations": plan["limitations"],
         "coverage": coverage,

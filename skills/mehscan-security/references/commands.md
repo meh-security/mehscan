@@ -7,16 +7,23 @@ For execution diagnosis, use [the trace guide](execution-trace.md).
 
 The Python controller's default Value `all` phase first prepares a zero-AI
 `selection_required` checkpoint under `source-review/`. Use bounded source
-orientation in the host agent to choose 4–6 named operations, then invoke it with
+orientation in the host agent to plan native review and choose a few additional
+AI-discovery operations, then invoke it with
 `--source-selection FILE`; [the worker guide](../../../docs/review-worker.md#bounded-value-selection)
-defines the bound JSON. The controller accepts 1–6 assignments and validates their
-source bindings, owner ranges and cited signals. `--selection policy` supplies
-native priority hints; it does not replace source selection. Explicit native
+defines the bound JSON. The controller accepts 0–6 discovery assignments and
+validates their source bindings, owner ranges and cited signals. Optional
+`native_assignment_ids` ranks all native assignments without dropping any from
+the requested native/mixed queue. `--selection policy` supplies native admission
+hints; additional discovery does not filter the admitted native queue. Explicit native
 exact-ID work retains `--phase native` without this source-selection gate.
-Value shares 40 managed provider calls, a 1.5M observed input-token target with
+`--native-share 80` starts a mixed review with 80% native / 20% additional discovery;
+1–99 configures other mixes and transfers unused allocation when a queue finishes.
+`0` explicitly requests AI-only discovery; `100` native-only work. These endpoints
+do not enable the other queue automatically. Value defaults to 40 managed provider calls, a 1.5M observed input-token target with
 100k reserved per in-flight call, and 20 minutes before new calls stop. Active
 work can drain. These targets do not meter host-agent orientation or guarantee
-exact token/currency or elapsed totals.
+exact token/currency or elapsed totals. Set `--max-calls`, `--input-token-budget`
+and `--admission-seconds` before starting to configure the shared allowance.
 
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
@@ -168,7 +175,8 @@ reasons, while unknown modes, provenance and consequential relationships stay
 admitted. Its `excluded_review_ids` are inventory-bound scope, not deferred
 mandatory work or safe decisions. Comprehensive must finish every admitted ID
 within its explicit scope, retaining completed Value work where the scope matches.
-The native profile hints can differ; source selection is a separate scope gate.
+The native profile hints can differ; source selection binds additional discovery
+and prioritization without removing admitted native Value members.
 Without this option native Value templates select all; Comprehensive eligibility
 still applies. This native template behavior does not bypass the default Value
 controller's source-selection checkpoint.

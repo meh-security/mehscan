@@ -1,8 +1,9 @@
 # Plan a repository review
 
 Repository AI review investigates original-source operations within the requested
-scope, including operations without native candidates. Value selects a bounded
-set; an explicit Comprehensive request covers the broader admitted scope.
+scope, including operations without native candidates. Value retains its admitted
+native queue and selects bounded additional AI discovery; an explicit Comprehensive
+request covers the broader admitted scope.
 Use [source review](source-review.md) for those
 assignments. Known native questions guide the investigation; they do not define
 all security relationships in a file. Reuse the current context to assess new
@@ -35,11 +36,12 @@ refilling a slot when its independent package completes. Keep a shared producer
 and its caller/effect checks in one job; split different producers or controls.
 Do not launch one reviewer per occurrence. Queue status is ready, running,
 completed, or blocked on a named fact; unstarted IDs remain unreviewed.
-Default to Value review: use bounded surface context and actual source bodies to
-select 4–6 named operations. Mix relevant access, interpretation, disclosure and
-state relationships according to their actual effects. A native occurrence count
-or filename is not a coverage target or a selection rule. Stronger mechanisms,
-clearly justified fixes and promising consequential gaps can qualify.
+Default to Value review: keep all in-scope native Value candidates accounted for,
+and use bounded surface context and actual source bodies to select a few additional
+AI-discovery operations. Mix relevant access, interpretation, disclosure and state
+relationships according to their effects. A native candidate does not need another
+AI-discovery signal to receive review. Count candidates separately from investigation
+groups; shared source or control research never transfers a verdict automatically.
 Ordinary directory setup/listing, normal data decoding, syntax-only unsafe/extern,
 nonsecurity hashes, positive controls and generic log formatting are supporting
 facts, not standalone jobs in either mode. Comprehensive needs a plausible
@@ -75,8 +77,9 @@ creation so finalized IDs are not selected again. For a large queue, use short s
 before materializing their requests. Materialize a selected chunk with
 `mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1`.
 Keep scoped ID selections per source root and inventory fingerprint; do not mix
-IDs from different roots. Saved preassessment selections can narrow the automatic
-Value list. Preserve each omitted ID's reason/reopening condition; these are scope
+IDs from different roots. Saved preassessment selections can order the automatic
+Value list; an additional-discovery operation limit must not remove native Value
+IDs. Preserve each policy-deferred ID's reason/reopening condition; these are scope
 decisions, not `not_issue` verdicts. Comprehensive includes the scoped Value IDs
 and its additional admitted questions. An unresolved shared authority contract is
 one named blocker with affected IDs, not repeated independent research jobs.
@@ -84,7 +87,7 @@ Keep `RUN/review-plan.md` current with included, conditional, and deferred
 scope, progress, and a short ranked queue of review lanes. Read it first when
 resuming; choose a ready in-scope lane, then select exact IDs with small
 previews. In auto mode, continue
-the next chunk within the authorized selected operations without waiting for a
+the next prioritized chunk within the authorized review scope without waiting for a
 new instruction; report the
 queue and progress so the user can redirect or stop. Re-rank when source checks
 change the picture. For one supplied review or a quick candidate scan, skip
@@ -104,6 +107,13 @@ may drain and completed decisions are finalized. These are dispatch/usage target
 not performance, exact token or currency guarantees. Missing provider usage stays
 unknown. Discovery performed through this controller consumes the same allowance;
 host-agent orientation is ordinary bounded agent work outside this ledger.
+Use `--native-share 80` as the initial native/AI-discovery allocation. Any integer
+from 1 to 99 sets a mixed allocation; when a queue finishes or is empty, its unused
+capacity transfers to the other queue. `0` explicitly requests AI-only discovery;
+`100` explicitly requests native-only work. These endpoints do not auto-enable
+the other queue. The mix is a scheduling preference, separate from Value admission
+and the overall budget. Configure the shared allowance with `--max-calls`,
+`--input-token-budget` and `--admission-seconds` before starting the attempt.
 Do not reset the allowance by splitting operations, starting another phase or
 turning unknown helpers into a larger backlog. Explicitly requested Fast/Full or
 scoped threat follow-up remains within the authorized overall scope and budget.
@@ -400,7 +410,10 @@ For the default Value `all` phase, first run the controller without a source
 selection. It prepares `source-review/plan.json`, `selection-options.json` and
 `checkpoint.json`, reports `selection_required` and makes no provider calls.
 Use this source index, native leads, route/job registration and bounded source
-reads in the host agent's current context to rank actual operations. Keep this
+reads in the host agent's current context to prepare a compact coverage plan:
+application actors and protected effects, candidate concentrations, existing
+assignment groups, important source areas with little native coverage, and known
+scan/source limitations. Rank investigations, not raw occurrence counts. Keep this
 orientation to a few focused steps, typically 4–8 reads or navigation actions;
 this is not another provider budget or an architecture-map phase. If native
 results are sparse or absent, inspect a few relevant entrypoints, parser bodies
@@ -410,8 +423,15 @@ Do not preload whole models, templates or SQL schemas, build an exhaustive
 question backlog, or run
 separate full screening, review and threat passes.
 
-Choose 4–6 operations by default (the controller accepts 1–6 for narrower tasks).
-Each must name an inspected owner body/range, the actor or input, protected
+Retain all native Value assignments in the mixed review queue; their supplied
+questions need no additional discovery-selection gate. The native assignment
+groups organize existing source/context; they are not proof of shared controls.
+Rank groups by the deciding native question, useful consequence, source evidence
+and expected shared research, keeping every ID's caller and effect conditions.
+With many independent groups, the budget may leave a visible unfinished queue.
+
+Choose a few additional AI-discovery operations, normally 4–6 (the controller
+accepts 0–6, including an empty discovery queue). Each must name an inspected owner body/range, the actor or input, protected
 effect, deciding question, next deciding fact and selection reason. Its signal
 must cite an actual source-body clue: a native candidate, clear unsafe
 construction, supported local security-contract defect, or actor/effect
@@ -419,7 +439,7 @@ relationship with a suspected control mismatch. A question about an unread
 helper alone does not qualify. Use source evidence to choose security controls,
 parser implementations and other dedicated bodies as needed;
 do not simply take the first six files or highest native severity labels.
-Put native and source-discovered leads in this same queue. An unknown helper
+Keep native and additional-discovery work in one coverage plan. An unknown helper
 without a concrete consequential relationship stays a coverage note.
 Assign one owner per operation and preserve shared cited facts for its related
 questions. A model, view, template or SQL definition enters through the deciding
@@ -428,8 +448,10 @@ lookup rather than an independent duplicate investigation.
 Save the ranked selection outside the source root and pass it as
 `--source-selection FILE`. Copy the exact source fingerprint, plan ID and
 assignment IDs from the checkpoint; the [worker guide](../../../docs/review-worker.md#bounded-value-selection)
-defines the JSON fields. Complete the selected operations and report the remainder
-as unselected coverage. Comprehensive explicitly extends that scope using existing
+defines the JSON fields. An optional native assignment ranking must retain every
+native assignment in the admitted queue. Select a mix and budget for this attempt;
+report finished and unfinished native work separately from additional source
+coverage. Comprehensive explicitly extends admission using existing
 facts and results; it does not rerun settled relationships.
 
 Inspect main manifests, entrypoints, route registration, and a few relevant
@@ -454,7 +476,7 @@ category or question scope:
 
 | Mode | Scope |
 | --- | --- |
-| **Value (default)** | Investigate 4–6 named, source-backed operations, selected for useful consequential questions. Useful medium issues and dangerous constructions with unresolved exposure can qualify. Record the selected actor, effect, deciding question, bounded source and deferred coverage. |
+| **Value (default)** | Preserve admitted native candidates and investigate bounded additional source-backed operations. Plan both against the application and prioritize within the chosen mix and budget. Useful medium issues and dangerous constructions with unresolved exposure can qualify. Report candidate completion, source coverage and budget-deferred work separately. |
 | **Comprehensive (explicit)** | Systematically review the broader admitted plausible medium-or-higher relationships within the same user scope, retaining completed Value facts and results and adding remaining work. Ordinary low-effect API use remains context. |
 
 Pre-assessment must state the review scope before building bundles. Its inputs
@@ -470,18 +492,19 @@ shared controls to adjust rank; cross-repository lessons are hypotheses, not
 verdicts. Then rank **in now**, **conditional after preview**, and **deferred**
 lanes. Give each lane a selection test, reason, and rough count. Account for
 the whole inventory without claiming that an unreviewed candidate is safe.
-The default operation bound is an explicit Value scope limit, not evidence of
-whole-repository coverage. Comprehensive does not inherit that limit.
+The additional AI-discovery operation bound does not limit native Value membership
+or establish whole-repository coverage. Comprehensive does not inherit that bound.
 An output sink may expose stored lower-trust data without a direct request
 marker; do not defer all output sinks on that basis. A user can stop after any chunk
 without losing completed work.
 
-Value scope is complete when its selected operations have settled results or
-named deciding gaps, with examined conditions and deferred coverage recorded.
-If a budget stops selected work early, report a partial Value review and its
+Value scope is complete when all admitted native candidates and selected discovery
+operations have settled results or named deciding gaps, with examined conditions
+and deferred coverage recorded. In explicitly AI-only/native-only work, assess
+completion against that requested queue. If a budget stops work early, report a partial Value review and its
 resume point. Neither completion nor a few safe results establishes that the
 repository is free of issues. Report selected, examined and unselected coverage.
-New route/control facts can change priority within the bounded selection; they
+New route/control facts can change priority within the authorized review; they
 do not silently authorize a broader pass. Comprehensive continues across its
 admitted scope unless the user changes it or the authorized budget is exhausted.
 

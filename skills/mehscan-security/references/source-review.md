@@ -8,8 +8,12 @@ When an AI review has no native candidates, still review the selected source
 and record flows, controls and gaps. Source-discovered claims are assessed and
 source-validated here, then remain eligible for the same Fast/Full follow-ups.
 Scoped threat review can use coverage and cited source even with no claims.
-Assignment selection precedes proposal admission: Value investigates its bounded
-named operations; Comprehensive extends the admitted scope systematically.
+Value retains admitted native candidates and selects bounded additional
+AI-discovery operations; Comprehensive extends the admitted scope systematically.
+An AI-discovery operation limit does not filter native membership. Native review
+can identify additional consequential relationships in its existing investigation.
+Budget exhaustion leaves unfinished IDs visible, without a safe or pending verdict
+for work that was never investigated.
 Neither a proposal's priority nor a native lead authorizes reviewing every file.
 Choose operations from inspected bodies and their actor/effect relationships,
 including dedicated custom security controls, parsers and validators when relevant.

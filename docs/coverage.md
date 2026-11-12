@@ -162,12 +162,21 @@ applicable operation was found, or that relevant source was outside recognition
 or scope. It is not an AI review or a clean bill of health. Similarly, a missing
 question cannot become a model dismissal.
 
-Value selects 4–6 named operations by default from actual source-body evidence
-and native leads, then investigates their consequential questions within a shared
-budget. It preserves unselected coverage and explicit deferrals. Source-driven
-orientation remains bounded when native results are sparse; no candidates does
-not trigger an all-source review. The default worker requires a
-[source selection](review-worker.md#bounded-value-selection) before AI calls.
+Value preserves the in-scope native Value candidate queue and adds bounded
+source-driven discovery in consequential areas the scanner does not represent.
+A compact application-aware plan identifies entry points, protected effects,
+candidate concentrations, shared implementation research and uncovered areas.
+The scheduler starts with an adjustable 80% native / 20% AI-discovery allocation;
+candidate count alone does not determine investigation cost. When a queue finishes,
+its unused allocation can fund remaining authorized work. AI-only review uses the
+same bounded source selection; no candidates does not trigger an all-source pass.
+See [Value planning and selection](review-worker.md#bounded-value-selection).
+
+Budget limits stop execution without removing candidates from Value membership.
+Reports distinguish reviewed and reused decisions, investigated unresolved claims,
+unstarted budget-deferred candidates and policy exclusions. Report native
+candidate completion separately from source areas examined and investigation
+groups. Shared research never transfers a verdict across different caller conditions.
 
 Comprehensive is an explicit broader scope. It retains completed Value work in
 the matching scope and systematically adds admitted relationships. Conservative

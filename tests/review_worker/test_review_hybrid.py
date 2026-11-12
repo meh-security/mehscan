@@ -141,8 +141,8 @@ class HybridNativeTests(unittest.TestCase):
         command=worker.read(setup["arms"]["treatment"]["command"])
         config=worker.read(setup["arms"]["treatment"]["config"])
         original=worker.execute
-        def execute(argv,cwd,env,timeout,payload=None):
-            if argv!=command:return original(argv,cwd,env,timeout,payload)
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
+            if argv!=command:return original(argv,cwd,env,timeout,payload,**kwargs)
             task=json.loads(payload);packet=worker.read(task["evidence_packet"])
             answer=callback(task,packet)
             class Fake:

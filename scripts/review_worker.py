@@ -2598,7 +2598,7 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path") if k in source})
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids") if k in source})
         if source["completed_assignments"] != source.get("selected_assignments", source["assignments"]):
             record["status"]="incomplete"
             record["detail"]="Native results retained; some assigned source ranges were not reviewed."
@@ -2673,7 +2673,11 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
-    parser.add_argument("--source-selection", help="source-bound ranked selection of one to six named operations for all-phase review")
+    parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
+    parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
+    parser.add_argument("--max-calls", type=int, default=40, help="shared Value provider-call ceiling")
+    parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")
+    parser.add_argument("--admission-seconds", type=int, default=1200, help="Value new-call admission window; active work can drain")
     parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
     parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
     parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
@@ -2701,6 +2705,8 @@ def main():
     parser.add_argument("--source-collector-profile", choices=("routine", "expert"),
                         help="experimental raw-source collection using a bound profile; otherwise use scoped expert research")
     args = parser.parse_args()
+    if not (0 <= args.native_share <= 100 and args.max_calls > 0 and args.input_token_budget > 0 and args.admission_seconds > 0):
+        parser.error("native share must be 0..100 and whole-review budgets must be positive")
     if not ((args.research_rounds is None or 0 <= args.research_rounds <= 10)
             and (args.research_queries is None or 0 <= args.research_queries <= 100)
             and (args.research_bytes is None or 1 <= args.research_bytes <= 8 * 1024 * 1024)

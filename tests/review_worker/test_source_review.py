@@ -59,6 +59,39 @@ class SourceReuse(unittest.TestCase):
 
 
 class SourceReview(unittest.TestCase):
+    def test_last_budget_call_is_offered_as_final_without_research(self):
+        command = self.prepare_worker(proposal=False) + ["--max-calls", "1"]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        frame = json.loads(next((self.base / "worker/source-review/jobs").glob("*/0-input.json")).read_text())
+        self.assertEqual(frame["research"]["rounds_remaining"], 0)
+        self.assertEqual(frame["research"]["queries_remaining"], 0)
+
+    def test_mixed_review_keeps_native_candidate_outside_ai_selection(self):
+        (self.root / "feature").mkdir()
+        (self.root / "feature/app.js").write_text("function run(request) { eval(request.query.code); }\n")
+        self.inventory = self.base / "mixed-inventory"
+        self.native("investigate", "review-inventory", self.root, "--repository-key", "acceptance:mixed",
+                    "--output", self.inventory)
+        command = self.prepare_worker(proposal=False)
+        path = self.base / "selection.json"
+        value = json.loads(path.read_text())
+        value["assignments"] = [row for row in value["assignments"] if row["owner_path"] == "Widget.razor"]
+        value["assignment_ids"] = [row["assignment_id"] for row in value["assignments"]]
+        path.write_text(json.dumps(value))
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        summary = json.loads((self.base / "worker/source-review/summary.json").read_text())
+        original_ids = {e["review_id"] for e in json.loads((self.inventory / "inventory.json").read_text())["entries"]}
+        self.assertTrue(original_ids)
+        self.assertEqual(set(summary["native_admitted_ids"]), original_ids)
+        self.assertTrue(original_ids <= set(summary["assessments"]))
+        self.assertEqual(summary["native_unreviewed_ids"], [])
+        self.assertEqual(summary["calls"], 2)
+        schedule = json.loads((self.base / "worker/source-review/schedule.json").read_text())
+        self.assertEqual(len(schedule["native_investigations"]), 1)
+        self.assertEqual(len(schedule["ai_investigations"]), 1)
+
     def test_value_without_selection_checkpoints_without_inference(self):
         command = self.prepare_worker(fail=True)
         del command[command.index("--source-selection"):]
@@ -87,15 +120,19 @@ class SourceReview(unittest.TestCase):
         self.assertIn("native plan or source fingerprint", record["detail"])
         self.assertFalse(list((self.base / "worker/source-review").rglob("*-input.json")))
 
-    def test_unselected_native_operations_are_deferred_without_calls(self):
+    def test_ai_only_defers_native_operations_without_calls(self):
         (self.root / "feature").mkdir()
         (self.root / "feature/app.js").write_text("function run(request) { eval(request.query.code); }\n")
         self.inventory = self.base / "selection-inventory"
         self.native("investigate", "review-inventory", self.root, "--repository-key", "acceptance:selection",
                     "--output", self.inventory)
         command = self.prepare_worker(proposal=False)
+        command += ["--native-share", "0"]
         path = self.base / "selection.json"
         value = json.loads(path.read_text())
+        native_plan = self.native("investigate", "source-review-plan", self.root, "--inventory", self.inventory,
+                                  "--review-ids", ",".join(json.loads((self.base / "work.json").read_text())["payload"]["review_ids"]))
+        value["native_assignment_ids"] = [a["id"] for a in native_plan["assignments"] if a["review_ids"]]
         value["assignments"] = [row for row in value["assignments"] if row["owner_path"] == "Widget.razor"]
         self.assertEqual(len(value["assignments"]), 1)
         value["assignment_ids"] = [row["assignment_id"] for row in value["assignments"]]

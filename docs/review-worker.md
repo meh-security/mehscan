@@ -10,12 +10,14 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
-The default Value `all` phase requires a source-backed selection of operations
-before provider review. Without `--source-selection FILE`, it prepares a selection
-checkpoint and exits with `selection_required`, making zero AI calls. The host
-agent uses bounded source reads to choose 4–6 named operations by default.
+The default Value `all` phase requires a bound coverage plan before provider review.
+Without `--source-selection FILE`, it prepares a selection checkpoint and exits
+with `selection_required`, making zero AI calls. The host agent combines native
+candidate summaries with bounded source reads to prioritize native investigations
+and select a few additional AI-discovery operations. The full admitted native
+Value queue remains accounted for; a discovery-operation limit does not filter it.
 An explicit Comprehensive request reviews the broader admitted production-source
-scope. Within selected assignments, the reviewer can assess relevant native questions
+scope. Within assigned operations, the reviewer can assess relevant native questions
 and propose additional consequential relationships in the same conversation,
 including operations with no scanner candidates.
 The controller validates original paths, hashes, ranges and inspected citations,
@@ -116,7 +118,8 @@ This groups context within existing bundles; it does not defer candidates or
 guarantee fewer model calls or lower cost.
 
 Use `--policy value --selection policy --source-selection FILE` for ordinary
-selected-source AI review. Native priority hints do not select source operations.
+Value review. Native priority hints define the admitted candidate queue; source
+selection identifies additional discovery operations and can rank native assignments.
 Comprehensive explicitly selects the broader admitted scope and retains applicable
 completed Value work. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
@@ -144,18 +147,24 @@ Run Value's default `all` phase once without `--source-selection`. The output
 contains `source-review/plan.json`, `source-review/selection-options.json` and
 `source-review/checkpoint.json`; `worker.json` reports `selection_required`.
 This is a preparation checkpoint, not a failed provider review. An automatic
-Action Value run can stop here until a host supplies its selection.
+Action Value run can stop here until a host supplies its plan, including when native
+candidates exist. The plan keeps all native Value candidates in the requested
+native/mixed queue and selects bounded additional AI discovery separately.
 
-In the host agent's current context, combine native leads with bounded source
-reads of relevant routes, jobs, parsers or custom security controls. Usually
-4–8 focused reads/navigation actions suffice for initial orientation. Select
-actual body evidence for a consequential question, preserving the actor,
+In the host agent's current context, combine native summaries with bounded source
+reads of relevant routes, jobs, parsers or custom security controls. Record actors,
+protected effects, candidate concentrations, existing source-assignment groups,
+important uncovered areas and known scan/source limitations. Usually 4–8 focused
+reads/navigation actions suffice for initial orientation. Rank native assignments
+without treating shared source as a shared verdict. Native candidates already
+supply questions; they do not need to pass an additional discovery-signal gate.
+For additional AI discovery, select actual body evidence for a consequential question, preserving the actor,
 protected effect and suspected mismatch. Filenames, a generic question or an
 unread helper alone do not establish a signal. A clear unsafe construction or
 supported local security-contract defect can qualify without a known deployed
-actor. Sparse or empty native results still permit source-driven selection;
-if no useful lead emerges, report the
-bounded coverage and stop. Do not preload supporting models, views or SQL, or
+actor. Sparse or empty native results still permit source-driven selection.
+If no additional useful lead emerges, the discovery list can be empty; retain the
+native queue and report the bounded source orientation. Do not preload supporting models, views or SQL, or
 build a larger backlog as a substitute for selection.
 
 Copy the exact binding and assignment IDs from the plan into JSON outside the
@@ -184,17 +193,36 @@ source root, then supply it with `--source-selection FILE` in a new output attem
 }
 ```
 
-The ranked list permits 1–6 distinct assignments; use 4–6 for an ordinary Value
-review and fewer for a narrower task. Each row must match a listed assignment.
+The ranked discovery list permits 0–6 distinct assignments; normally select a few
+source-backed operations, using fewer when no useful additional lead exists.
+Each row must match a listed assignment.
 Its owner range stays within an original assignment window. The nonempty
 `question`, `protected_effect`, `area`, `reason` and `next_deciding_fact` strings
 are bounded to 4,000 characters each. `signal.kind` is `native_candidate` or
 `source_relationship`, with 1–12 cited source ranges from the full plan.
 Bindings, ranges and structure are validated; this does not prove the signal's
 security interpretation. Give each operation one owner and reuse cited facts
-across related questions, checking caller/effect conditions separately.
+across related questions, checking caller/effect conditions separately. Optional
+`native_assignment_ids` ranks the native assignment queue and must retain all its
+assignments for native or mixed review. Omitting this field preserves native plan
+order. Discovery selection does not remove native IDs outside its owner ranges.
+If a selected discovery operation already has native questions in a mixed review,
+one native investigation handles those questions and the additional focus; it is
+not dispatched again as a separate discovery job. Every native assessment remains
+required, and its caller/effect conditions stay distinct.
 
-Value shares 40 controller-managed provider calls across the selected review and
+### Allocation and budget
+
+`--native-share 80` starts with 80% of the call allowance for native review and 20%
+for additional AI discovery. Any integer from 1 to 99 configures a mixed review;
+for example, `--native-share 33` favors AI discovery. Once a queue is empty or
+finishes, its unused allocation can fund the other queue. `--native-share 0`
+explicitly requests AI-only discovery and `--native-share 100` native-only review;
+these endpoints do not automatically schedule work from the other queue. A
+native-only plan can use empty `assignment_ids` and `assignments` lists. This
+allocation is independent of Value/Comprehensive admission and Fast/Full follow-up.
+
+Value defaults to 40 controller-managed provider calls across the planned review and
 its phases, including any provider discovery. It targets 1.5 million observed
 input tokens and reserves 100,000 input tokens for each in-flight call before
 dispatch. After 20 minutes it stops starting calls, drains active work and
@@ -202,8 +230,13 @@ finalizes completed decisions. Unknown provider counters remain unknown; these
 are admission and observed-usage targets, not strict token/currency caps or
 performance guarantees. Host-agent orientation is outside the worker ledger and
 must stay bounded. Splitting operations or starting follow-up does not reset the
-shared allowance. Explicit native exact-ID work with `--phase native` retains
-its existing behavior.
+shared allowance. Configure the allowance before the attempt with `--max-calls`,
+`--input-token-budget` and `--admission-seconds`. The allocation and budget schedule
+work without changing native Value membership. Reports distinguish reviewed and
+reused decisions, investigated unresolved questions, unstarted budget deferrals
+and source-policy exclusions; candidate completion and source coverage remain
+separate measures. Explicit exact-ID work with `--phase native`, source profiles,
+compiler-assisted facts and opt-in operation grouping retain their existing paths.
 
 Comprehensive extends completed Value work within matching scope to the broader
 admitted relationships, reusing established facts and avoiding repeated template,
@@ -667,7 +700,8 @@ model authentication and session management belong to the trusted adapter.
 
 Native defaults per conversation for both Value and Comprehensive are five
 research rounds (six total model calls), 24 query units, 512 KiB and 900 seconds.
-Value uses native priority hints plus its bounded source selection; Comprehensive
+Value retains its admitted native queue plus bounded additional source discovery;
+the chosen mix and shared budget govern scheduling. Comprehensive
 selects every admitted ID within the authorized broader scope. The default
 Value controller's shared run allowance also applies across its managed phases.
 Configure `--research-rounds`, `--research-queries`, `--research-bytes` and
