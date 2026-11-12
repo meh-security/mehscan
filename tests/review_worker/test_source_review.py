@@ -696,7 +696,7 @@ print(json.dumps({'draft':{'results':rows,
         self.assertEqual((initial/"findings.json").read_bytes(),saved)
         options=json.loads((output/"review-options.json").read_text())
         self.assertEqual(options["review_origin"],"ai_source_only")
-        self.assertEqual(Path(options["threat_model"]["source_context"]["coverage_report"]),initial/"source-review.json")
+        self.assertTrue(Path(options["threat_model"]["source_context"]["coverage_report"]).samefile(initial/"source-review.json"))
         turns=[json.loads(p.read_text()) for p in (output/"training-turns").glob("*/*-input.json")]
         self.assertTrue(turns)
         self.assertTrue(all(t.get("review_role")=="second_pass_fast" for t in turns))

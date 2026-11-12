@@ -40,7 +40,7 @@ class SecondPass(unittest.TestCase):
             context=options["threat_model"]["source_context"]
             self.assertEqual(context["native_selected_claims"],0)
             self.assertEqual(context["coverage_counts"],{"needs_review":1})
-            self.assertEqual(Path(context["coverage_report"]),first/"source-review.json")
+            self.assertTrue(Path(context["coverage_report"]).samefile(first/"source-review.json"))
 
     def test_auto_fast_caps_ranked_exact_nominations_and_excludes_external_blockers(self):
         rows = [result(str(i), "needs_review") for i in range(12)]
