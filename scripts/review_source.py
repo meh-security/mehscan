@@ -19,6 +19,16 @@ def excluded_native_questions(plan):
     }
 
 
+def validate_assignment_scope(plan):
+    """Queryable-only registry entries must never become ambient source windows."""
+    lookup_only = {source["path"] for source in plan.get("excluded_sources", [])}
+    metadata_keys = {"path", "reason", "review_ids", "source_sha256", "line_count"}
+    if any(set(source) - metadata_keys for source in plan.get("excluded_sources", [])):
+        raise ValueError("queryable-only plan records must contain metadata, not source text")
+    if any(w["path"] in lookup_only for a in plan["assignments"] for w in a["windows"]):
+        raise ValueError("queryable-only source cannot enter default assignment windows")
+
+
 def retain_training_turns(summary, output):
     """Copy observed source turns without rewriting inputs or replaying models."""
     stage = Path(summary).parent
@@ -199,6 +209,7 @@ def run(args, legacy, worker):
             *(["--include-supporting-source", "true"] if getattr(args, "include_supporting_source", False) else []),
         ]
     )
+    validate_assignment_scope(plan)
     worker.write(stage / "plan.json", plan)
     excluded_ids = excluded_native_questions(plan)
     ids = [rid for rid in ids if rid not in excluded_ids]

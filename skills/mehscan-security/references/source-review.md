@@ -15,6 +15,18 @@ scope exclusions, not examined coverage or evidence of safety. Executable
 interface implementations and files containing other implementation remain
 eligible. Use `--include-supporting-source` when explicitly requested to review
 these sources as standalone assignments.
+Schema-only database migrations and generated migration snapshots/designers are
+also queryable only. Custom SQL/resource calls, executable security-state transformations
+and uncertain executable migration bodies remain eligible. SQL files are lookup
+context rather than standalone assignments: when a caller delegates a deciding
+permission, tenant filter or state change to a procedure/function/trigger, locate
+and read the current definition and any deciding helper. Follow embedded resource
+bindings where relevant; historical replacements need not each be reviewed.
+Use table declarations to resolve a concrete key, constraint, default or cascade
+question. Do not fetch whole schemas or migration histories as precautionary context.
+The plan's queryable-only registry contains metadata, not file bodies, and stays
+with the controller. Such source enters model context only through a requested
+bounded lookup, or the explicit supporting-source opt-in where applicable.
 For web/API effects, distinguish object, function and property permissions from
 workflow prerequisites. Use `authorization` for the access boundary and
 `workflow-state` when a permitted actor can skip, replay or alter a consequential

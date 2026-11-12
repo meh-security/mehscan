@@ -41,6 +41,20 @@ paths, reasons and affected native IDs separately from examined coverage. Add
 `--include-supporting-source` to explicitly review these files as assignments.
 Files with executable interface bodies or other implementation remain eligible.
 
+Schema-only database migrations, generated migration snapshots/designers and SQL
+files are queryable only. Custom SQL/resource calls and executable or uncertain
+migration bodies remain eligible; SQL definitions are read with the relevant
+callers rather than queued separately. The supporting-source opt-in above applies
+to seed/performance code and declaration-only C# contracts.
+
+The controller's `excluded_sources` registry contains only paths, reasons, affected
+native IDs, file hashes and line counts. It contains no file bodies and is not
+preloaded into reviewer packets. A scope check prevents these paths from becoming
+assignment windows. A reviewer can explicitly request a source range, definition
+or scoped search to settle a concrete question; only returned lookup evidence
+enters its context and counts against its research budget. Source reads are bounded
+to 400 lines and 64 KiB per range. Queryable-only source is not examined coverage.
+
 `source-review.json` records examined, context-limited and deferred ranges, failed
 assignments and source-stage call counts. Canonical report scope includes a coverage
 summary. Empty results do not certify a file safe. A failed assignment remains

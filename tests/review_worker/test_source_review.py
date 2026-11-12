@@ -20,7 +20,7 @@ class SourceReview(unittest.TestCase):
     def test_supporting_source_is_queryable_but_native_questions_are_not_reviewed(self):
         (self.root / "perf").mkdir()
         (self.root / "perf/load.js").write_text(
-            "function run(request) { eval(request.query.code); }\n", encoding="utf8"
+            "// LOOKUP_ONLY_BODY_SENTINEL\nfunction run(request) { eval(request.query.code); }\n", encoding="utf8"
         )
         self.inventory = self.base / "supporting-inventory"
         self.native("investigate", "review-inventory", self.root,
@@ -36,9 +36,13 @@ class SourceReview(unittest.TestCase):
         self.assertTrue(any(s["path"] == "perf/load.js" for s in summary["excluded_sources"]))
         self.assertFalse(omitted.intersection(summary["assessments"]))
         self.assertFalse(any(w["path"] == "perf/load.js" for w in summary["coverage"]))
+        for packet in (self.base / "worker/source-review/jobs").glob("*/context.json"):
+            self.assertNotIn("LOOKUP_ONLY_BODY_SENTINEL", packet.read_text(encoding="utf8"))
+        for frame in (self.base / "worker/source-review/jobs").glob("*/0-facts.json"):
+            self.assertNotIn("LOOKUP_ONLY_BODY_SENTINEL", frame.read_text(encoding="utf8"))
         # Exclusion affects scheduling, not the inventory's source lookup surface.
         lookup = self.native("investigate", "source", self.root, "--path", "perf/load.js",
-                             "--start-line", "1", "--end-line", "1")
+                             "--start-line", "2", "--end-line", "2")
         self.assertIn("eval(request.query.code)", json.dumps(lookup))
 
     def test_template_source_is_assigned_without_native_candidates(self):

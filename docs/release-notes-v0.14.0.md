@@ -5,7 +5,7 @@
 - Add Fast, Full and scoped threat follow-up for AI-only source reviews.
 - Group related findings by repair point while preserving callers and conditions.
 - Automatically select a bounded Fast review queue; use Full to audit every eligible claim.
-- Keep seed/performance tooling and declaration-only C# contracts available for lookups without reviewing them by default.
+- Keep supporting declarations and schema-only migrations available for lookups without reviewing them by default.
 
 ## Bug fixes
 
