@@ -47,6 +47,14 @@ migration bodies remain eligible; SQL definitions are read with the relevant
 callers rather than queued separately. The supporting-source opt-in above applies
 to seed/performance code and declaration-only C# contracts.
 
+Passive C# data shapes, default settings, constant containers and simple copy
+constructors are also omitted from standalone assignments and can be included by
+the supporting-source opt-in. Schema-only EF mappings remain lookup context.
+Classification inspects content: custom validation, converters, executable
+accessors, query filters, redaction and other behavioral implementations stay
+eligible. Reviewers inspect relevant data shapes, annotations and writable fields
+at the caller's input/output or persistence boundary; omission is not a safety verdict.
+
 The controller's `excluded_sources` registry contains only paths, reasons, affected
 native IDs, file hashes and line counts. It contains no file bodies and is not
 preloaded into reviewer packets. A scope check prevents these paths from becoming

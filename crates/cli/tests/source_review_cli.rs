@@ -208,6 +208,110 @@ fn schema_and_sql_are_lookup_only_but_executable_migrations_are_assigned() {
 }
 
 #[test]
+fn passive_data_shapes_and_schema_mapping_stay_queryable() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir(source.join("Models")).unwrap();
+    let files = [
+        (
+            "Models/Profile.cs",
+            "[JsonConverter(typeof(Converter))] public class Profile { [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] [Required] public string Secret { get; set; } = \"SENTINEL_PASSIVE\"; public int Max { get; set; } = 5; public DateTime Created { get; set; } = DateTime.UtcNow; public List<string> Names { get; set; } = new List<string>(); public Profile(Profile other) : base(\"object\") { Secret = other.Secret; Max = other.Max; } }",
+        ),
+        (
+            "Tokens.cs",
+            "public static class Tokens { public const string Name = \"SENTINEL_CONSTANT\"; }",
+        ),
+        (
+            "Models/Validator.cs",
+            "public class Validator { public bool Validate() { return true; } }",
+        ),
+        (
+            "Models/Computed.cs",
+            "public class Computed { public string Secret { get { return ReadSecret(); } } }",
+        ),
+        (
+            "Models/CopyLogic.cs",
+            "public class CopyLogic { public int Count { get; set; } public CopyLogic(CopyLogic other) { Count += other.Count; } }",
+        ),
+        (
+            "Models/Protected.cs",
+            "[Authorize] public class Protected { public string Value { get; set; } }",
+        ),
+        (
+            "PlainService.cs",
+            "public class PlainService { public string Name { get; set; } }",
+        ),
+        (
+            "Map.cs",
+            "class Map : IEntityTypeConfiguration<Item> { void Configure(EntityTypeBuilder<Item> builder) { builder.ToTable(nameof(Item)); builder.Property(x => x.Id).ValueGeneratedNever(); builder.Property(x => x.Name).HasMaxLength(42); /* SENTINEL_MAPPING */ } }",
+        ),
+        (
+            "Filter.cs",
+            "class Filter : IEntityTypeConfiguration<Item> { void Configure(EntityTypeBuilder<Item> builder) { builder.HasQueryFilter(x => x.Visible); } }",
+        ),
+    ];
+    for (name, text) in files {
+        fs::write(source.join(name), text).unwrap();
+    }
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-data",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let excluded = plan["excluded_sources"].as_array().unwrap();
+    for name in ["Models/Profile.cs", "Tokens.cs", "Map.cs"] {
+        assert!(
+            excluded.iter().any(|v| v["path"] == name),
+            "missing {name}: {excluded:?}"
+        );
+    }
+    let windows: Vec<_> = plan["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|v| v["windows"].as_array().unwrap())
+        .collect();
+    for name in [
+        "Models/Validator.cs",
+        "Models/Computed.cs",
+        "Models/CopyLogic.cs",
+        "Models/Protected.cs",
+        "PlainService.cs",
+        "Filter.cs",
+    ] {
+        assert!(windows.iter().any(|v| v["path"] == name), "missing {name}");
+    }
+    assert!(!serde_json::to_string(&plan).unwrap().contains("SENTINEL_"));
+    let opt_in = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ]);
+    let excluded = opt_in["excluded_sources"].as_array().unwrap();
+    assert!(excluded.iter().any(|v| v["path"] == "Map.cs"));
+    assert!(!excluded.iter().any(|v| v["path"] == "Models/Profile.cs"));
+    cleanup(&base);
+}
+
+#[test]
 fn admitted_source_questions_export_complete_inventory_and_reuse_finalized_history() {
     let base = fixture();
     let source = base.join("source");

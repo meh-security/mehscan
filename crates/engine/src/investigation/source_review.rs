@@ -244,6 +244,302 @@ fn schema_migration(file: &SourceFile) -> bool {
     }
     found_method
 }
+
+fn passive_data_shape(file: &SourceFile) -> bool {
+    if file.language != Some(Language::Csharp) {
+        return false;
+    }
+    let path = file.path.to_ascii_lowercase();
+    let parts: Vec<_> = path.split('/').collect();
+    let stem = parts
+        .last()
+        .unwrap_or(&"")
+        .strip_suffix(".cs")
+        .unwrap_or("");
+    let shape = parts.iter().any(|part| {
+        matches!(
+            *part,
+            "models"
+                | "model"
+                | "entities"
+                | "entity"
+                | "dto"
+                | "dtos"
+                | "settings"
+                | "options"
+                | "constants"
+                | "exceptions"
+        )
+    }) || [
+        "model",
+        "entity",
+        "dto",
+        "settings",
+        "options",
+        "constants",
+        "exception",
+    ]
+    .iter()
+    .any(|suffix| stem.ends_with(suffix));
+    let lower = file.source.to_ascii_lowercase();
+    if [
+        "ivalidatableobject",
+        "validationattribute",
+        "iserializable",
+        "ideserializationcallback",
+        "onserializ",
+        "ondeserializ",
+        "authorizeattribute",
+        "validator",
+    ]
+    .iter()
+    .any(|word| lower.contains(word))
+    {
+        return false;
+    }
+    let Ok(doc) = StrDoc::try_new(file.source.as_str(), SupportLang::CSharp) else {
+        return false;
+    };
+    let ast = AstGrep::doc(doc);
+    let mut has_const = false;
+    let mut only_const = true;
+    for node in ast.root().dfs() {
+        match node.kind().as_ref() {
+            "field_declaration" => {
+                if node.text().split_whitespace().any(|word| word == "const") {
+                    has_const = true;
+                } else {
+                    only_const = false;
+                }
+            }
+            "property_declaration"
+            | "event_declaration"
+            | "event_field_declaration"
+            | "constructor_declaration" => only_const = false,
+            _ => {}
+        }
+    }
+    if !shape && !(has_const && only_const) {
+        return false;
+    }
+    let mut shape_found = false;
+    for node in ast.root().dfs() {
+        if node.is_missing() {
+            return false;
+        }
+        let kind = node.kind();
+        let in_constructor = || {
+            node.ancestors()
+                .any(|p| p.kind().as_ref() == "constructor_declaration")
+        };
+        match kind.as_ref() {
+            "ERROR"
+            | "method_declaration"
+            | "destructor_declaration"
+            | "event_declaration"
+            | "event_field_declaration"
+            | "operator_declaration"
+            | "conversion_operator_declaration"
+            | "local_function_statement"
+            | "arrow_expression_clause"
+            | "implicit_object_creation_expression"
+            | "anonymous_object_creation_expression"
+            | "if_statement"
+            | "switch_statement"
+            | "for_statement"
+            | "for_each_statement"
+            | "while_statement"
+            | "do_statement"
+            | "try_statement"
+            | "throw_statement"
+            | "await_expression"
+            | "lambda_expression"
+            | "binary_expression"
+            | "conditional_expression"
+            | "element_access_expression" => return false,
+            "invocation_expression" => {
+                if !node
+                    .field("function")
+                    .is_some_and(|function| function.text() == "nameof")
+                {
+                    return false;
+                }
+            }
+            "object_creation_expression" => {
+                let compact: String = node.text().chars().filter(|c| !c.is_whitespace()).collect();
+                let candidate = compact
+                    .strip_prefix("new")
+                    .unwrap_or("")
+                    .strip_prefix("System.Collections.Generic.")
+                    .unwrap_or_else(|| compact.strip_prefix("new").unwrap_or(""));
+                if !(candidate.ends_with(">()")
+                    && ["List<", "HashSet<", "Dictionary<"]
+                        .iter()
+                        .any(|prefix| candidate.starts_with(prefix)))
+                {
+                    return false;
+                }
+            }
+            "constructor_initializer" => {
+                if !node.text().trim_start().starts_with(": base(")
+                    || node.dfs().any(|child| {
+                        matches!(
+                            child.kind().as_ref(),
+                            "identifier"
+                                | "member_access_expression"
+                                | "invocation_expression"
+                                | "object_creation_expression"
+                                | "binary_expression"
+                                | "conditional_expression"
+                        )
+                    })
+                {
+                    return false;
+                }
+            }
+            "class_declaration" | "record_declaration" | "struct_declaration" => shape_found = true,
+            "attribute"
+                if node.text().to_ascii_lowercase().contains("authoriz")
+                    || node.text().to_ascii_lowercase().contains("permission") =>
+            {
+                return false;
+            }
+            "block" if !in_constructor() => return false,
+            "assignment_expression" => {
+                if node
+                    .ancestors()
+                    .any(|parent| parent.kind().as_ref() == "attribute")
+                {
+                    continue;
+                }
+                if !in_constructor() {
+                    return false;
+                }
+                let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
+                    return false;
+                };
+                if !matches!(
+                    left.kind().as_ref(),
+                    "identifier" | "member_access_expression"
+                ) || !matches!(
+                    right.kind().as_ref(),
+                    "identifier"
+                        | "member_access_expression"
+                        | "null_literal"
+                        | "string_literal"
+                        | "integer_literal"
+                        | "boolean_literal"
+                ) {
+                    return false;
+                }
+                let text = left.text();
+                if left.kind().as_ref() == "member_access_expression" && !text.starts_with("this.")
+                {
+                    return false;
+                }
+                let expression = node.text();
+                if !expression
+                    .strip_prefix(text.as_ref())
+                    .and_then(|s| s.strip_suffix(right.text().as_ref()))
+                    .is_some_and(|operator| operator.trim() == "=")
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    shape_found
+}
+
+fn passive_entity_mapping(file: &SourceFile) -> bool {
+    if file.language != Some(Language::Csharp) || !file.source.contains("IEntityTypeConfiguration")
+    {
+        return false;
+    }
+    let Ok(doc) = StrDoc::try_new(file.source.as_str(), SupportLang::CSharp) else {
+        return false;
+    };
+    let ast = AstGrep::doc(doc);
+    let mut configure = false;
+    for node in ast.root().dfs() {
+        if node.is_missing() {
+            return false;
+        }
+        match node.kind().as_ref() {
+            "ERROR"
+            | "if_statement"
+            | "switch_statement"
+            | "for_statement"
+            | "for_each_statement"
+            | "while_statement"
+            | "do_statement"
+            | "try_statement"
+            | "throw_statement"
+            | "assignment_expression"
+            | "object_creation_expression"
+            | "implicit_object_creation_expression"
+            | "local_declaration_statement" => return false,
+            "method_declaration" => {
+                if !node
+                    .field("name")
+                    .is_some_and(|name| name.text() == "Configure")
+                {
+                    return false;
+                }
+                configure = true;
+            }
+            "invocation_expression" => {
+                let Some(function) = node.field("function") else {
+                    return false;
+                };
+                if function.text() == "nameof" {
+                    continue;
+                }
+                let Some(name) = function.field("name") else {
+                    return false;
+                };
+                let name = name.text();
+                if !matches!(
+                    name.split('<').next().unwrap_or(""),
+                    "ToTable"
+                        | "HasKey"
+                        | "HasIndex"
+                        | "Property"
+                        | "HasColumnName"
+                        | "HasColumnType"
+                        | "HasMaxLength"
+                        | "IsRequired"
+                        | "IsUnique"
+                        | "HasDatabaseName"
+                        | "HasName"
+                        | "HasAnnotation"
+                        | "HasDefaultValue"
+                        | "HasDefaultValueSql"
+                        | "HasPrecision"
+                        | "IsUnicode"
+                        | "ValueGeneratedOnAdd"
+                        | "ValueGeneratedNever"
+                        | "HasOne"
+                        | "WithMany"
+                        | "WithOne"
+                        | "HasForeignKey"
+                        | "HasPrincipalKey"
+                        | "OnDelete"
+                        | "HasConstraintName"
+                        | "Navigation"
+                        | "HasCheckConstraint"
+                        | "IsDescending"
+                        | "HasFilter"
+                ) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    configure
+}
 fn source_window(
     file: &SourceFile,
     first: usize,
@@ -406,8 +702,13 @@ pub fn plan_with_options(
             Some("SQL source available by targeted lookup")
         } else if schema_only {
             Some("schema-only migration available by targeted lookup")
+        } else if eligible(file) && passive_entity_mapping(file) {
+            Some("schema-only entity mapping available by targeted lookup")
         } else if !include_supporting_source && eligible(file) {
-            supporting_reason(file, parse_failed_files.contains(file.path.as_str()))
+            supporting_reason(file, parse_failed_files.contains(file.path.as_str())).or_else(|| {
+                passive_data_shape(file)
+                    .then_some("passive C# data shape available by targeted lookup")
+            })
         } else {
             None
         };

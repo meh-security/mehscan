@@ -22,6 +22,11 @@ class SourceReview(unittest.TestCase):
         (self.root / "perf/load.js").write_text(
             "// LOOKUP_ONLY_BODY_SENTINEL\nfunction run(request) { eval(request.query.code); }\n", encoding="utf8"
         )
+        (self.root / "Models").mkdir()
+        (self.root / "Models/RequestModel.cs").write_text(
+            "// PASSIVE_SHAPE_BODY_SENTINEL\npublic class RequestModel { public string Value { get; set; } }\n",
+            encoding="utf8",
+        )
         self.inventory = self.base / "supporting-inventory"
         self.native("investigate", "review-inventory", self.root,
                     "--repository-key", "acceptance:source", "--output", self.inventory)
@@ -34,10 +39,12 @@ class SourceReview(unittest.TestCase):
         summary = json.loads((self.base / "worker/source-review/summary.json").read_text())
         self.assertEqual(summary["native_selected_claims"], 0)
         self.assertTrue(any(s["path"] == "perf/load.js" for s in summary["excluded_sources"]))
+        self.assertTrue(any(s["path"] == "Models/RequestModel.cs" for s in summary["excluded_sources"]))
         self.assertFalse(omitted.intersection(summary["assessments"]))
         self.assertFalse(any(w["path"] == "perf/load.js" for w in summary["coverage"]))
         for packet in (self.base / "worker/source-review/jobs").glob("*/context.json"):
             self.assertNotIn("LOOKUP_ONLY_BODY_SENTINEL", packet.read_text(encoding="utf8"))
+            self.assertNotIn("PASSIVE_SHAPE_BODY_SENTINEL", packet.read_text(encoding="utf8"))
         for frame in (self.base / "worker/source-review/jobs").glob("*/0-facts.json"):
             self.assertNotIn("LOOKUP_ONLY_BODY_SENTINEL", frame.read_text(encoding="utf8"))
         # Exclusion affects scheduling, not the inventory's source lookup surface.

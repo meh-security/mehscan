@@ -27,6 +27,16 @@ question. Do not fetch whole schemas or migration histories as precautionary con
 The plan's queryable-only registry contains metadata, not file bodies, and stays
 with the controller. Such source enters model context only through a requested
 bounded lookup, or the explicit supporting-source opt-in where applicable.
+Passive C# data contracts, default settings, constant containers, simple copy
+constructors and schema-only EF mappings also use targeted lookups rather than
+standalone review. Their annotations, writable fields, defaults and constraints
+can still decide a security question. At an input/output or persistence boundary,
+read the relevant shape and binding: which fields the actor can supply, which
+authority/tenant fields are overwritten, which validation actually runs, and which
+private fields the selected response includes. Do not infer enforcement from an
+annotation or model name. Read a configured limit or default at its deciding use.
+Custom validation/conversion, executable accessors, query filters, secret redaction
+and other behavioral code remain eligible; model directories are not blanket exclusions.
 For web/API effects, distinguish object, function and property permissions from
 workflow prerequisites. Use `authorization` for the access boundary and
 `workflow-state` when a permitted actor can skip, replay or alter a consequential

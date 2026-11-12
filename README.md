@@ -82,6 +82,8 @@ Seed/performance tooling and declaration-only C# interfaces/enums are available 
 
 Schema-only migrations, generated migration snapshots and SQL files also remain available for targeted lookups. Reviewers follow relevant SQL definitions from their callers; file bodies are not preloaded as precautionary context. Executable migration logic remains eligible.
 
+Passive C# models, settings, constants and schema-only EF mappings use the same lookup approach. Custom validation, converters, executable accessors and other behavior stay eligible; model folders are not excluded wholesale.
+
 Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
 
 An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.
