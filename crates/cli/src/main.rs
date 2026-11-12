@@ -957,6 +957,9 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
             .map_err(|e| e.to_string())?;
             if operation == "source-review-plan" {
+                let include_supporting_source = parsed
+                    .optional_bool("--include-supporting-source")?
+                    .unwrap_or(false);
                 let ids = parsed
                     .optional("--review-ids")
                     .unwrap_or_default()
@@ -966,7 +969,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     .collect::<Vec<_>>();
                 parsed.finish()?;
                 print_json(&engine(
-                    mehscan_engine::investigation::source_review::plan(&root, &base, &ids),
+                    mehscan_engine::investigation::source_review::plan_with_options(
+                        &root,
+                        &base,
+                        &ids,
+                        include_supporting_source,
+                    ),
                 )?)
             } else {
                 let input = PathBuf::from(parsed.required("--input")?);
@@ -4635,7 +4643,7 @@ USAGE:
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
   mehscan investigate review-sweep --bundle PATH
-  mehscan investigate source-review-plan [ROOT] --inventory DIR [--review-ids ID,ID]
+  mehscan investigate source-review-plan [ROOT] --inventory DIR [--review-ids ID,ID] [--include-supporting-source true]
   mehscan investigate source-review-check [ROOT] --inventory DIR --input FILE
   mehscan investigate source-review-admit [ROOT] --inventory DIR --input FILE --output NEW_DIR
   mehscan investigate review-response-schema --bundle PATH [--output PATH]

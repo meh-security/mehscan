@@ -8,6 +8,13 @@ When an AI review has no native candidates, still review the assigned source
 and record flows, controls and gaps. Source-discovered claims are assessed and
 source-validated here, then remain eligible for the same Fast/Full follow-ups.
 Scoped threat review can use coverage and cited source even with no claims.
+Default standalone assignments omit seed/performance tooling and C# files that
+contain only interface or enum declarations. These sources remain queryable:
+read them when they decide a question in an assigned flow. Omitted files are
+scope exclusions, not examined coverage or evidence of safety. Executable
+interface implementations and files containing other implementation remain
+eligible. Use `--include-supporting-source` when explicitly requested to review
+these sources as standalone assignments.
 For web/API effects, distinguish object, function and property permissions from
 workflow prerequisites. Use `authorization` for the access boundary and
 `workflow-state` when a permitted actor can skip, replay or alter a consequential

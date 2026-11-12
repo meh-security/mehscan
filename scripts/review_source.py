@@ -10,6 +10,15 @@ import time
 import review_context as context
 
 
+def excluded_native_questions(plan):
+    """Keep lookup-only source claims out of the default native fallback queue."""
+    return {
+        rid: source["reason"]
+        for source in plan.get("excluded_sources", [])
+        for rid in source.get("review_ids", [])
+    }
+
+
 def retain_training_turns(summary, output):
     """Copy observed source turns without rewriting inputs or replaying models."""
     stage = Path(summary).parent
@@ -187,9 +196,12 @@ def run(args, legacy, worker):
             inventory,
             "--review-ids",
             ",".join(ids),
+            *(["--include-supporting-source", "true"] if getattr(args, "include_supporting_source", False) else []),
         ]
     )
     worker.write(stage / "plan.json", plan)
+    excluded_ids = excluded_native_questions(plan)
+    ids = [rid for rid in ids if rid not in excluded_ids]
     entries = {
         e["review_id"]: e for e in worker.read(inventory / "inventory.json")["entries"]
     }
@@ -851,6 +863,9 @@ def run(args, legacy, worker):
                     "Outside the requested native selection; source coverage is recorded separately.",
                 ),
             )
+    for rid, reason in excluded_ids.items():
+        draft["excluded_review_ids"].pop(rid, None)
+        draft["deferred_review_ids"][rid] = reason
     for rid in priorities:
         if rid not in eligible:
             draft["deferred_review_ids"][
@@ -906,6 +921,7 @@ def run(args, legacy, worker):
         "schema_version": "1",
         "origin": "ai_source_only" if not ids else "hybrid",
         "native_selected_claims": len(ids),
+        "excluded_sources": plan.get("excluded_sources", []),
         "plan_id": plan["plan_id"],
         "source_fingerprint": plan["source_fingerprint"],
         "parent_work_package_id": package["package_id"],

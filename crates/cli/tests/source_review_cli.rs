@@ -54,6 +54,84 @@ fn cleanup(base: &Path) {
 }
 
 #[test]
+fn supporting_sources_are_explicitly_excluded_and_plan_bound() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir(source.join("SeederApi")).unwrap();
+    fs::write(
+        source.join("SeederApi/Populate.cs"),
+        "class Populate { void Run() {} }\n",
+    )
+    .unwrap();
+    fs::write(source.join("Contracts.cs"), "namespace Example; public interface IStore { int Get(); } public enum Mode { A = 1, B = 2 }\n").unwrap();
+    fs::write(
+        source.join("Active.cs"),
+        "public interface IActive { int Get() => 1; }\n",
+    )
+    .unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-support",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let excluded = plan["excluded_sources"].as_array().unwrap();
+    assert!(
+        excluded
+            .iter()
+            .any(|x| x["path"] == "SeederApi/Populate.cs")
+    );
+    assert!(excluded.iter().any(|x| x["path"] == "Contracts.cs"));
+    assert!(!excluded.iter().any(|x| x["path"] == "Active.cs"));
+    let opt_in = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ]);
+    assert!(opt_in["excluded_sources"].as_array().unwrap().is_empty());
+    assert_ne!(plan["plan_id"], opt_in["plan_id"]);
+    let mut tampered = plan;
+    tampered["excluded_sources"] = json!([]);
+    let input = base.join("tampered.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({"plan":tampered,"inspected":[],"proposals":[]})).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !invoke(&[
+            "investigate",
+            "source-review-check",
+            root,
+            "--inventory",
+            inv,
+            "--input",
+            input.to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    cleanup(&base);
+}
+
+#[test]
 fn admitted_source_questions_export_complete_inventory_and_reuse_finalized_history() {
     let base = fixture();
     let source = base.join("source");

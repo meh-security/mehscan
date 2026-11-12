@@ -34,6 +34,13 @@ original source facts, keeping their attribution. Existing native local facts
 settle only their own relationship; they do not clear unrelated authority or
 workflow questions.
 
+Seed/performance tooling and declaration-only C# interfaces/enums are omitted
+from standalone source assignments by default, including their native questions.
+They remain available for targeted cross-file queries. `excluded_sources` records
+paths, reasons and affected native IDs separately from examined coverage. Add
+`--include-supporting-source` to explicitly review these files as assignments.
+Files with executable interface bodies or other implementation remain eligible.
+
 `source-review.json` records examined, context-limited and deferred ranges, failed
 assignments and source-stage call counts. Canonical report scope includes a coverage
 summary. Empty results do not certify a file safe. A failed assignment remains

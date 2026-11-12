@@ -28,9 +28,20 @@ pub struct Plan {
     pub source_fingerprint: String,
     pub inventory_fingerprint: String,
     pub selected_review_ids: Vec<String>,
+    #[serde(default)]
+    pub include_supporting_source: bool,
+    #[serde(default)]
+    pub excluded_sources: Vec<ExcludedSource>,
     pub assignments: Vec<Assignment>,
     pub limitations: Vec<String>,
     pub plan_id: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludedSource {
+    pub path: String,
+    pub reason: String,
+    pub review_ids: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -123,7 +134,78 @@ fn source_window(
     })
 }
 
+fn supporting_reason(file: &SourceFile, parse_failed: bool) -> Option<&'static str> {
+    let parts: Vec<_> = file.path.split('/').map(str::to_ascii_lowercase).collect();
+    if parts
+        .iter()
+        .take(parts.len().saturating_sub(1))
+        .any(|part| {
+            part.starts_with("seeder")
+                || matches!(
+                    part.as_str(),
+                    "seed"
+                        | "seeds"
+                        | "seeder"
+                        | "seeders"
+                        | "seeding"
+                        | "benchmark"
+                        | "benchmarks"
+                        | "perf"
+                        | "performance"
+                )
+        })
+    {
+        return Some("seed or performance source");
+    }
+    if file.language != Some(Language::Csharp) || parse_failed {
+        return None;
+    }
+    let document = StrDoc::try_new(file.source.as_str(), SupportLang::CSharp).ok()?;
+    let ast = AstGrep::doc(document);
+    let root = ast.root();
+    let mut declarations = false;
+    for node in root.dfs() {
+        let kind = node.kind();
+        match kind.as_ref() {
+            "ERROR"
+            | "class_declaration"
+            | "struct_declaration"
+            | "record_declaration"
+            | "delegate_declaration"
+            | "global_statement"
+            | "block"
+            | "arrow_expression_clause"
+            | "field_declaration"
+            | "invocation_expression"
+            | "object_creation_expression"
+            | "assignment_expression" => return None,
+            "interface_declaration" | "enum_declaration" => declarations = true,
+            "equals_value_clause"
+                if !node
+                    .ancestors()
+                    .any(|parent| parent.kind().as_ref() == "enum_member_declaration") =>
+            {
+                return None;
+            }
+            _ => {}
+        }
+        if node.is_missing() {
+            return None;
+        }
+    }
+    declarations.then_some("declaration-only C# interfaces and enums")
+}
+
 pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<Plan, EngineError> {
+    plan_with_options(root, inventory, ids, false)
+}
+
+pub fn plan_with_options(
+    root: &Path,
+    inventory: &ReviewInventory,
+    ids: &[String],
+    include_supporting_source: bool,
+) -> Result<Plan, EngineError> {
     validate_review_inventory_for_collection(root, inventory)?;
     let sources = RepositorySources::load(root)?;
     let requested: BTreeSet<_> = ids.iter().collect();
@@ -139,6 +221,7 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
     let mut directory = String::new();
     let mut bytes = 0;
     let mut limitations = Vec::new();
+    let mut excluded_sources = Vec::new();
     let parse_failed_files: BTreeSet<_> = inventory
         .scan
         .coverage
@@ -179,6 +262,24 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
         }) {
             continue;
         }
+        if !include_supporting_source {
+            if let Some(reason) =
+                supporting_reason(file, parse_failed_files.contains(file.path.as_str()))
+            {
+                let review_ids = inventory
+                    .entries
+                    .iter()
+                    .filter(|e| requested.contains(&e.review_id) && e.path == file.path)
+                    .map(|e| e.review_id.clone())
+                    .collect();
+                excluded_sources.push(ExcludedSource {
+                    path: file.path.clone(),
+                    reason: reason.into(),
+                    review_ids,
+                });
+                continue;
+            }
+        }
         if parse_failed_files.contains(file.path.as_str()) {
             limitations.push(format!(
                 "{}: native scanning reported incomplete parsing; source remains assigned. Use exact source reads and scoped text references if AST navigation fails.",
@@ -218,7 +319,9 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
     }
     flush(&mut pending, &mut assignments)?;
     for id in ids {
-        if !assignments.iter().any(|a| a.review_ids.contains(id)) {
+        if !assignments.iter().any(|a| a.review_ids.contains(id))
+            && !excluded_sources.iter().any(|e| e.review_ids.contains(id))
+        {
             limitations.push(format!(
                 "native claim {id} has no eligible source assignment; retain native review"
             ));
@@ -231,6 +334,8 @@ pub fn plan(root: &Path, inventory: &ReviewInventory, ids: &[String]) -> Result<
         schema_version: "1".into(),
         source_fingerprint: inventory.source_fingerprint.clone(),
         selected_review_ids,
+        include_supporting_source,
+        excluded_sources,
         inventory_fingerprint: inventory.input_fingerprint()?,
         assignments,
         limitations,
@@ -413,7 +518,12 @@ pub fn validate_admission(
     input: &Admission,
 ) -> Result<Vec<Evidence>, EngineError> {
     validate_review_inventory_for_collection(root, base)?;
-    let expected = plan(root, base, &input.plan.selected_review_ids)?;
+    let expected = plan_with_options(
+        root,
+        base,
+        &input.plan.selected_review_ids,
+        input.plan.include_supporting_source,
+    )?;
     if input.plan != expected {
         return Err(EngineError("source plan is stale or altered".into()));
     }
@@ -833,5 +943,89 @@ mod tests {
         }
         let sources = RepositorySources::load(&fixture.0).unwrap();
         assert!(sources.files.is_empty());
+    }
+
+    #[test]
+    fn supporting_source_classification_is_conservative() {
+        let file = |path: &str, source: &str| SourceFile {
+            path: path.into(),
+            language: Some(Language::Csharp),
+            source: source.into(),
+        };
+        assert!(supporting_reason(&file("src/Contracts.cs", "namespace App; public interface IStore { string Get(int id); } public enum Mode { A = 1, B = 2 }"), false).is_some());
+        assert!(
+            supporting_reason(
+                &file(
+                    "src/Contracts.cs",
+                    "public interface IStore { int Get() => 1; }"
+                ),
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            supporting_reason(
+                &file(
+                    "src/Contracts.cs",
+                    "public interface IStore { int Get() { return 1; } }"
+                ),
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            supporting_reason(
+                &file(
+                    "src/Contracts.cs",
+                    "public interface IStore { void Get(); } public class Store { }"
+                ),
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            supporting_reason(
+                &file(
+                    "src/Contracts.cs",
+                    "public interface IStore { void Get(); }"
+                ),
+                true
+            )
+            .is_none()
+        );
+        assert!(
+            supporting_reason(&file("src/Seeds/Populate.cs", "class Program {}"), false).is_some()
+        );
+        assert!(
+            supporting_reason(
+                &file("src/SeederApi/Populate.cs", "class Program {}"),
+                false
+            )
+            .is_some()
+        );
+        assert!(
+            supporting_reason(
+                &file(
+                    "src/Contracts.cs",
+                    "public interface IStore { static readonly string Value = Load(); }"
+                ),
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            supporting_reason(
+                &file("src/Performance/Measure.cs", "class Program {}"),
+                false
+            )
+            .is_some()
+        );
+        assert!(
+            supporting_reason(
+                &file("src/PerformanceService.cs", "class Program {}"),
+                false
+            )
+            .is_none()
+        );
     }
 }

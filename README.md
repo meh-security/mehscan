@@ -78,6 +78,8 @@ Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your cod
 
 The first pass reviews original source even when the scanner finds no candidates. It presents findings, unresolved questions, coverage limits and follow-up options, then stops unless another pass was requested.
 
+Seed/performance tooling and declaration-only C# interfaces/enums are available for cross-file lookups but omitted from standalone assignments by default. Use `--include-supporting-source` to include them explicitly; scope exclusions are reported separately from reviewed coverage.
+
 Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
 
 An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.

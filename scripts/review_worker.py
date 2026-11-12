@@ -2647,6 +2647,7 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
+    parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
     parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
     parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
     parser.add_argument("--second-pass-scope", default="all", help="eligible verdict classes: all or issues,dismissals,pending; Fast then automatically narrows this pool")

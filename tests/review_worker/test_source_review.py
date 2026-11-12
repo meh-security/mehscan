@@ -17,6 +17,30 @@ sys.path.insert(0, str(SKILL / "scripts"))
 
 
 class SourceReview(unittest.TestCase):
+    def test_supporting_source_is_queryable_but_native_questions_are_not_reviewed(self):
+        (self.root / "perf").mkdir()
+        (self.root / "perf/load.js").write_text(
+            "function run(request) { eval(request.query.code); }\n", encoding="utf8"
+        )
+        self.inventory = self.base / "supporting-inventory"
+        self.native("investigate", "review-inventory", self.root,
+                    "--repository-key", "acceptance:source", "--output", self.inventory)
+        entries = json.loads((self.inventory / "inventory.json").read_text())["entries"]
+        omitted = {e["review_id"] for e in entries if e["path"] == "perf/load.js"}
+        self.assertTrue(omitted)
+        result = subprocess.run(self.prepare_worker(proposal=False), capture_output=True,
+                                text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        summary = json.loads((self.base / "worker/source-review/summary.json").read_text())
+        self.assertEqual(summary["native_selected_claims"], 0)
+        self.assertTrue(any(s["path"] == "perf/load.js" for s in summary["excluded_sources"]))
+        self.assertFalse(omitted.intersection(summary["assessments"]))
+        self.assertFalse(any(w["path"] == "perf/load.js" for w in summary["coverage"]))
+        # Exclusion affects scheduling, not the inventory's source lookup surface.
+        lookup = self.native("investigate", "source", self.root, "--path", "perf/load.js",
+                             "--start-line", "1", "--end-line", "1")
+        self.assertIn("eval(request.query.code)", json.dumps(lookup))
+
     def test_template_source_is_assigned_without_native_candidates(self):
         (self.root / "Page.svelte").write_text("<p>{value}</p>\n", encoding="utf8")
         current = self.base / "template-inventory"

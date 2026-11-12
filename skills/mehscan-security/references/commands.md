@@ -41,7 +41,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
-| Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions) |
+| Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions). Add `--include-supporting-source true` only when explicitly including seed/performance tooling and declaration-only C# contracts. |
 | Validate source proposals | `mehscan investigate source-review-check ROOT --inventory RUN/inventory --input ADMISSION.json` |
 | Admit source proposals | `mehscan investigate source-review-admit ROOT --inventory RUN/inventory --input ADMISSION.json --output NEXT/inventory` (new directory; exports inventory, overview and cache) |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
