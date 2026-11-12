@@ -90,6 +90,28 @@ def scoped_native_ids(ids, entries, focus):
     return [rid for rid in ids if rid in scoped]
 
 
+def reconcile_completion_plan(draft, current_ids):
+    """Source proposals can supersede generic markers and refill native pages.
+
+    Keep old assessments as historical source work, never transfer them to a
+    newly exposed question. The completion plan must partition the derived IDs.
+    """
+    current_ids = set(current_ids)
+    groups = [set(draft.get(key, {})) for key in
+              ("selected_review_ids", "deferred_review_ids", "excluded_review_ids")]
+    if any(a & b for index, a in enumerate(groups) for b in groups[index + 1:]):
+        raise ValueError("source completion plan has overlapping dispositions")
+    previous_ids = set().union(*groups)
+    displaced = sorted(previous_ids - current_ids)
+    exposed = sorted(current_ids - previous_ids)
+    draft["selected_review_ids"] = sorted(groups[0] & current_ids)
+    for key in ("deferred_review_ids", "excluded_review_ids"):
+        draft[key] = {rid: reason for rid, reason in draft.get(key, {}).items() if rid in current_ids}
+    for rid in exposed:
+        draft["deferred_review_ids"][rid] = "Native question exposed after source admission; not reviewed and no prior verdict transferred."
+    return {"displaced_review_ids": displaced, "new_unreviewed_ids": exposed}
+
+
 def excluded_native_questions(plan):
     """Keep lookup-only source claims out of the default native fallback queue."""
     return {
@@ -97,6 +119,33 @@ def excluded_native_questions(plan):
         for source in plan.get("excluded_sources", [])
         for rid in source.get("review_ids", [])
     }
+
+
+def load_native_cards(native, root, inventory, stage, ids, assignment_id):
+    """Materialize native facts only for an investigation that actually starts."""
+    if not ids:
+        return {}
+    original = Path(stage) / "native-inputs" / assignment_id
+    native(["investigate", "review-bundles", root, "--inventory", inventory,
+            "--review-ids", ",".join(ids), "--output", original])
+    manifest = json.loads((original / "manifest.json").read_text(encoding="utf8"))
+    cards = {}
+    for bundle in manifest["bundles"]:
+        sweep = native(["investigate", "review-sweep", "--bundle",
+                        original / "requests" / bundle["filename"]])
+        for card in sweep["reviews"]:
+            if card["review_id"] in cards:
+                raise ValueError("native source cards contain duplicate review membership")
+            index = int(card["question_id"].split("-")[-1]) - 1
+            cards[card["review_id"]] = {
+                "question": sweep["questions"][index],
+                "facts": {k: card[k] for k in (
+                    "anchor", "operand_facts", "decision_facts", "path_steps",
+                    "source_configuration", "truncation", "suggested_lookups") if k in card},
+            }
+    if set(cards) != set(ids):
+        raise ValueError("native source cards differ from the investigation's exact review membership")
+    return cards
 
 
 def validate_assignment_scope(plan):
@@ -396,51 +445,6 @@ def run(args, legacy, worker):
     entries = {
         e["review_id"]: e for e in worker.read(inventory / "inventory.json")["entries"]
     }
-    # Preserve native relationship/control facts without replaying its overlapping
-    # source excerpts. The assigned original windows remain the source view.
-    native_cards = {}
-    if ids:
-        original = stage / "native-inputs"
-        native(
-            [
-                "investigate",
-                "review-bundles",
-                root,
-                "--inventory",
-                inventory,
-                "--review-ids",
-                ",".join(ids),
-                "--output",
-                original,
-            ]
-        )
-        for bundle in worker.read(original / "manifest.json")["bundles"]:
-            sweep = native(
-                [
-                    "investigate",
-                    "review-sweep",
-                    "--bundle",
-                    original / "requests" / bundle["filename"],
-                ]
-            )
-            for card in sweep["reviews"]:
-                index = int(card["question_id"].split("-")[-1]) - 1
-                native_cards[card["review_id"]] = {
-                    "question": sweep["questions"][index],
-                    "facts": {
-                        k: card[k]
-                        for k in (
-                            "anchor",
-                            "operand_facts",
-                            "decision_facts",
-                            "path_steps",
-                            "source_configuration",
-                            "truncation",
-                            "suggested_lookups",
-                        )
-                        if k in card
-                    },
-                }
     contract = (skill / "references/source-review.md").read_text(encoding="utf8")
     contract += (
         "\n"
@@ -541,6 +545,18 @@ def run(args, legacy, worker):
                       "error": "PriorPartialSource", "detail": "Prior incomplete source work overlaps; no automatic replacement call.",
                       "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
                       "prior_source_attempts": [str(path) for path in reuse_paths]}
+            worker.write(directory / "result.json", result)
+            return result
+        # Keep the native exporter and sweep, including their SQL/control facts,
+        # while avoiding bundle preparation for deferred or already settled jobs.
+        try:
+            native_cards = load_native_cards(native, root, inventory, stage,
+                                              assignment["review_ids"], assignment["id"])
+        except Exception as error:
+            result = {"assignment_id": assignment["id"], "status": "incomplete",
+                      "review_ids": assignment["review_ids"], "error": type(error).__name__,
+                      "detail": getattr(error, "stderr", str(error)), "queries": 0, "bytes": 0,
+                      "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
             worker.write(directory / "result.json", result)
             return result
         known = [
@@ -1176,6 +1192,9 @@ def run(args, legacy, worker):
         draft["deferred_review_ids"][
             rid
         ] = "Source assignment did not complete; no automatic replacement model call."
+    membership_changes = reconcile_completion_plan(draft,
+        [entry["review_id"] for entry in worker.read(augmented / "inventory.json")["entries"]])
+    worker.write(stage / "membership-changes.json", membership_changes)
     worker.write(private / "plan.json", draft)
     native(
         [
@@ -1246,6 +1265,7 @@ def run(args, legacy, worker):
         "schedule": "schedule.json" if queues is not None else None,
         "native_admitted_ids": ids,
         "native_unreviewed_ids": sorted(set(ids) - set(assessments)),
+        "native_membership_changes": membership_changes,
         "budget_path": str(budget_path) if budget_path else None,
         "limitations": plan["limitations"],
         "coverage": coverage,

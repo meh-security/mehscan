@@ -221,6 +221,9 @@ explicitly requests AI-only discovery and `--native-share 100` native-only revie
 these endpoints do not automatically schedule work from the other queue. A
 native-only plan can use empty `assignment_ids` and `assignments` lists. This
 allocation is independent of Value/Comprehensive admission and Fast/Full follow-up.
+Native evidence bundles are prepared only for investigations that start, using
+the existing native exporter and SQL/control facts. Deferred jobs do not incur
+that preparation work.
 
 Value defaults to 40 controller-managed provider calls across the planned review and
 its phases, including any provider discovery. It targets 1.5 million observed

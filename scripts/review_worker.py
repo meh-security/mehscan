@@ -2598,7 +2598,7 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids") if k in source})
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes") if k in source})
         if source["completed_assignments"] != source.get("selected_assignments", source["assignments"]):
             record["status"]="incomplete"
             record["detail"]="Native results retained; some assigned source ranges were not reviewed."
