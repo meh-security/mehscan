@@ -29,6 +29,15 @@ def validate_assignment_scope(plan):
         raise ValueError("queryable-only source cannot enter default assignment windows")
 
 
+def validate_reuse_alias(previous, assignment, original):
+    if (original is None or original[0] != assignment or
+        Path(previous["reuse"]["prior_result"]).resolve() != original[2].resolve() or
+        previous["reuse"]["prior_plan_id"] != original[3] or
+        any(previous.get(key) != original[1].get(key) for key in
+            ("assignment_id", "draft", "proofs", "proposals", "inspected", "facts", "followups", "claim_contexts", "claim_context_errors", "proposal_followups", "proposal_contexts"))):
+        raise ValueError("prior reused source result differs from its supplied original")
+
+
 def reused_source_result(assignment, previous, plan):
     """Reconstruct and validate the completed result's source-backed envelope."""
     if previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
@@ -321,8 +330,10 @@ def run(args, legacy, worker):
     source_metrics = []
     reuse_jobs = {}
     partial_windows = []
-    reuse_path = getattr(args, "reuse_source_results", None)
-    if reuse_path:
+    reuse_paths = getattr(args, "reuse_source_results", None) or []
+    if isinstance(reuse_paths, str):
+        reuse_paths = [reuse_paths]
+    for reuse_path in reuse_paths:
         prior = worker.outside(reuse_path, root)
         if prior.resolve() == output.resolve():
             raise ValueError("source reuse requires a separate prior attempt")
@@ -343,6 +354,10 @@ def run(args, legacy, worker):
             if previous is None or previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
                 partial_windows.extend(old["windows"])
                 continue
+            if previous.get("reuse"):
+                original = reuse_jobs.get(directory.name)
+                validate_reuse_alias(previous, old, original)
+                continue
             frame = worker.read(directory / "0-input.json")
             prior_work = worker.read(Path(frame["work_package"]))["payload"]
             prior_runtime = prior_work["runtime"]
@@ -355,7 +370,9 @@ def run(args, legacy, worker):
                 prior_context["work"]["runtime"] != prior_runtime or prior_context["work"]["review_ids"] != old["review_ids"] or
                 prior_context.get("source_assignment_id") != old["id"] or prior_windows != old["windows"]):
                 raise ValueError("prior source reviewer policy, provider or membership differs")
-            reuse_jobs[directory.name] = (old, previous, result_path)
+            if directory.name in reuse_jobs:
+                raise ValueError("duplicate independent completed source assignment")
+            reuse_jobs[directory.name] = (old, previous, result_path, prior_plan["plan_id"])
 
     def overlaps_partial(assignment):
         return any(w["path"] == p["path"] and w["start_line"] <= p["end_line"] and p["start_line"] <= w["end_line"]
@@ -365,15 +382,8 @@ def run(args, legacy, worker):
         directory = stage / "jobs" / assignment["id"]
         directory.mkdir(parents=True)
         prior_job = reuse_jobs.get(assignment["id"])
-        if overlaps_partial(assignment):
-            result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
-                      "error": "PriorPartialSource", "detail": "Prior incomplete source work overlaps; no automatic replacement call.",
-                      "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
-                      "prior_source_attempt": str(prior)}
-            worker.write(directory / "result.json", result)
-            return result
         if prior_job and prior_job[0] == assignment:
-            _, previous, prior_result = prior_job
+            _, previous, prior_result, prior_plan_id = prior_job
             try:
                 admission = reused_source_result(assignment, previous, plan)
                 worker.write(directory / "admission.json", admission)
@@ -381,13 +391,20 @@ def run(args, legacy, worker):
                         "--input", directory / "admission.json"])
                 result = {**previous, "calls": 0, "queries": 0, "bytes": 0, "seconds": 0,
                           "unknown_provider_calls": 0,
-                          "reuse": {"prior_result": str(prior_result), "prior_plan_id": prior_plan["plan_id"], "prior_calls": previous["calls"],
+                          "reuse": {"prior_result": str(prior_result), "prior_plan_id": prior_plan_id, "prior_calls": previous["calls"],
                                     "note": "Previously completed assessment; not a new review under current guidance. Prior usage remains in the original attempt."}}
             except Exception as error:
                 result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
                           "error": type(error).__name__, "detail": str(error), "queries": 0, "bytes": 0,
                           "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
-                          "prior_source_attempt": str(prior)}
+                          "prior_source_attempt": str(prior_result.parent.parent.parent.parent)}
+            worker.write(directory / "result.json", result)
+            return result
+        if overlaps_partial(assignment):
+            result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
+                      "error": "PriorPartialSource", "detail": "Prior incomplete source work overlaps; no automatic replacement call.",
+                      "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0,
+                      "prior_source_attempts": [str(path) for path in reuse_paths]}
             worker.write(directory / "result.json", result)
             return result
         known = [

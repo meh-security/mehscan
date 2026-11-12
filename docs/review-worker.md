@@ -77,6 +77,8 @@ and allowance bindings and revalidating their cited proofs. Reused results retai
 their prior provenance and usage; they are not new reviews under current guidance.
 Assignments overlapping interrupted or unknown-usage work remain deferred, with
 no automatic replacement call. Partial conversations are not resumed by this option.
+Repeat the option in chronological order to include multiple prior attempts.
+An exact completed recovery is revalidated before older partial status can defer it.
 
 The bundled reviewer reports coverage using controller-owned `window_ref` identities
 from `research.coverage_windows`. The adapter supplies their original paths and

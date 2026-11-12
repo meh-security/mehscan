@@ -2669,7 +2669,7 @@ def main():
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
-    parser.add_argument("--reuse-source-results", help="reuse matching completed source assignments from a prior attempt; defer overlapping incomplete work")
+    parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
     parser.add_argument("--expert-workers", type=int, default=1)
     parser.add_argument("--expert-review-ids", help="route these exact IDs' bounded bundles directly to the expert")

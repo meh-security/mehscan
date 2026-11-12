@@ -19,6 +19,20 @@ import review_source
 
 
 class SourceReuse(unittest.TestCase):
+    def test_prior_reuse_alias_requires_exact_original_and_provenance(self):
+        assignment = {"id":"one"}
+        original = {"assignment_id":"one", "draft":{"results":[]}, "proofs":[]}
+        path = Path.cwd() / "original-result.json"
+        alias = {**original, "reuse":{"prior_result":str(path), "prior_plan_id":"plan"}}
+        source = (assignment, original, path, "plan")
+        review_source.validate_reuse_alias(alias, assignment, source)
+        changed = copy.deepcopy(alias)
+        changed["draft"]["results"].append({"review_id":"invented"})
+        with self.assertRaises(ValueError):
+            review_source.validate_reuse_alias(changed, assignment, source)
+        with self.assertRaises(ValueError):
+            review_source.validate_reuse_alias(alias, assignment, None)
+
     def test_reconstructed_source_proof_rejects_membership_and_quote_changes(self):
         window = {"path":"app.js", "start_line":1, "end_line":1,
                   "source_sha256":"hash", "text":"safe();"}
