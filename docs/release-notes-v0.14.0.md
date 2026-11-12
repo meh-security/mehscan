@@ -2,9 +2,9 @@
 
 ## Features
 
-- Add Fast, Full and scoped threat follow-up for AI-only source reviews.
+- Focus Value reviews on a few source-backed operations; scripted Value source reviews now require `--source-selection`. Use Comprehensive for broader coverage.
+- Add automatically selected Fast reviews, Full audits and scoped threat follow-up for AI-only source reviews.
 - Group related findings by repair point while preserving callers and conditions.
-- Automatically select a bounded Fast review queue; use Full to audit every eligible claim.
 - Keep passive data models, supporting declarations and database schemas available for lookups without reviewing them by default.
 
 ## Bug fixes

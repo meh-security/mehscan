@@ -19,6 +19,7 @@ import review_context as context
 import review_source_profile as source_profiles
 import review_orchestration as orchestration
 import review_second_pass as second_pass
+import review_budget
 from review_trace import ReviewTrace
 
 _cancelled = False
@@ -64,6 +65,23 @@ def observed_turn(directory, turn, provider, *, require_complete_usage=True):
     if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens","cached_input_tokens","output_tokens")):
         return None
     return rows[0] if usage["cached_input_tokens"] <= usage["input_tokens"] else None
+
+
+def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=None, *, lease=None):
+    """Every controller-owned inference shares the same admission ledger."""
+    if budget_path and lease is None:
+        lease = review_budget.reserve(budget_path, frame["kind"])
+    try:
+        return execute(command, cwd, env, timeout, json.dumps(frame))
+    finally:
+        if lease is not None:
+            try:
+                receipt = observed_turn(cwd, frame["research"] | {"conversation_id": frame["conversation_id"]},
+                                        provider, require_complete_usage=False)
+            except Exception:
+                receipt = None
+            if not review_budget.finish(budget_path, lease, receipt):
+                raise ValueError("provider input usage is unknown; shared review budget fenced")
 
 
 def reply_validation_feedback(error, task):
@@ -955,6 +973,9 @@ def run_locked(args):
             outside(argument, root)
     output = outside(args.output, root, False)
     source_prepared = getattr(args,"_source_prepared",None)
+    budget_path = getattr(args, "_review_budget", None)
+    if source_prepared:
+        budget_path = read(source_prepared).get("budget_path", budget_path)
     if source_prepared:
         prepared_path=outside(source_prepared,root)
         if prepared_path.parent.parent != output and not getattr(args,"resume_from",None):
@@ -1453,18 +1474,20 @@ def run_locked(args):
                 round=round_index, calls_remaining=calls_left-round_index, queries_remaining=frame["research"]["queries_remaining"])
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
+            lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
             job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time(),
                      active_turn={"conversation_id":conversation_id,"round":round_index})
             succeeded = False
             try:
-                value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
+                value = execute_provider(worker_command, output, dict(os.environ), remaining(), frame,
+                    tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"), budget_path, lease=lease)
                 succeeded = True
             except CommandFailure as error:
                 provider = tiered_policy["expert"] if profile=="expert" else bound_runtime.get("provider")
                 if observed_turn(output, job.state["active_turn"], provider) is not None:
                     job.save(model_inflight=False, active_turn=None, active_since=time.time())
                     correction = reply_validation_feedback(error, frame)
-                    if (correction is not None and not job.state.get("reply_validation_corrections")
+                    if (not budget_path and correction is not None and not job.state.get("reply_validation_corrections")
                             and round_index + 1 < calls_left and deadline > time.monotonic()):
                         job.save(reply_validation_corrections=1)
                         feedback = correction
@@ -2575,12 +2598,13 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims") if k in source})
-        if source["completed_assignments"] != source["assignments"]:
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path") if k in source})
+        if source["completed_assignments"] != source.get("selected_assignments", source["assignments"]):
             record["status"]="incomplete"
             record["detail"]="Native results retained; some assigned source ranges were not reviewed."
         record["source_review"]["calls"]=source["calls"]
-        record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"]!="complete"]
+        record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] not in ("complete", "deferred")]
+        record["source_review"]["deferred_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] == "deferred"]
         write(output/"source-review.json",record["source_review"])
     record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000) + (source["elapsed_ms"] if source_prepared else 0)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
@@ -2649,6 +2673,7 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
+    parser.add_argument("--source-selection", help="source-bound ranked selection of one to six named operations for all-phase review")
     parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
     parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
     parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
@@ -2688,7 +2713,7 @@ def main():
     if "review_options" in result:
         summary["review_options"] = result["review_options"]
     print(json.dumps(summary))
-    return 0 if result["status"] in ("admitted", "source_validated") else 2
+    return 0 if result["status"] in ("admitted", "source_validated", "selection_required") else 2
 
 
 if __name__ == "__main__":

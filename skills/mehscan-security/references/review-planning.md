@@ -1,7 +1,9 @@
 # Plan a repository review
 
-Repository AI review covers the requested original-source scope, including files
-without native candidates. Use [source review](source-review.md) for those
+Repository AI review investigates original-source operations within the requested
+scope, including operations without native candidates. Value selects a bounded
+set; an explicit Comprehensive request covers the broader admitted scope.
+Use [source review](source-review.md) for those
 assignments. Known native questions guide the investigation; they do not define
 all security relationships in a file. Reuse the current context to assess new
 source-backed questions, retaining separate verdicts and explicit coverage limits.
@@ -33,19 +35,20 @@ refilling a slot when its independent package completes. Keep a shared producer
 and its caller/effect checks in one job; split different producers or controls.
 Do not launch one reviewer per occurrence. Queue status is ready, running,
 completed, or blocked on a named fact; unstarted IDs remain unreviewed.
-Default to Value review: use enough surface context to rank work, then cover
-distinct security relationships across relevant lanes, including access, output,
-data exposure and state changes. Review distinct consequential relationships;
-an occurrence count is not a target for Value coverage. Keep
-stronger signals, clearly justified fixes and promising high-impact leads in Value.
+Default to Value review: use bounded surface context and actual source bodies to
+select 4–6 named operations. Mix relevant access, interpretation, disclosure and
+state relationships according to their actual effects. A native occurrence count
+or filename is not a coverage target or a selection rule. Stronger mechanisms,
+clearly justified fixes and promising consequential gaps can qualify.
 Ordinary directory setup/listing, normal data decoding, syntax-only unsafe/extern,
 nonsecurity hashes, positive controls and generic log formatting are supporting
 facts, not standalone jobs in either mode. Comprehensive needs a plausible
 medium-or-higher mechanism, such as sensitive disclosure, meaningful log forgery
 or a cookie-authenticated sensitive state change. Input alone does not turn a
 low-effect operation into mandatory review. File-content, unsafe interpretation
-and consequential export/permission relationships remain useful. In a large queue, keep the unselected work
-visible and call the review partial until every relevant lane is assessed.
+and consequential export/permission relationships remain useful. Keep unselected
+coverage visible; completing selected Value operations does not establish that
+every repository lane was assessed.
 Comprehensive review gives every admitted ID a verdict within the user's scope.
 Value excludes source-proven build tooling, vendor distributions and generated
 copies from its application queue by default; keep their exact IDs and ownership
@@ -60,8 +63,8 @@ deferred IDs have explicit effort assumptions or shared dependencies, not safe
 verdicts. Ordinary PHP output/loading occurrences are conditional surface
 inventory: inspect producers and reopen consequential sites. Review
 `dependency_review_ids` first; unsafe or unresolved shared
-behavior reopens its dependent sites with the rebuilt ledger. Value can expand
-to Comprehensive when the source warrants it.
+behavior reopens its dependent sites with the rebuilt ledger. Recommend a broader
+scope when useful; change to Comprehensive only when that scope is authorized.
 For shared C# destinations or path producers, inspect the exact shared field,
 helper and hooks, then check site-specific inputs, guards and effects. Different
 options, raw URI suffixes and replaced selectors retain separate work. An
@@ -81,7 +84,8 @@ Keep `RUN/review-plan.md` current with included, conditional, and deferred
 scope, progress, and a short ranked queue of review lanes. Read it first when
 resuming; choose a ready in-scope lane, then select exact IDs with small
 previews. In auto mode, continue
-the next authorized chunk without waiting for a new instruction; report the
+the next chunk within the authorized selected operations without waiting for a
+new instruction; report the
 queue and progress so the user can redirect or stop. Re-rank when source checks
 change the picture. For one supplied review or a quick candidate scan, skip
 this planning step.
@@ -92,6 +96,17 @@ ranked plan as separate, unreviewed source questions. Follow
 for their independent evidence check. Keep the originating ID's verdict intact.
 
 ## Time and workload
+
+The default Value controller allowance is shared across its managed provider
+calls: 40 calls, an observed 1.5 million input-token target with 100,000 tokens
+reserved per in-flight call, and 20 minutes before new calls stop. Active calls
+may drain and completed decisions are finalized. These are dispatch/usage targets,
+not performance, exact token or currency guarantees. Missing provider usage stays
+unknown. Discovery performed through this controller consumes the same allowance;
+host-agent orientation is ordinary bounded agent work outside this ledger.
+Do not reset the allowance by splitting operations, starting another phase or
+turning unknown helpers into a larger backlog. Explicitly requested Fast/Full or
+scoped threat follow-up remains within the authorized overall scope and budget.
 
 Before launching triage, put the active/deferred counts and a short lane table
 in the review plan: area/category, active IDs, shared question or representative,
@@ -381,6 +396,42 @@ Keep this as lightweight review navigation, updated during first pass. It does
 not require a separate model call, complete architecture or threat-model report
 before inspecting source. Exact-ID and bounded source assignments start directly.
 
+For the default Value `all` phase, first run the controller without a source
+selection. It prepares `source-review/plan.json`, `selection-options.json` and
+`checkpoint.json`, reports `selection_required` and makes no provider calls.
+Use this source index, native leads, route/job registration and bounded source
+reads in the host agent's current context to rank actual operations. Keep this
+orientation to a few focused steps, typically 4–8 reads or navigation actions;
+this is not another provider budget or an architecture-map phase. If native
+results are sparse or absent, inspect a few relevant entrypoints, parser bodies
+or custom controls to orient the same bounded selection. If no consequential
+lead emerges, report that bounded result and stop without an all-source fallback.
+Do not preload whole models, templates or SQL schemas, build an exhaustive
+question backlog, or run
+separate full screening, review and threat passes.
+
+Choose 4–6 operations by default (the controller accepts 1–6 for narrower tasks).
+Each must name an inspected owner body/range, the actor or input, protected
+effect, deciding question, next deciding fact and selection reason. Its signal
+must cite an actual source-body clue: a native candidate, clear unsafe
+construction, supported local security-contract defect, or actor/effect
+relationship with a suspected control mismatch. A question about an unread
+helper alone does not qualify. Use source evidence to choose security controls,
+parser implementations and other dedicated bodies as needed;
+do not simply take the first six files or highest native severity labels.
+Put native and source-discovered leads in this same queue. An unknown helper
+without a concrete consequential relationship stays a coverage note.
+Assign one owner per operation and preserve shared cited facts for its related
+questions. A model, view, template or SQL definition enters through the deciding
+lookup rather than an independent duplicate investigation.
+
+Save the ranked selection outside the source root and pass it as
+`--source-selection FILE`. Copy the exact source fingerprint, plan ID and
+assignment IDs from the checkpoint; the [worker guide](../../../docs/review-worker.md#bounded-value-selection)
+defines the JSON fields. Complete the selected operations and report the remainder
+as unselected coverage. Comprehensive explicitly extends that scope using existing
+facts and results; it does not rerun settled relationships.
+
 Inspect main manifests, entrypoints, route registration, and a few relevant
 files. Cross the largest inventory categories with those surfaces; top-level
 directory counts alone do not show exposure. Record only roles that change
@@ -398,13 +449,13 @@ Check whether a framework's stated security requirement is enforced or only
 reported as a warning. Use this small map as a prior for sink-only IDs, then
 verify the exact caller, operand, and guard during triage.
 
-Choose a review mode:
+Choose one of the two review modes after applying the user's Changed, component,
+category or question scope:
 
 | Mode | Scope |
 | --- | --- |
-| **Focused** | Review the user's CWE, capability, component, or question. State the filter and account for matching IDs. |
-| **Value (default; one level below Comprehensive)** | Prioritize distinct stronger signals, clearly justified fixes and promising high-impact relationships across relevant surfaces. Useful medium issues can qualify. Keep unsafe SQL, shell, executable object loading and code construction despite uncertain reachability. Account for genuine medium-impact deferred relationships; do not make occurrence coverage a target. |
-| **Comprehensive** | Review every admitted plausible medium-or-higher issue within scope, including weaker consequential leads and relevant build/dependency/generated lanes. Ordinary low-effect observations remain context, not pending verdict jobs. |
+| **Value (default)** | Investigate 4–6 named, source-backed operations, selected for useful consequential questions. Useful medium issues and dangerous constructions with unresolved exposure can qualify. Record the selected actor, effect, deciding question, bounded source and deferred coverage. |
+| **Comprehensive (explicit)** | Systematically review the broader admitted plausible medium-or-higher relationships within the same user scope, retaining completed Value facts and results and adding remaining work. Ordinary low-effect API use remains context. |
 
 Pre-assessment must state the review scope before building bundles. Its inputs
 are the source tree (manifests, framework configuration, entrypoints, routes,
@@ -419,23 +470,20 @@ shared controls to adjust rank; cross-repository lessons are hypotheses, not
 verdicts. Then rank **in now**, **conditional after preview**, and **deferred**
 lanes. Give each lane a selection test, reason, and rough count. Account for
 the whole inventory without claiming that an unreviewed candidate is safe.
-Do not use an arbitrary pilot size as the scope.
+The default operation bound is an explicit Value scope limit, not evidence of
+whole-repository coverage. Comprehensive does not inherit that limit.
 An output sink may expose stored lower-trust data without a direct request
 marker; do not defer all output sinks on that basis. A user can stop after any chunk
 without losing completed work.
 
-Value scope is complete when every relevant surface lane has been inspected,
-no ready lane has an unreviewed distinct security relationship, and each
-deferred group has a source-backed reason. Counts alone do not prove this:
-record which components, producers, operations, and controls were sampled and
-what remains uncertain. A few safe reviews or an unexamined inventory are not
-evidence that nothing valuable remains. If work stops sooner, call it a partial
-Value review and retain a concrete resume lane; do not describe the repo as
-free of issues. An unresolved review must name its decision-changing
-missing fact. Report reviewed, deferred, and unselected counts and coverage;
-do not call this comprehensive or clean. Reopen scope if a route, control, or
-actionable finding changes the map. If comprehensive review was requested,
-keep that scope unless the user changes it.
+Value scope is complete when its selected operations have settled results or
+named deciding gaps, with examined conditions and deferred coverage recorded.
+If a budget stops selected work early, report a partial Value review and its
+resume point. Neither completion nor a few safe results establishes that the
+repository is free of issues. Report selected, examined and unselected coverage.
+New route/control facts can change priority within the bounded selection; they
+do not silently authorize a broader pass. Comprehensive continues across its
+admitted scope unless the user changes it or the authorized budget is exhausted.
 
 Within any mode, mix components, capabilities, producers, and destinations
 rather than taking the first IDs in file order. Before selecting a neighboring

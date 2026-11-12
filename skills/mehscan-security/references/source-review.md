@@ -4,10 +4,17 @@ Review the assigned original-source ranges and the supplied native questions.
 Native questions guide work; they do not define all the security relationships
 in this source. A supported language, zero candidates or one closed local property
 does not establish that the operation is safe for other questions.
-When an AI review has no native candidates, still review the assigned source
+When an AI review has no native candidates, still review the selected source
 and record flows, controls and gaps. Source-discovered claims are assessed and
 source-validated here, then remain eligible for the same Fast/Full follow-ups.
 Scoped threat review can use coverage and cited source even with no claims.
+Assignment selection precedes proposal admission: Value investigates its bounded
+named operations; Comprehensive extends the admitted scope systematically.
+Neither a proposal's priority nor a native lead authorizes reviewing every file.
+Choose operations from inspected bodies and their actor/effect relationships,
+including dedicated custom security controls, parsers and validators when relevant.
+With sparse native results, orient through the source index and bounded route,
+job, parser or control reads; do not replace selection with an all-source pass.
 Default standalone assignments omit seed/performance tooling and C# files that
 contain only interface or enum declarations. These sources remain queryable:
 read them when they decide a question in an assigned flow. Omitted files are
@@ -145,7 +152,10 @@ finding anchor; record that relationship in coverage when the actual operation
 has no anchor in the assignment. A readable body can settle a question
 even when outline or symbol extraction fails.
 
-Within an assignment, reuse a helper's inspected source from the assigned
+Give one owner the operation and its deciding producer/control/consumer chain.
+Related questions reuse cited facts; do not independently rediscover the same
+template, model or helper in separate jobs. Within an assignment, reuse a helper's
+inspected source from the assigned
 windows or earlier lookups. Check each caller's arguments, configuration and
 effect separately. Apply the [control-to-consumer checks](runtime-review.md#control-to-consumer-checks)
 during this first investigation, including stored-value transformations and
@@ -170,9 +180,12 @@ Proposals require an anchor in an assigned original source range, a precise
 question, mechanism, consequence, CWE/capability and inspected supporting source.
 Use one to eight supporting evidence references per proposal; the anchor is
 separate. Select the deciding references and narrow the claim if more are essential.
-Choose Value for shown mechanisms or promising consequential gaps; Comprehensive
-for plausible useful relationships with a concrete unresolved edge. Bare API
+After the scope gate, choose Value priority for shown mechanisms or promising
+consequential gaps; Comprehensive priority for plausible useful relationships
+with a concrete unresolved edge. Bare API
 occurrences and hypothetical chains do not require a proposal.
+An unknown helper without a source-backed consequential question remains a named
+coverage gap; it does not automatically create another paid investigation.
 Under Value or Comprehensive, a defect whose only supported impact is low
 severity stays in coverage unless low-severity review was explicitly requested.
 Expected library behavior alone does not justify a new proposal whose remaining

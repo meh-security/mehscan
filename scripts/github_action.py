@@ -381,6 +381,7 @@ def prepare(get=None, execute=run_command):
                           "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
                           "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
                           "source_controller_sha256": file_digest(Path(__file__).with_name("review_source.py")),
+                          "review_budget_sha256": file_digest(Path(__file__).with_name("review_budget.py")),
                           "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
                           "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
                           "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
@@ -630,6 +631,7 @@ def review_tools(plan, execute):
     config = plan["review"]
     for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"),
                       ("review_source.py", "source_controller_sha256"),
+                      ("review_budget.py", "review_budget_sha256"),
                       ("review_source_profile.py", "source_profile_sha256"),
                       ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
         if file_digest(Path(__file__).with_name(name)) != config[key]:
@@ -807,6 +809,12 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 worker_error=error
                 if not (directory/"review/worker.json").is_file():raise
             worker_record = json.loads((directory / "review/worker.json").read_text(encoding="utf-8"))
+            if worker_record["status"] == "selection_required":
+                record.update(status="selection_required", reason="bounded_value_selection_required",
+                              review_execution="selection_required",
+                              source_selection=str(directory / "review/source-review/selection-options.json"))
+                terminal = "incomplete"
+                return record
             source_summary=directory/"review/source-review/summary.json"
             if not source_summary.is_file():source_summary=directory/"review/source-review/handoff.json"
             if source_summary.is_file():
@@ -985,11 +993,11 @@ if __name__ == "__main__":
             finish(sys.argv[2])
         elif len(sys.argv) == 3 and sys.argv[1] == "run-model":
             result = run_model(sys.argv[2])
-            if result["status"] != "reviewed":
+            if result["status"] not in ("reviewed", "selection_required"):
                 sys.exit(2)
         elif len(sys.argv) == 7 and sys.argv[1] == "review" and sys.argv[3] == "--reviewer-command" and sys.argv[5] == "--reviewer-label":
             result = review(sys.argv[2], sys.argv[4], sys.argv[6])
-            if result["status"] != "reviewed":
+            if result["status"] not in ("reviewed", "selection_required"):
                 sys.exit(2)
         else:
             raise ValueError("expected prepare, finish PLAN, run-model PLAN or review HANDOFF --reviewer-command FILE --reviewer-label LABEL")

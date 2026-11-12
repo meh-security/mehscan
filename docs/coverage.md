@@ -162,17 +162,26 @@ applicable operation was found, or that relevant source was outside recognition
 or scope. It is not an AI review or a clean bill of health. Similarly, a missing
 question cannot become a model dismissal.
 
-Value review prioritizes the admitted questions and preserves explicit deferrals.
-Comprehensive uses conservative eligibility: it retains uncertain security
+Value selects 4–6 named operations by default from actual source-body evidence
+and native leads, then investigates their consequential questions within a shared
+budget. It preserves unselected coverage and explicit deferrals. Source-driven
+orientation remains bounded when native results are sparse; no candidates does
+not trigger an all-source review. The default worker requires a
+[source selection](review-worker.md#bounded-value-selection) before AI calls.
+
+Comprehensive is an explicit broader scope. It retains completed Value work in
+the matching scope and systematically adds admitted relationships. Conservative
+native eligibility retains uncertain security
 relationships but can exclude an ordinary read when native source facts establish
 its local provenance without an identified consequential relationship. Unresolved
 path provenance, observed runtime environment mutation or a connected
 security-sensitive effect keeps the question eligible. An exclusion does not
 establish content trust or deployment authority. Exclusions are visible scope
-decisions, not dismissals; raw scan evidence and Value IDs remain available. The
-two queues need not be strict subsets of one another.
+decisions, not dismissals; raw scan evidence and Value IDs remain available.
+Native profile hints can differ without discarding existing reviewed facts.
 
-Comprehensive reviews every admitted question; it does not add missing language
+Comprehensive reviews every admitted question within the authorized scope;
+ordinary API occurrences do not each require a verdict. It does not add missing language
 semantics or reopen excluded source. Findings, dismissals and unresolved checks
 are scoped to the exact operation and conditions reviewed. Keep a deciding
 missing caller, policy, helper or effect as a follow-up question rather than

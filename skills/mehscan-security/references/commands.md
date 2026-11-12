@@ -5,6 +5,19 @@ costs, limits and on-demand category guides, use [the worker API](worker-api.md)
 `definition` and `guidance` are broker operations, not native CLI subcommands.
 For execution diagnosis, use [the trace guide](execution-trace.md).
 
+The Python controller's default Value `all` phase first prepares a zero-AI
+`selection_required` checkpoint under `source-review/`. Use bounded source
+orientation in the host agent to choose 4–6 named operations, then invoke it with
+`--source-selection FILE`; [the worker guide](../../../docs/review-worker.md#bounded-value-selection)
+defines the bound JSON. The controller accepts 1–6 assignments and validates their
+source bindings, owner ranges and cited signals. `--selection policy` supplies
+native priority hints; it does not replace source selection. Explicit native
+exact-ID work retains `--phase native` without this source-selection gate.
+Value shares 40 managed provider calls, a 1.5M observed input-token target with
+100k reserved per in-flight call, and 20 minutes before new calls stop. Active
+work can drain. These targets do not meter host-agent orientation or guarantee
+exact token/currency or elapsed totals.
+
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate incompatible inventories with the supplied executable; its emitted
@@ -153,9 +166,12 @@ deferrals, with reasons/dependencies. Comprehensive applies conservative native
 eligibility: locally proven ordinary read-only selections can be excluded with
 reasons, while unknown modes, provenance and consequential relationships stay
 admitted. Its `excluded_review_ids` are inventory-bound scope, not deferred
-mandatory work or safe decisions. Comprehensive must finish every admitted ID;
-Value retains its existing selection. The profiles need not be nested.
-Without this option Value templates select all; Comprehensive eligibility still applies.
+mandatory work or safe decisions. Comprehensive must finish every admitted ID
+within its explicit scope, retaining completed Value work where the scope matches.
+The native profile hints can differ; source selection is a separate scope gate.
+Without this option native Value templates select all; Comprehensive eligibility
+still applies. This native template behavior does not bypass the default Value
+controller's source-selection checkpoint.
 Deferred work has no verdict; promote it when stronger evidence warrants review.
 The native runtime binds the same per-conversation allowance for Value and
 Comprehensive: five research rounds (six total calls), 24 query units, 512 KiB and

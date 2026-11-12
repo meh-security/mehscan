@@ -5,16 +5,25 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
+Default to **Value**: select 4–6 named, source-backed operations within the user's
+scope, then investigate their deciding relationships. **Comprehensive** is an
+explicit request for systematic coverage of the broader admitted scope. Changed,
+component and category requests constrain either mode; they are scope filters.
+Use [review planning](references/review-planning.md) for bounded source orientation
+and selection before launching repository AI work. This orientation happens in
+the host agent's current context, not as another full provider review pass.
+
 For a source assignment, use [source review](references/source-review.md): review
 the assigned original source, assess existing questions and investigate additional
-consequential relationships in the same context. The default AI controller assigns
-source even when the scanner finds no candidates. New proposals require validated
+consequential relationships in the same selected operations. The AI controller can
+assign selected source even when the scanner finds no candidates. New proposals require validated
 source and ordinary finalization; examined coverage is separate from verdicts.
 During first pass, identify the protected effect and challenge the applicable
 authority, lifecycle or interpretation boundary. Follow a deciding cross-file
 edge in that investigation; a separate threat model is not a prerequisite.
-With no scanner candidates, continue the same requested source scope as an
-AI-only first pass; an empty candidate list does not end the review. AI-discovered
+With no or few scanner candidates, use bounded source reads to select relevant
+operations for an AI-only first pass; never fall back to assigning all source.
+An empty candidate list does not end the review. AI-discovered
 claims and pending questions use the same Fast/Full follow-up path after source
 validation. Scoped threat review can also use examined flows and coverage gaps
 when the AI pass produces no claims. Do not manufacture candidates to enable it.
@@ -187,22 +196,20 @@ Comprehensive scope alone does not request a Full second-pass audit.
 | Local changes, PR or release review | [Changed review](references/changed-review.md) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
-Candidates are leads, not confirmed vulnerabilities. Default to Value mode.
-For runtime-bound AI work use `--policy value --selection policy` as described in
-[controller commands](references/commands.md).
-Honor Comprehensive or a requested category. Value prioritizes stronger signals,
-clearly justified fixes and promising high-impact leads, including useful medium
-issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
-not a queue for every raw sink occurrence. Excluded observations remain supporting
-facts, not safe verdicts or mandatory deferred reviews. Planning records enough
-stack, entrypoint and workload context to rank work; develop it as source is
-reviewed rather than requiring a separate architecture or threat-model pass.
-Use a small first chunk to measure review
-pace and plan the next pass within the user's time budget.
-Planning ranks work, accounts for deferred IDs and chooses small chunks or
-disjoint agent assignments when requested. Read it for repository scope or
-queue decisions, then use the supplied-bundle flow for each selected chunk.
-Keep the whole-run plan current and continue authorized work in auto mode.
+Candidates are leads, not confirmed vulnerabilities. Value chooses operations
+from actual source-body evidence and native leads in one ranked queue, preserving
+the actor, protected effect and conditions that make the work useful. A severity
+label or filename alone cannot select the scope. Give each operation one owner;
+reuse cited helper/control facts while checking each caller's conditions.
+For runtime-bound Value work, `--policy value --selection policy` supplies native
+priority hints, while `--source-selection FILE` binds the selected source scope.
+Without the latter, the default `all` phase prepares a selection checkpoint and
+stops before AI calls. Follow [controller commands](references/commands.md) and
+[review planning](references/review-planning.md) to select and launch the work.
+Comprehensive retains completed Value work within the same scope and extends it
+to admitted plausible medium-or-higher relationships. Ordinary API occurrences
+remain supporting facts. Keep scope and deferred coverage explicit, then finish
+the authorized selection within its shared budget.
 
 Changed is a scope, combined with Value or Comprehensive. Use its guide before
 building an inventory; it requires a short change pass even when no IDs appear.

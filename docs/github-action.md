@@ -34,10 +34,10 @@ The composite Action accepts:
 | `scan-root` | Authorized directory within that checkout; default `.`. Parent traversal and external symlinks are rejected. |
 | `pull-request` | Explicit PR number on `workflow_dispatch`; automatic PR events supply their number. |
 | `base`, `target` | Both required for a manual release delta; mutually exclusive with `pull-request`. |
-| `review-mode` | `native` (default), `value` or `comprehensive`. The latter prepare active review work; `provider-config` additionally executes the bundled BYOK reviewer. |
+| `review-mode` | `native` (default), `value` or `comprehensive`. The latter prepare active review work; `provider-config` additionally invokes the bundled worker. Value requires a bounded source selection before provider review. |
 | `skill-root` | Trusted security skill outside target source; defaults to the pinned Action package. |
 | `provider-contract` | Optional descriptor for a separate trusted handoff consumer. Mutually exclusive with `provider-config`. |
-| `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and execute the bundled reviewer. |
+| `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and invoke the bundled worker; Value can stop at its zero-AI selection checkpoint. |
 | `allow-fork-review` | Default `false`. `true` authorizes fork model execution only on explicit `workflow_dispatch`; automatic fork events prepare native inventory only. |
 | `token` | Read-only metadata/private-source token; defaults to `github.token`. |
 | `state-store` | Optional pre-existing persistent local directory, absolute and outside workspace/runner temp. All coordinated workers must share one trusted host and store. |
@@ -190,6 +190,17 @@ as explicit unreviewed deferrals with reasons; Comprehensive uses conservative
 eligibility and keeps every admitted ID, with inventory-bound exclusions recorded
 separately. Deferrals and exclusions are not safe verdicts. Manual Value plan
 templates retain their all-ID default unless selection is requested explicitly.
+These native priority hints do not choose the source operations for Value.
+The default Value worker `all` phase requires `--source-selection FILE`; without
+it, invocation prepares `source-review/plan.json`, `selection-options.json` and
+`checkpoint.json` with `selection_required` and zero AI calls. The Action does
+not automatically make this host-agent choice. Use the
+[bounded selection workflow](review-worker.md#bounded-value-selection) to inspect
+source and supply the selected operations to the worker. A selection checkpoint
+ends the Action's active claim without marking the source reviewed. A follow-up
+must create a fresh claim/work package for the same unchanged inventory, then
+use the bound selection with a new worker output directory. Comprehensive explicitly requests the
+broader admitted source scope.
 A zero-native queue still prepares changed-effect work. The Action returns
 `review_ready` and a private `review-handoff` path. This status means ready to
 review, not reviewed. The example caller remains native-only.
@@ -212,7 +223,7 @@ python /TRUSTED/scripts/github_action.py review PRIVATE/handoff.json --reviewer-
 ```
 
 The consumer rechecks source, endpoints, executable, controller, skill and current
-work before model execution. It invokes the existing change pass, native reviewer,
+work before model execution. Subject to Value's source-selection checkpoint, it invokes the existing change pass, native reviewer,
 finalizer, report validator and state admission. On return it rechecks freshness
 and closes the owned attempt. Stale endpoints retain the pinned historical result
 and never become a current reviewed result. Failure or cancellation ends incomplete

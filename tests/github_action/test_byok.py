@@ -137,7 +137,7 @@ else:
             "model":"gpt-6-luna","reasoning_effort":"medium","auth_file":str(self.auth),
             "private_directory":str(self.workspace / "provider-private")}
         self.config.write_text(json.dumps(self.body))
-        os.environ.update(MEHSCAN_REVIEW_MODE="value", MEHSCAN_PROVIDER_CONFIG=str(self.config))
+        os.environ.update(MEHSCAN_REVIEW_MODE="comprehensive", MEHSCAN_PROVIDER_CONFIG=str(self.config))
 
     def ready(self):
         directory, plan = self.prepare()
@@ -177,6 +177,16 @@ else:
         for entry in manifest["files"]:
             self.assertEqual(hashlib.sha256((directory / entry["path"]).read_bytes()).hexdigest(),entry["sha256"])
         with self.assertRaises(ValueError): adapter.run_model(directory / "plan.json",self.delivery.get,self.execute)
+
+    def test_configured_value_stops_at_selection_checkpoint(self):
+        os.environ["MEHSCAN_REVIEW_MODE"] = "value"
+        directory, plan, record = self.ready()
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        self.assertEqual(result["status"], "selection_required", result)
+        self.assertNotIn("completion", result)
+        self.assertFalse((directory / "usage.json").exists())
+        self.assertFalse((directory / "review/source-review/jobs").exists())
+        self.assertTrue(Path(result["source_selection"]).is_file())
 
     def test_pending_verdict_keeps_success_separate_from_security_resolution(self):
         self.auth.write_text('{"fixture":"not-a-real-key","pending":true}')

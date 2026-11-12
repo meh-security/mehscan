@@ -28,6 +28,7 @@
   "scripts/github_action.py",
   "scripts/review_context.py",
   "scripts/review_source.py",
+  "scripts/review_budget.py",
   "scripts/review_source_profile.py",
   "scripts/review_orchestration.py",
   "scripts/review_export.py",

@@ -1,17 +1,26 @@
 # Value and Comprehensive admission policy
 
 Use when choosing repository scope or reconsidering a noisy review family.
-The scanner assigns initial queues; source research can change priority.
-This policy is maintained from real application snippets and regression controls.
-It describes intended membership and known implementation gaps below; a current
+The scanner supplies initial priority hints; source research can change priority.
+Apply the user's scope and bounded operation selection before this admission
+policy. It describes intended relationship membership; a current
 queue entry is not proof that it deserves its assigned priority.
 
-## Two review queues
+## Two public modes
+
+Value is the default bounded review of 4–6 named operations selected from actual
+source bodies and native leads in the same queue. Comprehensive is explicitly
+requested systematic review of the broader admitted scope. It retains completed
+Value work within matching scope and adds admitted relationships. A Changed,
+component or category filter constrains either mode; it is not a third mode.
+Cheap source orientation happens in the host agent's context and does not require
+a separate full provider pass. See [review planning](review-planning.md) for the
+selection checkpoint, operation ownership and shared limits.
 
 | Queue | Include when | Rationale |
 | --- | --- | --- |
-| **Value** | A shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific high-value lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the first review budget on likely useful findings and conclusions. Useful medium issues can qualify; default severity alone does not decide. |
-| **Comprehensive** | A plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next fact that could settle it. | Conservative eligibility retains uncertain relationships and excludes source-established ordinary reads. It preserves other admitted families; its scope need not contain every Value ID. |
+| **Value** | Within selected operations, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the bounded first review budget on useful findings and conclusions. Useful medium issues can qualify; actor, effect, conditions and source evidence decide priority, rather than severity alone. |
+| **Comprehensive** | Across the broader admitted scope, a plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next deciding fact. | Extend Value's matched-scope work systematically while excluding source-established ordinary reads. Raw native profile hints can differ; they do not discard completed Value facts or verdicts. |
 | **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
 
 Unknown attacker control does not automatically discard a dangerous construction.
@@ -64,7 +73,7 @@ are also supporting context rather than executable-deserialization reviews.
 Neither mechanism removes raw scan evidence or certifies adjacent properties.
 
 Record **Value**, **Comprehensive-only**, or **excluded**, and the reason, when
-calibrating each rule or relationship. Supporting sources/guards/Resource facts
+ranking an admitted relationship after the scope gate. Supporting sources/guards/Resource facts
 own no independent review. A relationship follows its concrete sink and evidence;
 its CWE name alone does not settle the bucket. Preserve the inventory's exact ID
 and initial selection hint when planning reviews.
@@ -270,6 +279,12 @@ The current Python exclusion checks local uses and terminal consumers, but does
 not establish caller permissions or fully propagate request/authority facts.
 Treat guarding those connected selections as an implementation gap, not as a
 safe verdict or a reason to retain every ordinary query-builder occurrence.
+The local narrowing exclusion requires all observed uses to be filter predicates
+on supplied querysets, returning a queryset or reassigning that same parameter.
+Field reads, returns of selected records, error output, mutations, aliases and
+wrapped consumers prevent the cut. Terminal reads/deletes of the supplied
+parameter also prevent it. A projected selector must be a single flat `pk` or
+`id`; other columns retain their data relationship.
 
 ## Language and backend differences
 
@@ -471,95 +486,3 @@ locate producer code. Actual defineProps reads can supply declarations/types and
 two relative default-import child call sites, with static/bound/model props.
 Spreads, template locals, sample limits and oversized facts remain open. Aliases,
 global registration, destructured props and wider reactive flows remain gaps.
-
-## Improve from real applications
-
-For each concentrated or surprising lane, inspect a small mix of Value,
-Comprehensive-only and excluded snippets with the normal bundle skill. Include a
-useful counterexample, not just examples expected to be ordinary. Record:
-
-- application/revision, exact operation and original queue;
-- practical consequence and the one missing fact, if any;
-- keep/promote/demote/exclude, with concise rationale;
-- whether the repeated fact can be established cheaply by the scanner;
-- measured preparation/lookups/reviewer effort when available.
-
-Update this policy and scanner admission together when a repeated pattern is
-supported. Preserve a meaningful dangerous control and avoid app-name allowlists.
-If the change is still a hypothesis, label it and state which apps/languages have
-been checked. Do not extrapolate a small sample to vulnerability recall.
-Use existing plans/reports for this evidence; no additional AI routing pass,
-per-occurrence classification run or coverage quota is needed.
-
-## Current calibration from real snippets
-
-The first bounded sample used WordPress, Juice Shop and LANCommander. These are
-policy decisions for the inspected mechanisms, not application allowlists or a
-full recall assessment. The scanner does not yet establish every fact below.
-
-| Observed pattern | Target bucket | Decision-changing fact |
-| --- | --- | --- |
-| Fixed local startup copy or fixed application-root file read | Neither for traversal/SSRF | Actual owned file API and closed source/destination selectors; retain a separately shown writable-code or disclosure relationship. |
-| Private file reader fed by a fixed path table | Neither for traversal | All relevant producers select complete literal paths; a table key is not arbitrary path text. |
-| Template helper returns a canonical target checked beneath a canonical root | Neither for traversal | Separator-aware containment covers the returned path and later helpers preserve it. This does not settle template-content trust. |
-| Generic file-reader wrapper with no represented caller boundary | Comprehensive shared research at most | Check the actual caller/selector once. Mere existence of `get_contents(file)` is insufficient for Value or a separate review of every caller. Remove the lane if no practical medium-impact boundary emerges. |
-| Stream writer of ZIP scripts or serialized manifests | Neither for HTML output | Destination is an archive entry or private memory buffer, not an HTML renderer. Preserve independently shown script-execution effects. Receiver type alone is insufficient: a StreamWriter can wrap a response. |
-| Request-selected file content returned without canonical containment | Value | Request path controls the resource; combining/trimming paths does not establish containment. |
-| Request text interpolated into executed SQL | Value | The inserted value can change grammar; a length bound does not bind it. |
-| Auth-cookie HttpOnly omission / bound arbitrary-origin credentialed CORS | Comprehensive, unless a consequential chain promotes it | Cookie omission can be directly resolved; CORS needs applicable browser credentials and a sensitive response. |
-| Runtime plugin/code loader with validation whose selection contract is unresolved | Comprehensive | Verify target validation and selection authority as one implementation question; variable inclusion alone is not a finding. |
-
-Next admission refinements should establish the first five patterns generically,
-starting with actual output receivers and closed path producers. Do not add an
-extra model pass to classify ordinary operations. Prefer dropping a wrong sink
-classification over deferring it to Comprehensive.
-
-### Wagtail calibration (2026-10-09)
-
-A source-only scan of Wagtail at `e5117ba8` produced 154 Value/154 Comprehensive
-IDs. The generic changes above produce **103 Value/153 Comprehensive**: 34
-redirect questions and 16 unchanged link parameters defer; one fixed-padding
-candidate leaves both queues. No compiler backend or application/path allowlist
-was used. This first calibration used inventory schema 5; the follow-up below
-supersedes its ordinary-link deferral.
-
-Skill review covered 23 selected IDs, not the whole application: two guarded
-redirects, fixed padding, a narrowing locale lookup and sixteen links sharing the
-same default story URL were resolved as not issues in that scope. Three questions
-remain: image attribute-writer authority, RawHTMLBlock publishing authority and
-metadata exposure on denied parent selection. Those meaningful questions remain
-in Value. The story result does not certify arbitrary overridden URL arguments.
-
-The 62 ORM resource-access IDs remain the largest lane. A scalar selector used
-only to narrow an existing queryset can be ordinary; a request-selected record
-whose metadata or effect crosses authority is worthwhile. The scanner does not
-yet prove the former downstream-use restriction, so this calibration does not
-add a blanket `.get()`/record-key exclusion. Next test that effect distinction
-against real caller uses, retaining invalid-form and error-response disclosures.
-
-#### Follow-up: ordinary work can leave Comprehensive too
-
-Do not keep an ordinary occurrence solely to assign it a future verdict. Bare
-unchanged anchor parameters without a bound producer/input lead and ordinary
-DOM GET/HEAD without consequential options leave both queues. Their raw facts
-remain evidence for actual consumers; their exclusion does not certify all
-possible URL writers or callers. Strengthen source facts or explicitly scope a
-category sweep when a project exposes a consequential URL writer.
-
-Exclusive queryset narrowing now avoids extracting an unused ORM authorization
-sink. The selected value must have no field read, return, error output, mutation,
-alias or wrapped consumer; all uses are filter predicates on supplied querysets.
-The filter returns a queryset or reassigns that same parameter. Chained terminal
-reads/deletes and other observed terminal uses of that parameter veto the cut.
-Projected values must be a single flat `pk`/`id`; other columns remain data
-relationships, even if their value is later used as a predicate.
-Broader bookkeeping/metadata patterns remain source-review decisions until a
-cheap generic fact supports exclusion. Unknown dynamic redirects remain credible
-medium-impact research. Do not discard those merely because two inspected
-destinations were guarded. Regenerate inventory and ledgers with schema 6.
-
-The follow-up release inventory is **101 Value/135 Comprehensive**, down from
-103/153: sixteen ordinary link occurrences and two narrowing-only lookups leave
-both queues. All remaining IDs and priorities are unchanged. Eight focused ORM
-source reviews resolved seven cases and retained the denied-parent title question;
-that is a scoped calibration, not a whole-application vulnerability assessment.

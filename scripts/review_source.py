@@ -8,6 +8,72 @@ import shutil
 import time
 
 import review_context as context
+import review_budget
+
+
+def selection_options(plan):
+    """Compact source metadata for host selection; never repeat source bodies."""
+    return {"source_plan_id": plan["plan_id"], "source_fingerprint": plan["source_fingerprint"],
+            "assignments": [{"assignment_id": a["id"], "review_ids": a["review_ids"],
+                             "windows": [{k: w[k] for k in ("path", "start_line", "end_line", "source_sha256")}
+                                         for w in a["windows"]]} for a in plan["assignments"]],
+            "next_step": "Inspect source and choose one to six named operations, normally four to six. Supply --source-selection FILE in a new output attempt with source_plan_id, source_fingerprint, ranked assignment_ids and matching assignments containing assignment_id, owner_path, start_line, end_line, question, protected_effect, area, reason, next_deciding_fact and signal (kind and original-source evidence ranges)."}
+
+
+def validate_selection(selection, plan):
+    if not isinstance(selection, dict) or any(selection.get(k) != plan[v] for k, v in
+            (("source_plan_id", "plan_id"), ("source_fingerprint", "source_fingerprint"))):
+        raise ValueError("source selection differs from the current native plan or source fingerprint")
+    selected = selection.get("assignment_ids")
+    if (not isinstance(selected, list) or not 1 <= len(selected) <= 6 or
+            any(not isinstance(i, str) for i in selected) or len(set(selected)) != len(selected)):
+        raise ValueError("source selection requires one to six distinct ranked assignments")
+    rows = selection.get("assignments")
+    if not isinstance(rows, list) or len(rows) != len(selected):
+        raise ValueError("source selection requires one named operation per assignment")
+    by_id = {a["id"]: a for a in plan["assignments"]}
+    focus = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("assignment_id") not in selected or row["assignment_id"] in focus:
+            raise ValueError("source operation membership differs from ranked selection")
+        if any(not isinstance(row.get(k), str) or not row[k].strip() or len(row[k]) > 4000
+               for k in ("owner_path", "question", "protected_effect", "area", "reason", "next_deciding_fact")):
+            raise ValueError("source operation requires bounded question, effect, area, reason and owner path")
+        if (type(row.get("start_line")) is not int or type(row.get("end_line")) is not int
+                or not 1 <= row["start_line"] <= row["end_line"]):
+            raise ValueError("source operation requires an ordered original-source owner range")
+        assignment = by_id.get(row["assignment_id"])
+        if assignment is None or not any(w["path"] == row["owner_path"] and
+                w["start_line"] <= row["start_line"] <= row["end_line"] <= w["end_line"] for w in assignment["windows"]):
+            raise ValueError("source operation range is outside its selected native assignment")
+        signal = row.get("signal")
+        if (not isinstance(signal, dict) or signal.get("kind") not in ("native_candidate", "source_relationship")
+                or not isinstance(signal.get("evidence"), list) or not 1 <= len(signal["evidence"]) <= 12):
+            raise ValueError("source operation requires a concrete source-backed signal")
+        evidence = []
+        for cite in signal["evidence"]:
+            if (not isinstance(cite, dict) or not isinstance(cite.get("path"), str) or
+                    type(cite.get("start_line")) is not int or type(cite.get("end_line")) is not int or
+                    not 1 <= cite["start_line"] <= cite["end_line"] or cite["end_line"] - cite["start_line"] >= 400):
+                raise ValueError("source signal requires bounded original-source evidence ranges")
+            window = next((w for a in plan["assignments"] for w in a["windows"] if
+                           w["path"] == cite["path"] and w["start_line"] <= cite["start_line"] <= cite["end_line"] <= w["end_line"]), None)
+            if window is None:
+                raise ValueError("source signal evidence is outside native source windows")
+            evidence.append({k: cite[k] for k in ("path", "start_line", "end_line")} | {
+                "quote": "\n".join(window["text"].split("\n")[cite["start_line"] - window["start_line"]:cite["end_line"] - window["start_line"] + 1])})
+        focus[row["assignment_id"]] = {k: row[k] for k in
+            ("owner_path", "start_line", "end_line", "question", "protected_effect", "area", "reason", "next_deciding_fact")}
+        focus[row["assignment_id"]]["signal"] = {"kind": signal["kind"], "evidence": evidence}
+    if set(focus) != set(selected):
+        raise ValueError("source operation membership differs from ranked selection")
+    return selected, focus
+
+
+def scoped_native_ids(ids, entries, focus):
+    scoped = {e["review_id"] for e in entries for row in focus.values()
+              if e["path"] == row["owner_path"] and row["start_line"] <= e["line"] <= row["end_line"]}
+    return [rid for rid in ids if rid in scoped]
 
 
 def excluded_native_questions(plan):
@@ -137,6 +203,9 @@ def run(args, legacy, worker):
                 )
             return legacy(args)
         data = worker.read(previous)
+        if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
+                and not data.get("budget_path")):
+            raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
         for name, value in data["effective_args"].items():
             setattr(args, name, value)
         args._source_prepared = str(previous)
@@ -247,22 +316,55 @@ def run(args, legacy, worker):
         if value is not None and value != limits[key]:
             raise ValueError("source review override differs from the native allowance")
     ids = payload["review_ids"]
-    plan = native(
-        [
+    def source_plan(selected_ids):
+        return native([
             "investigate",
             "source-review-plan",
             root,
             "--inventory",
             inventory,
             "--review-ids",
-            ",".join(ids),
+            ",".join(selected_ids),
             *(["--include-supporting-source", "true"] if getattr(args, "include_supporting_source", False) else []),
-        ]
-    )
+        ])
+    plan = source_plan(ids)
     validate_assignment_scope(plan)
     worker.write(stage / "plan.json", plan)
+    options = selection_options(plan)
+    worker.write(stage / "selection-options.json", options)
+    selection_path = getattr(args, "source_selection", None)
+    if payload["policy"] == "value" and not selection_path:
+        checkpoint = {"status": "selection_required", "generation": claim["generation"],
+                      "calls": 0, "unknown_provider_calls": 0, "stage": "source_selection",
+                      "source_plan_id": plan["plan_id"], "source_fingerprint": plan["source_fingerprint"],
+                      "selection_options": str(stage / "selection-options.json"), "next_step": options["next_step"]}
+        worker.write(stage / "checkpoint.json", checkpoint)
+        worker.write(output / "worker.json", checkpoint)
+        return checkpoint
+    selected = [a["id"] for a in plan["assignments"]]
+    focus = {}
+    budget_path = None
+    if selection_path:
+        selection = worker.read(worker.outside(selection_path, root))
+        selected, focus = validate_selection(selection, plan)
+        worker.write(stage / "selection.json", selection)
+        worker.write(stage / "selection-plan.json", plan)
+        entries = worker.read(inventory / "inventory.json")["entries"]
+        ids = scoped_native_ids(ids, entries, focus)
+        plan = source_plan(ids)
+        validate_assignment_scope(plan)
+        # Assignment identities derive from original windows, independently of
+        # native question membership. Recheck ranges after native regeneration.
+        validate_selection({**selection, "source_plan_id": plan["plan_id"]}, plan)
+        worker.write(stage / "plan.json", plan)
+        budget_path = stage / "budget.json"
+        review_budget.initialize(budget_path)
+        args._review_budget = str(budget_path)
+    selected_set = set(selected)
+    by_id = {a["id"]: a for a in plan["assignments"]}
     excluded_ids = excluded_native_questions(plan)
-    ids = [rid for rid in ids if rid not in excluded_ids]
+    selected_native_ids = {rid for a in plan["assignments"] if a["id"] in selected_set for rid in a["review_ids"]}
+    ids = [rid for rid in ids if rid not in excluded_ids and rid in selected_native_ids]
     entries = {
         e["review_id"]: e for e in worker.read(inventory / "inventory.json")["entries"]
     }
@@ -339,7 +441,7 @@ def run(args, legacy, worker):
             raise ValueError("source reuse requires a separate prior attempt")
         prior_stage = prior / "source-review"
         prior_plan = worker.read(prior_stage / "plan.json")
-        for key in ("source_fingerprint", "inventory_fingerprint", "selected_review_ids"):
+        for key in ("source_fingerprint", "inventory_fingerprint"):
             if prior_plan[key] != plan[key]:
                 raise ValueError("prior source plan binding differs from current plan")
         prior_assignments = {a["id"]: a for a in prior_plan["assignments"]}
@@ -382,6 +484,12 @@ def run(args, legacy, worker):
         directory = stage / "jobs" / assignment["id"]
         directory.mkdir(parents=True)
         prior_job = reuse_jobs.get(assignment["id"])
+        if prior_job and prior_job[0] != assignment:
+            result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
+                      "error": "PriorMembershipChanged", "detail": "Prior completed assignment has different native membership; preserve its exact proof without replay.",
+                      "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
+            worker.write(directory / "result.json", result)
+            return result
         if prior_job and prior_job[0] == assignment:
             _, previous, prior_result, prior_plan_id = prior_job
             try:
@@ -449,11 +557,16 @@ def run(args, legacy, worker):
                 )
             }
             for e in entries.values()
-            if any(
+            if e["review_id"] in selected_native_ids and any(
                 w["path"] == e["path"] and w["start_line"] <= e["line"] <= w["end_line"]
                 for w in assignment["windows"]
             )
         ]
+        if focus:
+            packet["review_focus"] = focus[assignment["id"]]
+            packet["contract"] += ("\nInvestigate the named operation and question in review_focus. Assigned windows provide context; "
+                "coverage applies only to that question, and unrelated functions were not audited. Treat the focus as a question, "
+                "not evidence or an expected answer. Inspect deciding relationships within the existing allowance.")
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
             [package["package_id"], "source_review", assignment["id"], str(output)]
@@ -576,11 +689,11 @@ def run(args, legacy, worker):
                 }
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
+                lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
                 calls += 1
                 unknown_calls += 1
-                response = worker.execute(
-                    command, directory, env, remaining(), json.dumps(frame)
-                )
+                response = worker.execute_provider(command, directory, env, remaining(), frame,
+                                                   runtime.get("provider"), budget_path, lease=lease)
                 worker.write(directory / (str(turn) + "-response.json"), response)
                 receipt = worker.observed_turn(
                     directory,
@@ -845,9 +958,13 @@ def run(args, legacy, worker):
         worker.write(directory / "result.json", result)
         return result
 
-    results = []
+    results = [{"assignment_id": a["id"], "status": "deferred", "review_ids": a["review_ids"],
+                "error": "SourceNotSelected", "detail": "Outside selected operations; not reviewed.",
+                "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
+               for a in plan["assignments"] if a["id"] not in selected_set]
+    worker.write(stage / "progress.json", results)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(assignment_job, a) for a in plan["assignments"]]
+        futures = [pool.submit(assignment_job, by_id[identity]) for identity in selected]
         for future in as_completed(futures):
             results.append(future.result())
             worker.write(stage / "progress.json", results)
@@ -1042,6 +1159,9 @@ def run(args, legacy, worker):
     )
     manifest = worker.read(bundles / "manifest.json")
     coverage = [w for r in successful for w in r["draft"]["coverage"]]
+    coverage.extend({**{k: w[k] for k in ("path", "start_line", "end_line")},
+                     "status": "deferred", "summary": "Outside selected operations; not reviewed."}
+                    for a in plan["assignments"] if a["id"] not in selected_set for w in a["windows"])
     counts = {
         status: sum(w["status"] == status for w in coverage)
         for status in ("examined", "needs_review", "deferred")
@@ -1058,6 +1178,8 @@ def run(args, legacy, worker):
             f"{reused_count} completed source assignments reuse prior assessments; "
             "these are not new reviews under current guidance. Prior usage remains in the original attempt."
         )
+    if focus:
+        manifest["scope"].append("Bounded source coverage applies to the selected operations and questions only; unrelated functions were not audited.")
     worker.write(bundles / "manifest.json", manifest)
     summary = {
         "schema_version": "1",
@@ -1071,6 +1193,9 @@ def run(args, legacy, worker):
         "assignments": len(plan["assignments"]),
         "completed_assignments": len(successful),
         "reused_assignments": reused_count,
+        "selected_assignment_ids": selected,
+        "selected_assignments": len(selected),
+        "budget_path": str(budget_path) if budget_path else None,
         "limitations": plan["limitations"],
         "coverage": coverage,
         "results": results,

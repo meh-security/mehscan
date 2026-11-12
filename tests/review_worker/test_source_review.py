@@ -59,6 +59,65 @@ class SourceReuse(unittest.TestCase):
 
 
 class SourceReview(unittest.TestCase):
+    def test_value_without_selection_checkpoints_without_inference(self):
+        command = self.prepare_worker(fail=True)
+        del command[command.index("--source-selection"):]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        output = self.base / "worker"
+        record = json.loads((output / "worker.json").read_text())
+        self.assertEqual(record["status"], "selection_required")
+        self.assertEqual(record["calls"], 0)
+        self.assertFalse(list((output / "source-review").rglob("*-input.json")))
+        self.assertFalse((output / "source-review/budget.json").exists())
+        options = json.loads((output / "source-review/selection-options.json").read_text())
+        self.assertEqual(options["source_plan_id"], record["source_plan_id"])
+        self.assertNotIn("text", options["assignments"][0]["windows"][0])
+
+    def test_bad_selection_binding_stops_before_any_provider(self):
+        command = self.prepare_worker(fail=True)
+        selection = self.base / "selection.json"
+        value = json.loads(selection.read_text())
+        value["source_plan_id"] = "altered"
+        selection.write_text(json.dumps(value))
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 2)
+        record = json.loads((self.base / "worker/worker.json").read_text())
+        self.assertEqual(record["status"], "incomplete")
+        self.assertIn("native plan or source fingerprint", record["detail"])
+        self.assertFalse(list((self.base / "worker/source-review").rglob("*-input.json")))
+
+    def test_unselected_native_operations_are_deferred_without_calls(self):
+        (self.root / "feature").mkdir()
+        (self.root / "feature/app.js").write_text("function run(request) { eval(request.query.code); }\n")
+        self.inventory = self.base / "selection-inventory"
+        self.native("investigate", "review-inventory", self.root, "--repository-key", "acceptance:selection",
+                    "--output", self.inventory)
+        command = self.prepare_worker(proposal=False)
+        path = self.base / "selection.json"
+        value = json.loads(path.read_text())
+        value["assignments"] = [row for row in value["assignments"] if row["owner_path"] == "Widget.razor"]
+        self.assertEqual(len(value["assignments"]), 1)
+        value["assignment_ids"] = [row["assignment_id"] for row in value["assignments"]]
+        path.write_text(json.dumps(value))
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        summary = json.loads((self.base / "worker/source-review/summary.json").read_text())
+        self.assertEqual(summary["native_selected_claims"], 0)
+        deferred = [r for r in summary["results"] if r["status"] == "deferred"]
+        self.assertTrue(deferred)
+        self.assertTrue(all(r["calls"] == 0 for r in deferred))
+        self.assertEqual(summary["calls"], 1)
+        ledger = json.loads((self.base / "worker/source-review/budget.json").read_text())
+        self.assertEqual(ledger["reserved_calls"], 1)
+        self.assertEqual(ledger["observed_input_tokens"], 100)
+        self.assertTrue(any(w["status"] == "deferred" for w in summary["coverage"]))
+        work = json.loads((self.base / "worker/source-review/work.json").read_text())["payload"]
+        original_ids = {e["review_id"] for e in json.loads((self.inventory / "inventory.json").read_text())["entries"]}
+        self.assertTrue(original_ids)
+        self.assertTrue(original_ids <= set(work["deferred_review_ids"]))
+        self.assertEqual(work["review_ids"], [])
+
     def test_supporting_source_is_queryable_but_native_questions_are_not_reviewed(self):
         (self.root / "perf").mkdir()
         (self.root / "perf/load.js").write_text(
@@ -425,11 +484,30 @@ class SourceReview(unittest.TestCase):
         )
         work = self.native("state", "work", *common)
         (self.base / "work.json").write_text(json.dumps(work))
+        source_plan = self.native("investigate", "source-review-plan", self.root, "--inventory", self.inventory,
+                                  "--review-ids", ",".join(work["payload"]["review_ids"]))
+        native_entries = json.loads((self.inventory / "inventory.json").read_text())["entries"]
+        assignments = []
+        for assignment in source_plan["assignments"][:6]:
+            window = max(assignment["windows"], key=lambda w: sum(
+                e["path"] == w["path"] and w["start_line"] <= e["line"] <= w["end_line"] for e in native_entries))
+            assignments.append({"assignment_id": assignment["id"], "owner_path": window["path"],
+                "start_line": window["start_line"], "end_line": window["end_line"],
+                "question": "Does the operation interpret supplied input?", "protected_effect": "Interpreter invocation",
+                "area": "Input interpretation", "reason": "The operation invokes an interpreter with supplied input.",
+                "next_deciding_fact": "The implementation of the interpreter determines how input is used.",
+                "signal": {"kind": "source_relationship", "evidence": [{k: window[k] for k in ("path", "start_line", "end_line")}]}})
+        selection = {"source_plan_id": source_plan["plan_id"], "source_fingerprint": source_plan["source_fingerprint"],
+                     "assignment_ids": [a["assignment_id"] for a in assignments], "assignments": assignments}
+        (self.base / "selection.json").write_text(json.dumps(selection))
         reviewer = self.base / "reviewer.py"
         reviewer.write_text(
             """import json,sys
 from pathlib import Path
 task=json.load(sys.stdin)
+with Path(task['provider_metrics']).open('a',encoding='utf8') as receipt:
+    receipt.write(json.dumps({'conversation_id':task['conversation_id'],'round':task['research']['round'],
+        'provider':None,'elapsed_ms':1,'usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':10}})+'\\n')
 if task.get('review_role')=='second_pass_fast':
     packet=json.loads(Path(task['evidence_packet']).read_text())
     assert packet['source_handoff']['fact_count']>0, 'Original source facts must reach Fast'
@@ -503,6 +581,8 @@ print(json.dumps({'draft':{'results':rows,
             "fixture/source",
             "--output",
             str(self.base / "worker"),
+            "--source-selection",
+            str(self.base / "selection.json"),
         ]
 
     def test_default_worker_finalizes_a_discovered_question_without_a_second_investigation(

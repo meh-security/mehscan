@@ -10,16 +10,21 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
-The default worker phase (`all`) reviews the requested production-source scope.
-It supplies bounded original-source assignments alongside relevant native questions,
-including files with no scanner candidates. The reviewer can assess known questions
-and propose additional consequential relationships in the same conversation.
+The default Value `all` phase requires a source-backed selection of operations
+before provider review. Without `--source-selection FILE`, it prepares a selection
+checkpoint and exits with `selection_required`, making zero AI calls. The host
+agent uses bounded source reads to choose 4–6 named operations by default.
+An explicit Comprehensive request reviews the broader admitted production-source
+scope. Within selected assignments, the reviewer can assess relevant native questions
+and propose additional consequential relationships in the same conversation,
+including operations with no scanner candidates.
 The controller validates original paths, hashes, ranges and inspected citations,
 assigns identities and applies the ordinary finalizer. Source validation establishes
 the cited bytes, not a vulnerability or a native flow proof.
 
-With zero selected scanner candidates, this same default phase runs an AI-only
-source first pass over the requested scope. AI-discovered claims receive normal
+With zero selected scanner candidates, bounded source orientation can still
+select operations for an AI-only first pass. It never falls back to every source
+file. AI-discovered claims receive normal
 source-bound IDs and can enter automatic Fast or Full follow-up. The options
 report records `ai_source_only` origin and source-coverage context; scoped threat
 review can use those flows/gaps even when no AI claims are retained. No fake
@@ -110,8 +115,10 @@ caller coverage. The option is bound into recovery and cannot change on resume.
 This groups context within existing bundles; it does not defer candidates or
 guarantee fewer model calls or lower cost.
 
-Use `--policy value --selection policy` for ordinary AI review. Comprehensive
-selects every admitted ID. Both use five research rounds (six total model calls),
+Use `--policy value --selection policy --source-selection FILE` for ordinary
+selected-source AI review. Native priority hints do not select source operations.
+Comprehensive explicitly selects the broader admitted scope and retains applicable
+completed Value work. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
 overrides available. Finish settled relationships early; deferrals remain unreviewed.
 
@@ -130,6 +137,79 @@ finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. Group claims only when they share the actual operation and implementation;
 a shared file or CWE alone is insufficient. The profile allowances are ceilings:
 finish settled relationships early and keep an essential unresolved fact pending.
+
+## Bounded Value selection
+
+Run Value's default `all` phase once without `--source-selection`. The output
+contains `source-review/plan.json`, `source-review/selection-options.json` and
+`source-review/checkpoint.json`; `worker.json` reports `selection_required`.
+This is a preparation checkpoint, not a failed provider review. An automatic
+Action Value run can stop here until a host supplies its selection.
+
+In the host agent's current context, combine native leads with bounded source
+reads of relevant routes, jobs, parsers or custom security controls. Usually
+4–8 focused reads/navigation actions suffice for initial orientation. Select
+actual body evidence for a consequential question, preserving the actor,
+protected effect and suspected mismatch. Filenames, a generic question or an
+unread helper alone do not establish a signal. A clear unsafe construction or
+supported local security-contract defect can qualify without a known deployed
+actor. Sparse or empty native results still permit source-driven selection;
+if no useful lead emerges, report the
+bounded coverage and stop. Do not preload supporting models, views or SQL, or
+build a larger backlog as a substitute for selection.
+
+Copy the exact binding and assignment IDs from the plan into JSON outside the
+source root, then supply it with `--source-selection FILE` in a new output attempt:
+
+```json
+{
+  "source_fingerprint": "EXACT_SOURCE_FINGERPRINT",
+  "source_plan_id": "EXACT_SOURCE_PLAN_ID",
+  "assignment_ids": ["EXACT_ASSIGNMENT_ID"],
+  "assignments": [{
+    "assignment_id": "EXACT_ASSIGNMENT_ID",
+    "owner_path": "src/handler.py",
+    "start_line": 20,
+    "end_line": 65,
+    "question": "Can the selected account change this protected record?",
+    "protected_effect": "Update the record's owner",
+    "area": "record authorization",
+    "reason": "The request-selected record reaches an ownership update",
+    "next_deciding_fact": "Whether the guard binds this actor to this record",
+    "signal": {
+      "kind": "source_relationship",
+      "evidence": [{"path": "src/handler.py", "start_line": 40, "end_line": 46}]
+    }
+  }]
+}
+```
+
+The ranked list permits 1–6 distinct assignments; use 4–6 for an ordinary Value
+review and fewer for a narrower task. Each row must match a listed assignment.
+Its owner range stays within an original assignment window. The nonempty
+`question`, `protected_effect`, `area`, `reason` and `next_deciding_fact` strings
+are bounded to 4,000 characters each. `signal.kind` is `native_candidate` or
+`source_relationship`, with 1–12 cited source ranges from the full plan.
+Bindings, ranges and structure are validated; this does not prove the signal's
+security interpretation. Give each operation one owner and reuse cited facts
+across related questions, checking caller/effect conditions separately.
+
+Value shares 40 controller-managed provider calls across the selected review and
+its phases, including any provider discovery. It targets 1.5 million observed
+input tokens and reserves 100,000 input tokens for each in-flight call before
+dispatch. After 20 minutes it stops starting calls, drains active work and
+finalizes completed decisions. Unknown provider counters remain unknown; these
+are admission and observed-usage targets, not strict token/currency caps or
+performance guarantees. Host-agent orientation is outside the worker ledger and
+must stay bounded. Splitting operations or starting follow-up does not reset the
+shared allowance. Explicit native exact-ID work with `--phase native` retains
+its existing behavior.
+
+Comprehensive extends completed Value work within matching scope to the broader
+admitted relationships, reusing established facts and avoiding repeated template,
+model or helper discovery. It does not require a verdict for every ordinary API
+occurrence. Fast/Full second pass and scoped threat follow-up remain separate,
+explicit choices within the authorized scope and budget.
 
 ## Optional second pass
 
@@ -325,12 +405,14 @@ selection, but every other native ID must have an explicit reason in
 `deferred_review_ids`. Exclusions and deferrals are not dismissals; see
 [completion accounting](review-state.md#account-for-planned-review-and-pending-evidence).
 Every changed path starts `unassessed`; an empty native queue still needs a change
-pass. Admit the plan and export the work package:
+pass within the authorized Changed review. Native admission does not replace
+Value's separate source-selection checkpoint. Admit the plan and export the work package:
 
 For initial Value priority selection, use `--policy value --selection policy`
 on the template. Existing native hints become explicit unreviewed deferrals;
 they do not become safe decisions. Omitting `--selection` preserves the all-ID
-template default for Value manual/full-coverage audits. Comprehensive still
+template default for explicit native manual/full-coverage audits. It does not
+authorize a broad default Value source review. Comprehensive still
 applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
@@ -585,7 +667,9 @@ model authentication and session management belong to the trusted adapter.
 
 Native defaults per conversation for both Value and Comprehensive are five
 research rounds (six total model calls), 24 query units, 512 KiB and 900 seconds.
-Value uses policy selection; Comprehensive selects every admitted ID.
+Value uses native priority hints plus its bounded source selection; Comprehensive
+selects every admitted ID within the authorized broader scope. The default
+Value controller's shared run allowance also applies across its managed phases.
 Configure `--research-rounds`, `--research-queries`, `--research-bytes` and
 `--timeout` on `state plan-template --skill-root ...`; zero rounds disables research.
 The worker reads those admitted values. Explicit worker overrides must match exactly.
