@@ -13,7 +13,8 @@ It runs locally without building or executing your application. Use the CLI on i
 - Investigate serializer, deserializer and XML parser implementations with language-specific source checks.
 - Match a Rust lockfile against a local copy of the RustSec advisory database.
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
-- Add an optional second pass to check review quality or reassess selected results.
+- Group related findings while preserving affected callers and conditions.
+- Automatically select a bounded Fast follow-up, or audit all eligible results with Full.
 - Export JSON, SARIF and Markdown reports.
 
 Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
@@ -75,7 +76,13 @@ Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your cod
 
 **Value** is the default review mode. It prioritizes useful security leads and keeps deferred work visible. **Comprehensive** uses conservative eligibility and reviews every admitted item, including broader unresolved security questions. Findings include supporting evidence; unresolved items identify what still needs investigation. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the scope of each mode.
 
-An optional [second pass](docs/review-worker.md#optional-second-pass) can check all results or just findings, dismissals or unresolved items. **Fast** checks the evidence and investigation trace, investigates specific gaps and corrects results where the evidence supports it. **Full** adds an independent assessment for deeper audits. Second pass is off by default; neither mode certifies a result as correct.
+The first pass reviews original source even when the scanner finds no candidates. It presents findings, unresolved questions, coverage limits and follow-up options, then stops unless another pass was requested.
+
+Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
+
+An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.
+
+For a named flow or coverage gap, request a [scoped threat review](skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up). It reuses cited source and follows the deciding cross-file relationships within the requested budget. Already requested follow-ups proceed without another confirmation.
 
 For manual bundle review:
 
@@ -102,7 +109,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [0.13.0 release notes](docs/release-notes-v0.13.0.md)
+- [0.14.0 release notes](docs/release-notes-v0.14.0.md)
 
 Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
 
