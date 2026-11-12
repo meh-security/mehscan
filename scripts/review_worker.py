@@ -2643,7 +2643,7 @@ def run_locked(args):
                 "completed":len(partial["completed_review_ids"]),"incomplete":len(partial["incomplete_review_ids"])}
         except (OSError,ValueError,KeyError,TypeError) as error:
             record["partial_export_error"] = type(error).__name__
-    if record["status"] in ("admitted", "source_validated"):
+    if record["status"] in ("admitted", "source_validated") or (output / "findings.json").is_file():
         try:
             report = read(output / "findings.json") if (output / "findings.json").is_file() else {}
             rows = [r["response"] for r in report.get("decision_records", [])]

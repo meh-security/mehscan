@@ -59,6 +59,25 @@ class SourceReuse(unittest.TestCase):
 
 
 class SourceReview(unittest.TestCase):
+    def test_budget_partial_review_exports_options_for_completed_native_decisions(self):
+        for directory in ("feature", "other"):
+            (self.root / directory).mkdir()
+            (self.root / directory / "app.js").write_text("function run(request) { eval(request.query.code); }\n")
+        self.inventory = self.base / "partial-inventory"
+        self.native("investigate", "review-inventory", self.root, "--repository-key", "acceptance:partial",
+                    "--output", self.inventory)
+        command = self.prepare_worker(proposal=False) + ["--max-calls", "1", "--native-share", "100", "--workers", "1"]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        output = self.base / "worker"
+        record = json.loads((output / "worker.json").read_text())
+        self.assertEqual(record["status"], "incomplete", record)
+        report = json.loads((output / "findings.json").read_text())
+        self.assertEqual(len(report["decision_records"]), 1)
+        self.assertEqual(record["review_options"], "review-options.json")
+        self.assertTrue((output / "review-options.md").is_file())
+        self.assertTrue((output / "finding-groups.json").is_file())
+
     def test_last_budget_call_is_offered_as_final_without_research(self):
         command = self.prepare_worker(proposal=False) + ["--max-calls", "1"]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)

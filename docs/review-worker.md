@@ -238,7 +238,9 @@ shared allowance. Configure the allowance before the attempt with `--max-calls`,
 work without changing native Value membership. Reports distinguish reviewed and
 reused decisions, investigated unresolved questions, unstarted budget deferrals
 and source-policy exclusions; candidate completion and source coverage remain
-separate measures. Explicit exact-ID work with `--phase native`, source profiles,
+separate measures. Completed decisions retain finding groups and follow-up options
+even when the overall attempt is incomplete; those artifacts cover the completed
+subset. Explicit exact-ID work with `--phase native`, source profiles,
 compiler-assisted facts and opt-in operation grouping retain their existing paths.
 
 Comprehensive extends completed Value work within matching scope to the broader
