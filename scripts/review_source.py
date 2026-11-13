@@ -14,6 +14,7 @@ import review_scheduler
 import review_domains
 import review_work
 import review_questions
+import review_fact_audit as fact_audits
 import review_source_recovery as source_recovery
 from review_case_state import CaseState
 import review_orchestration
@@ -21,7 +22,7 @@ import review_orchestration
 
 def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
     """Resume only the same source, target, policy and trusted controller."""
-    modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py",
+    modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py", "review_fact_audit.py",
         "review_questions.py", "review_case_state.py", "review_evidence.py", "review_budget.py",
         "review_orchestration.py", "review_context.py", "review_domains.py", "review_scheduler.py")
     return {"package_id":package["package_id"], "plan_id":plan["plan_id"],
@@ -31,7 +32,8 @@ def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
         "options":{name:getattr(args, name, None) for name in (
             "review_goal", "coverage_target", "max_calls", "input_token_budget", "admission_seconds", "cost_budget",
             "include_supporting_source", "domain_session_mode", "question_routing")},
-        "rates_sha256":worker.digest_file(args.cost_rates) if getattr(args, "cost_rates", None) else None}
+        "rates_sha256":worker.digest_file(args.cost_rates) if getattr(args, "cost_rates", None) else None,
+        "fact_audit_policy_sha256":worker.digest_file(args.fact_audit_policy) if getattr(args, "fact_audit_policy", None) else None}
 
 
 def selection_options(plan):
@@ -484,6 +486,8 @@ def run(args, legacy, worker):
     queues = None
     domain_registry = None
     work_registry = None
+    audit_plan = None
+    audit_slots = {}
     case_by_assignment = {}
     domain_states = {}
     native_share = getattr(args, "native_share", 80)
@@ -499,6 +503,14 @@ def run(args, legacy, worker):
                 raise ValueError("question routing verification membership exceeds the bound case size")
             domain_registry = work_registry
             worker.write(stage / "work-plan.json", work_registry)
+            if getattr(args, "fact_audit_policy", None):
+                if not question_routing:
+                    raise ValueError("factual audits require explicitly enabled question routing")
+                audit_plan = fact_audits.plan(worker.read(worker.outside(args.fact_audit_policy, root)), work_registry)
+                worker.write(stage / "factual-audit-plan.json", audit_plan)
+                work_registry["factual_audit_plan"] = audit_plan
+                worker.write(stage / "work-plan.json", work_registry)
+                audit_slots = {(row["case_id"], row["check_id"]):row for row in audit_plan["selected"]}
         else:
             domain_registry = review_domains.validate(manifest, plan, original_ids, validate_selection=validate_selection)
         worker.write(stage / "domain-plan.json", domain_registry)
@@ -764,15 +776,16 @@ def run(args, legacy, worker):
             "quote":window["text"]}
 
     def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True,
-                       prepared_question=()):
-        profile = "routine" if question is not None or not question_routing else "expert"
+                       prepared_question=(), fact_audit=None):
+        profile = "expert" if fact_audit else "routine" if question is not None or not question_routing else "expert"
+        role = "fact_auditor" if fact_audit else "question_answerer" if question is not None else "investigator"
         available_assertions = [dep for _, answer in question_results for dep in answer.get("assertions", [])]
         command = source_commands[profile]
         command_binding = command_bindings[profile]
         provider = runtime.get("provider") if profile == "routine" else runtime["orchestration"]["expert"]
         job_id = assignment.get("_job_id", assignment["id"])
         if question is not None:
-            job_id = context.digest([job_id, "question", question["id"]])
+            job_id = context.digest([job_id, "fact-audit" if fact_audit else "question", question["id"]])
             assignment = {**assignment, "review_ids": []}
         directory = stage / "jobs" / job_id
         directory.mkdir(parents=True, exist_ok=bool(source_resume))
@@ -909,7 +922,7 @@ def run(args, legacy, worker):
                 "Bind actual applicability and protected effects with cited evidence. Do not expand into a general lifecycle audit. "
                 "Finalize once each required check has an evidenced answer or a concrete unresolved deciding fact.")
         if question_routing:
-            packet["job_binding"] = {"profile":profile, "role":"question_answerer" if question is not None else "investigator", "provider":provider}
+            packet["job_binding"] = {"profile":profile, "role":role, "provider":provider}
         if question is not None:
             packet["contract"] = review_questions.FACT_CONTRACT
             packet["native_questions"] = []
@@ -917,6 +930,9 @@ def run(args, legacy, worker):
             packet["supporting_native_facts"] = [{"review_id":rid, "facts":card["facts"]}
                 for rid, card in native_cards.items()]
             packet["review_focus"] = {"question":question["question"], "scope":question["scope"], "acceptance":question["acceptance"]}
+            if fact_audit:
+                packet["contract"] = fact_audits.CONTRACT
+                packet["factual_audit"] = fact_audit
         elif question_results:
             packet["question_answers"] = [review_questions.answer_note(check, result) for check, result in question_results]
             packet["contract"] += ("\nQuestion answers are attributed model interpretations, not security verdicts. "
@@ -925,7 +941,7 @@ def run(args, legacy, worker):
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
             [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(lineage_output),
-             *([["question", question["id"]]] if question is not None else [])]
+             *([["fact-audit" if fact_audit else "question", question["id"]]] if question is not None else [])]
         )
         facts = copy.deepcopy(domain_state["facts"]) if domain_state else []
         inspected = copy.deepcopy(domain_state["inspected"]) if domain_state else []
@@ -1083,7 +1099,7 @@ def run(args, legacy, worker):
                     "inventory": str(inventory),
                     "work_package": str(args.work_package),
                     "review_ids": assignment["review_ids"],
-                    "review_role": "question_answerer" if question is not None else "investigator",
+                    "review_role": role,
                     "followup_selection": True,
                     "evidence_packet": str(directory / "context.json"),
                     "shared_facts": str(directory / "facts.json"),
@@ -1127,6 +1143,8 @@ def run(args, legacy, worker):
                         max(0, question_budget.remaining(domain_case["id"], "queries")))
                 if question is not None:
                     frame["research"]["question_only"] = True
+                if fact_audit:
+                    frame["research"]["factual_audit"] = {key:fact_audit[key] for key in ("assertion_id", "version")}
                 if domain_case and question is None:
                     frame["domain_session"] = {"id": domain_state["id"], "binding": domain_state["binding"],
                         "case_id": domain_case["id"], "case_index": case_index, "cases": domain_state["cases"]}
@@ -1452,6 +1470,8 @@ def run(args, legacy, worker):
                     require_complete_usage=False,
                 )
                 if receipt:
+                    if work_registry:
+                        receipt["work_item_id"] = domain_case["id"]
                     source_metrics.append(receipt)
                     unknown_calls -= 1
             result = {
@@ -1470,6 +1490,8 @@ def run(args, legacy, worker):
             }
         if question is not None:
             result.update(question_provider=provider, question_conversation_id=conversation)
+        if fact_audit:
+            result.update(review_role=role, fact_audit={key:fact_audit[key] for key in ("assertion_id", "version")})
         worker.write(directory / "result.json", result)
         return result
 
@@ -1534,6 +1556,45 @@ def run(args, legacy, worker):
                     desired = min(desired, runtime["orchestration"]["case_limits"]["model_calls"])
                 job["completion"] = review_budget.hold_completion(budget_path, case["id"], desired)
 
+            def audit_answer(case, check, assignment, answer, cards):
+                selection = audit_slots.get((case["id"], check["id"]))
+                if not selection or not answer.get("assertions"):
+                    return
+                target = answer["assertions"][0]
+                key = context.digest([target["assertion_id"], target["version"]])
+                previous = case_store.snapshot()["cases"][case["id"]].get("factual_audits", {}).get(key)
+                audit_job = context.digest([assignment["_job_id"], "fact-audit", check["id"]])
+                path = stage / "jobs" / audit_job / "result.json"
+                if previous:
+                    audited = case_store._read_result(previous["result"])
+                    record = previous
+                else:
+                    reason = ("Unstarted optional audit skipped during recovery." if case["id"] in recovery_cases
+                        and audit_job not in recovery_jobs else
+                        "Original case allowance preserves owner completion." if question_budget.remaining(
+                            case["id"], "model_calls") <= completion_remaining(case["id"]) else
+                        review_budget.capacity(budget_path))
+                    if reason:
+                        audited = {"status":"deferred", "detail":reason, "review_role":"fact_auditor", "fact_audit":target,
+                            "question_provider":runtime["orchestration"]["expert"],
+                            **{key:0 for key in ("calls", "queries", "bytes", "unknown_provider_calls", "seconds")}}
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        worker.write(path, audited)
+                    else:
+                        audited = assignment_job(assignment, question=fact_audits.audit_check(check),
+                            question_results=[(check, {**answer, "assertions":[]})], supporting_cards=cards,
+                            owner_required=not review_questions.fact_only(case),
+                            fact_audit={**target, "original_answer":review_questions.answer_note(check, answer), "selection":selection})
+                    record = case_store.record_audit(case["id"], check["id"], target, path, selection,
+                        runtime["orchestration"]["expert"])
+                answer["factual_audit"] = fact_audits.note(record)
+                for fact in audited.get("facts", []):
+                    if not any(old["result_id"] == fact["result_id"] for old in answer.get("facts", [])):
+                        answer.setdefault("facts", []).append(copy.deepcopy(fact))
+                state = case_store.snapshot()
+                answer["assertions"] = [dep for dep in answer["assertions"]
+                    if state["assertions"][dep["assertion_id"]][-1]["status"] == "available"]
+
             def execute_work(job):
                 case = job["case"]
                 case_started = time.monotonic()
@@ -1570,6 +1631,12 @@ def run(args, legacy, worker):
                             decision = routing[check["id"]]
                             if decision["effective_route"] != "prepare":
                                 continue
+                            if (check.get("routing_pattern") in case_store.snapshot().get("suspended_patterns", {})
+                                    and not (case["id"] in recovery_cases and context.digest(
+                                        [job_directory, "question", check["id"]]) in recovery_jobs)):
+                                decision.update(effective_route="blocked" if fact_only else "owner",
+                                    reason="A source-backed factual challenge suspended this routing pattern for unsent work in this run.")
+                                continue
                             if case["id"] in recovery_cases:
                                 # Offline finalization consumes original facts/answers only.
                                 if context.digest([job_directory, "question", check["id"]]) not in recovery_jobs:
@@ -1581,6 +1648,7 @@ def run(args, legacy, worker):
                                 answer["assertions"] = case_store.record_question(case["id"], check,
                                     stage / "jobs" / context.digest([job_directory, "question", check["id"]]) / "result.json")
                                 answers.append((check, answer))
+                                audit_answer(case, check, assignment, answer, cards)
                                 decision.update(effective_route="fact_worker", reason="Saved source question; no replacement inference.")
                                 continue
                             if (question_budget.remaining(case["id"], "model_calls") <= completion_remaining(case["id"])
@@ -1609,6 +1677,7 @@ def run(args, legacy, worker):
                             answer["assertions"] = case_store.record_question(case["id"], check,
                                 stage / "jobs" / context.digest([job_directory, "question", check["id"]]) / "result.json")
                             answers.append((check, answer))
+                            audit_answer(case, check, assignment, answer, cards)
                             with work_lock:
                                 save_work()
                     result = (review_questions.fact_only_result(assignment, case["checks"], answers) if fact_only else
@@ -1636,6 +1705,9 @@ def run(args, legacy, worker):
                     for key in ("queries", "bytes"):
                         result[key] += preparation_usage[key]
                     result["seconds"] = time.monotonic() - case_started
+                    for audit in case_store.snapshot()["cases"][case["id"]].get("factual_audits", {}).values():
+                        for key in ("calls", "queries", "bytes", "unknown_provider_calls"):
+                            result[key] += audit[key]
                 result.update(case_id=case["id"], domain_id=case["domain_id"], job_directory="source-review/jobs/" + job_directory)
                 for decision in routing.values():
                     decision["provider"] = (runtime["provider"] if decision["effective_route"] == "fact_worker" else
@@ -1713,11 +1785,15 @@ def run(args, legacy, worker):
         for path in (stage / "jobs").glob("*/provider-metrics-*.jsonl"):
             metrics.extend(json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip())
         domain_usage = []
+        audit_cases = case_store.snapshot()["cases"] if case_store else {}
         for domain in domain_registry["domains"]:
             conversations = {case["conversation_id"] for case in domain_states[domain["id"]]["cases"]}
             if question_routing:
                 conversations.update(note["conversation_id"] for case in domain["cases"]
                     for note in by_case.get(case["id"], {}).get("question_work", []) if note.get("conversation_id"))
+                conversations.update(note["conversation_id"] for case in domain["cases"]
+                    for note in audit_cases[case["id"]].get("factual_audits", {}).values()
+                    if note.get("conversation_id"))
             rows = [row for row in metrics if row.get("conversation_id") in conversations]
             domain_usage.append({"id": domain["id"], "wall_seconds": domain_timings.get(domain["id"], by_case.get(domain["id"], {}).get("seconds", 0)),
                 "calls": len(rows), "cold_turns": sum(not row.get("resumed", False) for row in rows),

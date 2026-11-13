@@ -12,6 +12,11 @@ original case checks as historical coverage. See
 [work-goal continuation](work-goals.md#choose-the-goal) for compatibility and
 native-finalization recovery.
 
+Optional [factual audits](work-goals.md#optional-factual-audits) check selected
+question-worker answers before their owner review. They share the original
+allowance and preserve assertion versions; they do not perform Fast/Full claim
+review or count as security coverage.
+
 ## Automatic Fast selection
 
 First-pass assessments can return a nullable `followup` scheduling note with a

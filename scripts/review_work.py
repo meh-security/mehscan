@@ -7,6 +7,7 @@ from pathlib import Path
 
 import review_domains as domains
 import review_questions
+import review_fact_audit
 
 HANDOFF_VERSION = "mehscanWorkHandoff/v1"
 
@@ -321,6 +322,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
                "question_work": copy.deepcopy(result.get("question_work", [])) if result else [],
+               "factual_audits":review_fact_audit.with_usage(result.get("factual_audits", []), usage_rows, budget) if result else [],
                "routing": copy.deepcopy(result.get("routing", [])) if result else [],
                "completion_reservation": copy.deepcopy(result.get("completion_reservation")) if result else None,
                "provisional_fact_answers": copy.deepcopy(result.get("provisional_fact_answers", {})) if result else {},
@@ -379,7 +381,10 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                 declared_owner_checks=sum(check.get("route", "security_decision") == "security_decision" for row in rows for check in row["required_checks"]),
                 question_worker_calls=sum(q["calls"] for row in rows for q in row["question_work"]),
                 skipped_question_checks=sum(q["status"] == "skipped" for row in rows for q in row["question_work"]),
-                owner_calls=sum(row["calls"] - sum(q["calls"] for q in row["question_work"]) for row in rows),
+                owner_calls=sum(max(0, row["calls"] - sum(q["calls"] for q in row["question_work"])
+                    - sum(audit["calls"] for audit in row["factual_audits"])) for row in rows),
+                factual_audit_calls=sum(audit["calls"] for row in rows for audit in row["factual_audits"]),
+                factual_audit_outcomes=dict(Counter(audit["outcome"] for row in rows for audit in row["factual_audits"])),
                 provisional_answers=sum(q["status"] == "complete" for row in rows for q in row["question_work"])),
             required=len(required), required_closed=sum(row["status"] == "closed" for row in required),
             remaining_by_potential_impact=dict(residual),
@@ -387,6 +392,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         coverage_limits=registry["coverage_limits"], source_scope=registry["source_scope"], items=rows, budget=budget,
         remaining_estimate=estimates(remaining), target_remaining_estimate=estimates(required_remaining),
         additional_source_proposals=additional,
+        factual_audit_selection=copy.deepcopy(registry.get("factual_audit_plan")),
         authority="Potential impact is a host scheduling judgment, not a finding severity. Unclassified work has unknown importance. Completion applies only to declared checks, not whole-app safety.")
 
 
@@ -427,4 +433,8 @@ def markdown(report):
         lines.extend("- " + clean(row["question"]) + " — " + row["decision"]
                      for row in report["additional_source_proposals"])
     lines.extend("- " + clean(value) for value in report["coverage_limits"])
+    if report.get("factual_audit_selection"):
+        lines += ["", "Optional factual audits: " + str(report["summary"]["routing"]["factual_audit_calls"])
+                  + " calls; outcomes: " + json.dumps(report["summary"]["routing"]["factual_audit_outcomes"])
+                  + ". Selection or non-selection does not establish correctness or security coverage.", ""]
     return "\n".join(lines) + "\n"

@@ -107,6 +107,48 @@ class CaseState(AtomicState):
 
     def _action(self, state, action, operation_key):
         kind = action["kind"]
+        if kind == "fact_audit":
+            aid, version = action["assertion_id"], action["version"]
+            history = state["assertions"].get(aid, [])
+            case = state["cases"][action["case_id"]]
+            check_id = action["check_id"]
+            if (not history or type(version) is not int or history[-1]["version"] != version
+                    or {"assertion_id":aid, "version":version} not in case["questions"].get(check_id, {}).get("assertions", [])):
+                raise ValueError("factual audit requires this check's current assertion version")
+            if context.digest([aid, version]) in case.get("factual_audits", {}):
+                raise ValueError("assertion version already audited; preserve its original audit")
+            self._fresh(state, history[-1]["evidence"])
+            result = self._read_result(action["result"])
+            if (result.get("fact_audit") != {"assertion_id":aid, "version":version}
+                    or result.get("review_role") != "fact_auditor" or result.get("question_provider") != action["provider"]):
+                raise ValueError("factual audit result lacks its bound owner role and target")
+            outcome, summary, evidence = "incomplete", result.get("detail", "Audit did not finalize."), []
+            if result["status"] == "complete":
+                from review_questions import check_draft
+                from review_work import check_results
+                check_draft(result["draft"])
+                check_results([{"id":check_id}], result["draft"].get("work_checks"))
+                answer = result["draft"]["work_checks"][0]
+                offered = {(proof["path"], proof["start_line"], proof["end_line"]) for proof in result["proofs"]}
+                if any((cite["path"], cite["start_line"], cite["end_line"]) not in offered for cite in answer["evidence"]):
+                    raise ValueError("factual audit cites source outside its validated proofs")
+                evidence = self._capture(state, result["proofs"])
+                outcome = {"satisfied":"supported", "violated":"challenged"}.get(answer["status"], "unresolved")
+                summary = answer["summary"]
+                if outcome in ("supported", "challenged") and not evidence:
+                    raise ValueError("factual audit conclusion requires deciding source")
+            record = {"assertion_id":aid, "version":version, "outcome":outcome, "summary":summary,
+                "selection":copy.deepcopy(action["selection"]), "result":action["result"], "evidence":evidence,
+                **{key:result.get(key, 0) for key in ("calls", "queries", "bytes", "unknown_provider_calls", "seconds")},
+                "provider":copy.deepcopy(action["provider"]), "conversation_id":result.get("question_conversation_id")}
+            case.setdefault("factual_audits", {})[context.digest([aid, version])] = record
+            if outcome == "challenged":
+                history[-1].update(status="disputed", dispute_reason=summary, audit=action["result"])
+                record["affected"] = self._invalidate(state, aid, "Factual audit challenge: " + summary)
+                pattern = action["selection"].get("routing_pattern")
+                if pattern and action["selection"].get("suspend_pattern"):
+                    state.setdefault("suspended_patterns", {})[pattern] = record["result"]
+            return record
         if kind == "native_audit":
             case = state["cases"][action["case_id"]]
             if not action["review_ids"] or not set(action["review_ids"]) <= set(case.get("verify_review_ids", [])):
@@ -190,6 +232,12 @@ class CaseState(AtomicState):
         return self.submit(context.digest(["result", case_id, ref]),
             {"kind":"result", "case_id":case_id, "result":ref})
 
+    def record_audit(self, case_id, check_id, target, result_path, selection, provider):
+        ref = self.result_reference(result_path)
+        return self.submit(context.digest(["fact-audit", case_id, target, ref]),
+            {"kind":"fact_audit", "case_id":case_id, "check_id":check_id, **target,
+             "result":ref, "selection":selection, "provider":provider})
+
     def results(self):
         with self.lock:
             state = self.snapshot()
@@ -203,5 +251,6 @@ class CaseState(AtomicState):
                 row["reconsideration"] = copy.deepcopy(case["reconsideration"])
                 row["native_reconsideration"] = copy.deepcopy(case.get("native_reconsideration", {}))
                 row["provisional_fact_answers"] = copy.deepcopy(case["questions"])
+                row["factual_audits"] = copy.deepcopy(list(case.get("factual_audits", {}).values()))
                 results.append(row)
             return results

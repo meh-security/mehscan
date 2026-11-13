@@ -34,8 +34,11 @@ def validate_check(check):
     if route not in ("source_fact", "security_decision"):
         raise ValueError("question route must be source_fact or security_decision")
     if set(check) - {"id", "question", "route", "scope", "acceptance", "source_ranges", "source_definitions",
-                     "task_kind", "usefulness"}:
+                     "task_kind", "usefulness", "routing_pattern"}:
         raise ValueError("unsupported question fields")
+    if "routing_pattern" in check and (not isinstance(check["routing_pattern"], str)
+            or not 1 <= len(check["routing_pattern"].strip()) <= 200):
+        raise ValueError("routing_pattern requires a bounded explicit task pattern")
     if "task_kind" in check and check["task_kind"] not in ("extraction", "bounded_proposition", "security_decision"):
         raise ValueError("unknown question task kind")
     if "usefulness" in check and (not isinstance(check["usefulness"], str) or not 1 <= len(check["usefulness"].strip()) <= 1000):
@@ -122,6 +125,7 @@ def answer_note(check, result):
         "conversation_id": result.get("question_conversation_id"),
         "answers": copy.deepcopy(result.get("draft", {}).get("work_checks", [])),
         "assertions": copy.deepcopy(result.get("assertions", [])),
+        **({"factual_audit":copy.deepcopy(result["factual_audit"])} if result.get("factual_audit") else {}),
         "authority": "Model interpretation, not an established security fact or verdict. Original source is supplied separately."}
 
 
@@ -156,7 +160,8 @@ def check_draft(draft):
 
 def fact_only_result(assignment, checks, answers):
     """Combine independently source-validated factual answers, without a verdict."""
-    complete = {check["id"]: result for check, result in answers if result["status"] == "complete"}
+    complete = {check["id"]: result for check, result in answers if result["status"] == "complete"
+                and (result.get("factual_audit") or {}).get("outcome") != "challenged"}
     if set(complete) != {check["id"] for check in checks}:
         return {"assignment_id":assignment["id"], "review_ids":[], "status":"incomplete",
             "error":"QuestionIncomplete", "detail":"Some factual questions remain unanswered; no security verdict was generated.",

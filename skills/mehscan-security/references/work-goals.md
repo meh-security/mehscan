@@ -335,6 +335,59 @@ escalation. Group repeated caller questions by control and repair point, retaini
 their conditions. A useful later layer may add new work items for consequential
 remaining gaps; this flag does not launch a general orchestrator or extra pass.
 
+## Optional factual audits
+
+`--fact-audit-policy FILE` adds a bounded check of selected factual answers during
+question routing, after the factual worker and before its security owner. It is
+off by default and separate from Fast/Full claim review. Use it for a named
+suspected error, a consequential task pattern, or a reproducible sample. Selection
+uses the declared task pattern and potential consequence, not model confidence.
+
+```json
+{
+  "schema_version": "mehscanFactAuditPolicy/v1",
+  "max_audits": 8,
+  "seed": "review-facts-v1",
+  "sample_percent": 0,
+  "checks": [
+    {"case_id": "login-binding", "check_id": "input-use", "reason": "Check the omitted early-return branch."}
+  ]
+}
+```
+
+Optional `impacts` selects declared potential-impact classes; `patterns` selects
+explicit check `routing_pattern` strings. Patterns describe a repeated reasoning
+task, such as `guard-return`, rather than a whole application domain. The controller
+does not invent patterns or add new checks. Explicit checks rank before pattern
+matches, then consequence/sample selection, retaining case priority within those
+groups. The plan records candidates beyond `max_audits` separately. A selected
+check without a completed factual assertion buys no audit call.
+
+The auditor uses the bound expert profile and original cited source, with at most
+one focused lookup batch. It checks the earlier answer's actual scope and
+conditions. A source-backed challenge disputes that assertion version and reopens
+only recorded consumers. Unresolved source or mere uncertainty does not establish
+an error. Support does not certify correctness, security safety or unselected
+answers. The owner receives the audit note and deciding source and must still
+review applicability and impact. Earlier answers and native history are retained;
+a corrected assertion requires an explicit new source-backed answer, and reopened
+security checks still require owner resolution.
+
+With `suspend_patterns: true`, a challenge stops unsent factual delegation for that
+exact named pattern during this run, retaining those checks with their owners.
+Factual-only items without an owner remain incomplete when their pattern is suspended.
+Already dispatched work can finish; unrelated patterns and domains stay eligible.
+No fixed sampling percentage is recommended by default.
+
+Audit calls, tokens and configured-rate cost use the original case/run allowance,
+including owner completion protection. Audit work can be deferred when that
+allowance is unavailable; non-selection or deferral never closes a security check.
+The ledger separates factual audit calls/outcomes from factual-worker and owner
+calls, retains original receipts and audit provenance, and links the bounded
+selection under `source-review/factual-audit-plan.json`. Recovery reuses completed
+or saved audit work without replaying inference; unstarted optional audits in an
+interrupted case are skipped. Keep the original policy unchanged during recovery.
+
 ## Evidence and completion
 
 Comprehensive keeps failed native obligations selected. Successful siblings may

@@ -10,6 +10,35 @@ import test_domain_protocol as domain_fixtures
 
 
 class WorkChecks(unittest.TestCase):
+    def test_factual_audit_requires_bound_expert_role_and_assertion_version(self):
+        fixture=domain_fixtures.DomainProtocol();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        task,packet=fixture.tasks[0],fixture.packets[0]
+        response=fixture.final(0)
+        task.pop('domain_session')
+        task.update(profile='expert',review_role='fact_auditor',review_ids=[])
+        target=dict(assertion_id='a'*64,version=1)
+        task['research'].update(question_only=True,factual_audit=target,
+            required_checks=[dict(id='fact',question='Is the earlier scoped answer correct?',route='source_fact',
+                scope='This function.',acceptance='Cite support or a counterexample.')])
+        provider=packet['work']['runtime']['provider']
+        packet['work']['runtime']['orchestration']={'expert':provider}
+        packet['work']['runtime']['provider']={**provider,'model':'routine-model'}
+        packet['job_binding']=dict(profile='expert',role='fact_auditor',provider=provider)
+        packet['factual_audit']={**target,'original_answer':{'summary':'The return is unconditional.'},'selection':{'reasons':['Explicit omitted branch.']}}
+        packet['native_questions']=[];fixture.update_packet(0)
+        response['draft']['results']=[]
+        for row in response['draft']['coverage']:row['status']='deferred'
+        response['draft']['work_checks']=[dict(check_id='fact',status='violated',summary='The cited branch contradicts that answer.',
+            evidence=[dict(source_ref='s0',line=1)],next_deciding_fact=None)]
+        fixture.responses=[response]
+        value=fixture.invoke(0)
+        self.assertEqual(value['draft']['work_checks'][0]['status'],'violated')
+        task['research']['factual_audit']['version']=2
+        with self.assertRaisesRegex(ValueError,'assertion version'):fixture.invoke(0)
+        task['research']['factual_audit']['version']=1
+        task['profile']='routine'
+        with self.assertRaisesRegex(ValueError,'explicit source facts'):fixture.invoke(0)
+
     def test_owner_dependencies_must_name_offered_assertion_versions(self):
         self.task["research"]["available_assertions"] = [{"assertion_id":"fact-one", "version":2}]
         check = self.reply["draft"]["work_checks"][0]

@@ -23,6 +23,13 @@ allowance and recovery of saved source answers or native finalization.
 Later native audits inherit the bound parent allowance; they do not repeat source
 discovery. The work-goal guide describes the supported continuation boundaries.
 
+With question routing, an optional `--fact-audit-policy FILE` selects bounded
+factual-answer checks for the configured expert before owner review. It is off by
+default, protects owner completion capacity, and records audit usage separately.
+Source-backed challenges dispute the answer and reopen only recorded consumers;
+they do not automatically rewrite native verdicts. See the work-goal guide's
+[factual audit policy](../skills/mehscan-security/references/work-goals.md#optional-factual-audits).
+
 The default Value `all` phase requires a bound coverage plan before provider review.
 Without `--source-selection FILE`, it prepares a selection checkpoint and exits
 with `selection_required`, making zero AI calls. The host agent combines native

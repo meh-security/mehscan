@@ -905,6 +905,8 @@ def run(args):
     if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
         raise ValueError("question routing requires all-phase work goals")
     work_path = getattr(args, "work_plan", None)
+    if getattr(args, "fact_audit_policy", None) and (not work_path or not getattr(args, "question_routing", False) or args.phase != "all"):
+        raise ValueError("factual audits require all-phase work goals with explicit question routing")
     if not work_path and any(getattr(args, key, None) is not None for key in ("review_goal", "coverage_target", "cost_budget", "cost_rates")):
         raise ValueError("review goals, targets and cost allowances require a source-bound work plan")
     if work_path and (args.phase != "all" or getattr(args, "domain_plan", None) or getattr(args, "source_selection", None)
@@ -2772,6 +2774,7 @@ def main():
     parser.add_argument("--research-bytes", type=int)
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
     parser.add_argument("--question-routing", action="store_true", help="work goals only: routine profile answers explicit source_fact checks; expert owns security decisions")
+    parser.add_argument("--fact-audit-policy", help="optional bounded factual audit selection; uses the bound owner and original remaining allowance")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
     parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")

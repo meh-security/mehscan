@@ -10,6 +10,111 @@ import test_worker
 worker=test_worker.worker
 
 class Questions(unittest.TestCase):
+    def audit_policy(self,f,command,**changes):
+        policy=dict(schema_version='mehscanFactAuditPolicy/v1',max_audits=1,seed='fixed',sample_percent=100)
+        policy.update(changes)
+        path=f.base/'audit-policy.json';path.write_text(json.dumps(policy))
+        return command+['--fact-audit-policy',str(path)]
+
+    def test_factual_audit_uses_expert_and_separate_usage_before_owner(self):
+        f,command=self.prepare()
+        rates=f.base/'rates.json';rates.write_text(json.dumps(dict(currency='USD',models={model:dict(
+            input_per_million='1',cached_input_per_million='0.1',output_per_million='2') for model in ('gpt-6-luna','gpt-6-sol')})))
+        code,calls,record=self.invoke(self.audit_policy(f,command)+['--cost-rates',str(rates)])
+        self.assertEqual(code,0,record)
+        self.assertEqual(calls,[('routine','question_answerer')]*2+[('expert','fact_auditor'),('expert','investigator')])
+        stage=f.base/'worker/source-review'
+        ledger=json.loads((stage/'work-ledger.json').read_text())
+        routing=ledger['summary']['routing']
+        self.assertEqual((routing['question_worker_calls'],routing['owner_calls'],routing['factual_audit_calls']),(2,1,1))
+        self.assertEqual(routing['factual_audit_outcomes'],{'supported':1})
+        self.assertTrue(ledger['items'][0]['usage_complete'])
+        self.assertEqual(ledger['items'][0]['usage']['input_tokens'],400)
+        self.assertEqual(json.loads((stage/'budget.json').read_text())['reserved_calls'],4)
+        self.assertEqual(json.loads((stage/'summary.json').read_text())['calls'],4)
+        self.assertTrue(ledger['items'][0]['factual_audits'][0]['selection']['reasons'])
+        audit=ledger['items'][0]['factual_audits'][0]
+        self.assertEqual(audit['usage'],dict(input_tokens=100,cached_input_tokens=0,output_tokens=10))
+        self.assertEqual(audit['estimated_cost_micros'],120)
+        self.assertGreaterEqual(audit['seconds'],0)
+
+    def test_optional_audit_defers_to_original_owner_reservation(self):
+        f,command=self.prepare()
+        path=Path(command[command.index('--work-plan')+1]);plan=json.loads(path.read_text())
+        plan['items'][0]['estimate']['owner_calls']=[1,1];path.write_text(json.dumps(plan))
+        code,calls,record=self.invoke(self.audit_policy(f,command)+['--max-calls','3'])
+        self.assertEqual(code,0,record)
+        self.assertEqual(calls,[('routine','question_answerer')]*2+[('expert','investigator')])
+        ledger=json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['summary']['routing']['factual_audit_calls'],0)
+        self.assertEqual(ledger['items'][0]['factual_audits'][0]['outcome'],'incomplete')
+        audit=ledger['items'][0]['factual_audits'][0]
+        self.assertEqual(audit['calls'],0)
+        self.assertEqual(ledger['items'][0]['completion_reservation']['consumed'],1)
+
+    def test_challenge_suspends_only_unsent_matching_pattern(self):
+        f,command=self.prepare()
+        path=Path(command[command.index('--work-plan')+1]);plan=json.loads(path.read_text())
+        base=plan['items'][0];items=[]
+        for name,pattern in [('a','guard-return'),('b','guard-return'),('c','another-pattern')]:
+            item=copy.deepcopy(base);item['id']=name
+            item['checks'][0]['routing_pattern']=pattern
+            if name!='a':item['review_roles']=dict(verify=[],cover=[],context=[])
+            items.append(item)
+        plan['items']=items;path.write_text(json.dumps(plan))
+        self.expected_native_by_case={'a':True}
+        command=self.audit_policy(f,command,suspend_patterns=True,sample_percent=0,
+            checks=[dict(case_id='a',check_id='execution',reason='Inspect an omitted branch.')])
+        code,calls,record=self.invoke(command,audit_state='violated')
+        self.assertEqual(code,0,record)
+        counts=Counter((case,role) for case,_,role in self.call_cases)
+        self.assertEqual(counts[('a','fact_auditor')],1)
+        self.assertEqual(counts[('b','question_answerer')],0)
+        self.assertEqual(counts[('c','question_answerer')],2)
+        self.assertEqual(len(calls),8)
+        stage=f.base/'worker/source-review'
+        with closing(sqlite3.connect(stage/'case-state.sqlite')) as db:
+            state=json.loads(db.execute('SELECT body FROM workspace').fetchone()[0])
+        self.assertEqual(set(state['suspended_patterns']),{'guard-return'})
+        self.assertTrue(any(history[-1]['status']=='disputed' for history in state['assertions'].values()))
+        self.assertEqual(state['cases']['a']['dependencies']['authority'],[],
+            'Owner must use an independent source proof after a challenge, not the disputed version')
+
+    def test_saved_audit_draft_recovers_without_repeating_factual_or_audit_calls(self):
+        f,command=self.prepare();command=self.audit_policy(f,command)
+        original=worker.write;stopped=[]
+        def write(path,value):
+            original(path,value)
+            if Path(path).name=='recovery.json' and value.get('phase')=='draft' and not stopped:
+                packet=json.loads((Path(path).parent/'context.json').read_text())
+                if packet['job_binding']['role']=='fact_auditor':
+                    stopped.append(True)
+                    raise KeyboardInterrupt()
+        with patch.object(worker,'write',side_effect=write):
+            with self.assertRaises(KeyboardInterrupt):self.invoke(command)
+        self.assertEqual(len(self.call_cases),3)
+        resumed=list(command);resumed[resumed.index('--output')+1]=str(f.base/'recovered')
+        resumed+=['--resume-from',str(f.base/'worker')]
+        code,calls,record=self.invoke(resumed)
+        self.assertEqual(code,0,record)
+        self.assertEqual(calls,[('expert','investigator')])
+        stage=f.base/'recovered/source-review'
+        summary=json.loads((stage/'summary.json').read_text())
+        self.assertEqual(summary['calls'],4)
+        self.assertEqual(summary['recovery']['new_receipted_calls'],1)
+        self.assertEqual(json.loads((stage/'work-ledger.json').read_text())['summary']['routing']['factual_audit_calls'],1)
+
+    def test_challenged_factual_only_answer_cannot_close_without_owner_resolution(self):
+        f,command=self.prepare(ai_only=True)
+        path=Path(command[command.index('--work-plan')+1]);plan=json.loads(path.read_text())
+        plan['items'][0]['checks']=plan['items'][0]['checks'][:1];path.write_text(json.dumps(plan))
+        code,calls,record=self.invoke(self.audit_policy(f,command),audit_state='violated')
+        self.assertEqual(code,2,record)
+        self.assertEqual(calls,[('routine','question_answerer')]*2+[('expert','fact_auditor')])
+        ledger=json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['summary']['closed'],0)
+        self.assertEqual(ledger['summary']['routing']['factual_audit_calls'],1)
+
     def prepare(self, facts=True, ai_only=False):
         fixture=work_fixture.WorkReview();self.addCleanup(fixture.doCleanups)
         f,command,path,ids=fixture.prepare()
@@ -49,7 +154,7 @@ class Questions(unittest.TestCase):
         command += ['--question-routing','--provider-contract',str(providers),'--expert-command',str(f.base/'expert-command.json')]
         return f,command
 
-    def invoke(self,command, *, owner_unresolved=False, bad_question=False, owner_lookup=False):
+    def invoke(self,command, *, owner_unresolved=False, bad_question=False, owner_lookup=False, audit_state='satisfied'):
         calls=[];self.call_cases=[];original=worker.execute
         def execute(argv,cwd,env,timeout,payload=None,**kwargs):
             if len(argv)!=4 or not argv[1].endswith('codex_reviewer.py'):
@@ -57,15 +162,20 @@ class Questions(unittest.TestCase):
             task=json.loads(payload);packet=json.loads(Path(task['evidence_packet']).read_text())
             self.assertEqual(task['kind'],'source_review','No replacement native inference')
             q=task.get('review_role')=='question_answerer'
+            audit=task.get('review_role')=='fact_auditor'
             case_id=packet['work_item']['id']
             self.call_cases.append((case_id,task['profile'],task['review_role']))
-            if q:
+            if q or audit:
                 self.assertEqual(packet['native_questions'],[])
                 self.assertEqual(bool(packet['supporting_native_facts']),
                     self.expected_native_by_case.get(case_id,False) if hasattr(self,'expected_native_by_case') else self.expect_native_facts)
             calls.append((task['profile'],task['review_role']))
             self.assertEqual(task['review_ids'],[] if q else task['review_ids'])
             provider=packet['job_binding']['provider']
+            if audit:
+                self.assertEqual(task['profile'],'expert')
+                self.assertEqual(packet['factual_audit']['version'],task['research']['factual_audit']['version'])
+                self.assertTrue(packet['factual_audit']['original_answer']['answers'])
             with Path(task['provider_metrics']).open('a') as handle:
                 handle.write(json.dumps(dict(conversation_id=task['conversation_id'],round=task['research']['round'],provider=provider,elapsed_ms=1,usage=dict(input_tokens=100,cached_input_tokens=0,output_tokens=10)))+'\n')
             windows=packet['primary']['windows'];w=windows[0]
@@ -79,7 +189,7 @@ class Questions(unittest.TestCase):
                 cite=dict(path='other/app.js',start_line=1,end_line=4)
             if q and not named and task['research']['round']==0:
                 return {'research':[dict(tool='source',review_id=None,purpose='Collect the deciding helper source.',arguments=dict(path='other/app.js',start_line=1,end_line=1))],'working_chain':'Need helper.'}
-            if not q and packet.get('question_answers'):
+            if not q and not audit and packet.get('question_answers'):
                 facts=json.loads(Path(task['shared_facts']).read_text())['facts']
                 self.assertTrue(any(f['query'].get('arguments',{}).get('path')=='other/app.js' for f in facts))
                 self.assertEqual(packet['question_answers'][0]['provider']['model'],'gpt-6-luna')
@@ -92,7 +202,7 @@ class Questions(unittest.TestCase):
                 return {'research':[dict(tool='source',review_id=None,purpose='Read the remaining deciding expression.',
                     arguments=dict(path='other/app.js',start_line=2,end_line=2))],'working_chain':'Need the effect expression.'}
             assessment=dict(decision='not_issue',confidence='medium',summary='Fixture decision.',reason='Scoped fixture transport.',checks=[],blockers=[],evidence=[cite])
-            state='unresolved' if owner_unresolved and not q else 'satisfied'
+            state=audit_state if audit else 'unresolved' if owner_unresolved and not q else 'satisfied'
             checks=[dict(check_id=c['id'],status=state,summary='Fixture property answer.',evidence=[cite],next_deciding_fact='Unresolved actor binding.' if state=='unresolved' else None) for c in task['research']['required_checks']]
             if 'available_assertions' in task['research']:
                 for check in checks:
@@ -100,7 +210,7 @@ class Questions(unittest.TestCase):
             rows=[dict(assessment,review_id=rid) for rid in task['review_ids']]
             if q and bad_question and (not isinstance(bad_question,str) or case_id==bad_question):
                 rows=[dict(assessment,review_id='forbidden')]
-            return {'draft':dict(results=rows,proposals=[],work_checks=checks,coverage=[{**{k:w[k] for k in ['path','start_line','end_line']},'status':'deferred' if q else 'examined','summary':'Only the named question.'} for w in windows])}
+            return {'draft':dict(results=rows,proposals=[],work_checks=checks,coverage=[{**{k:w[k] for k in ['path','start_line','end_line']},'status':'deferred' if q or audit else 'examined','summary':'Only the named question.'} for w in windows])}
         with patch.object(worker,'execute',side_effect=execute),patch.object(sys,'argv',[worker.__file__,*command[3:]]):
             code=worker.main()
         record=json.loads((Path(command[command.index('--output')+1])/'worker.json').read_text())

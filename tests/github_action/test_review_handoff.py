@@ -215,7 +215,7 @@ else:
             self.assertEqual(self.view(directory, plan)["attempt_status"], "incomplete" if kind == "stale" else "cancelled")
 
     def test_failed_consumer_closes_incomplete_and_tool_drift_prevents_launch(self):
-        for kind in ("failure", "controller_drift", "evidence_drift", "case_state_drift", "source_recovery_drift"):
+        for kind in ("failure", "controller_drift", "evidence_drift", "case_state_drift", "source_recovery_drift", "fact_audit_drift"):
             directory, plan, record = self.ready()
             def execute(argv, **kwargs):
                 if str(argv[1]).endswith("review_worker.py"):
@@ -225,7 +225,8 @@ else:
             original = adapter.file_digest
             def changed(path):
                 target = {"controller_drift":"review_worker.py", "evidence_drift":"review_evidence.py",
-                          "case_state_drift":"review_case_state.py", "source_recovery_drift":"review_source_recovery.py"}.get(kind)
+                          "case_state_drift":"review_case_state.py", "source_recovery_drift":"review_source_recovery.py",
+                          "fact_audit_drift":"review_fact_audit.py"}.get(kind)
                 return "changed" if Path(path).name == target else original(path)
             with patch.object(adapter, "file_digest", side_effect=changed):
                 result = self.consume(record, execute)
