@@ -164,6 +164,11 @@ def schema(task, base, api, guidance, bound_handles=True):
             "summary": text, "evidence": {"type": "array", "maxItems": 8, "items": citation},
             "next_deciding_fact": {"type": ["string", "null"]}})}
         draft["required"].append("work_checks")
+        if "available_assertions" in task["research"]:
+            check = draft["properties"]["work_checks"]["items"]
+            check["properties"]["assertion_dependencies"] = {"type":"array", "maxItems":16,
+                "items":obj({"assertion_id":text, "version":{"type":"integer", "minimum":1}})}
+            check["required"].append("assertion_dependencies")
     if task["research"].get("question_only"):
         draft["properties"]["results"]["maxItems"] = 0
         draft["properties"]["proposals"]["maxItems"] = 0
@@ -258,6 +263,11 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             "Mark every coverage row deferred. Answer only the explicit proposition, preserving scope and conditions. "
             "satisfied=proposition supported, violated=proposition contradicted, unresolved=deciding fact missing. "
             "Do not turn your answer into a security verdict.")
+    if "available_assertions" in research:
+        value += ("\nFor each work_check, return assertion_dependencies with exact assertion_id/version pairs "
+            "for interpretations actually used. Use [] for an independent source proof or a rejected suggestion. "
+            "Inspect deciding original source and applicability; a cited assertion is not an established verdict. "
+            "Available assertion identities:\n" + json.dumps(research["available_assertions"], ensure_ascii=False))
     if "citation_windows" in research:
         value += (
             "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
@@ -332,6 +342,20 @@ def envelope(response, task):
         actual = [check["check_id"] for check in draft.get("work_checks", [])]
         if len(actual) != len(set(actual)) or set(actual) != expected:
             raise ValueError("work checks must match controller-owned check identities exactly once")
+        if "available_assertions" in task["research"]:
+            offered = {(dep["assertion_id"], dep["version"]) for dep in task["research"]["available_assertions"]}
+            for row in draft["work_checks"]:
+                dependencies = row.get("assertion_dependencies")
+                if not isinstance(dependencies, list):
+                    raise ValueError("owner must declare assertion dependencies")
+                seen = set()
+                for dep in dependencies:
+                    if (not isinstance(dep, dict) or set(dep) != {"assertion_id", "version"}
+                            or not isinstance(dep["assertion_id"], str) or type(dep["version"]) is not int
+                            or (dep["assertion_id"], dep["version"]) not in offered
+                            or dep["assertion_id"] in seen):
+                        raise ValueError("foreign, duplicate or stale assertion dependency")
+                    seen.add(dep["assertion_id"])
     if "citation_windows" in task["research"]:
         windows = task["research"]["citation_windows"]
 

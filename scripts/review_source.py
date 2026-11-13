@@ -14,6 +14,7 @@ import review_scheduler
 import review_domains
 import review_work
 import review_questions
+from review_case_state import CaseState
 import review_orchestration
 
 
@@ -639,6 +640,11 @@ def run(args, legacy, worker):
     preparation_broker = worker.EvidenceBroker()
     question_budget = (review_orchestration.SharedReviewBudget(stage / "question-budget.json",
         runtime["orchestration"], worker.write) if question_routing else None)
+    case_store = (CaseState.create(stage / "case-state.sqlite", root, {
+        "source_plan_id":work_registry["source_plan_id"],
+        "source_fingerprint":work_registry["source_fingerprint"],
+        "work_package_id":package["package_id"], "work_plan_digest":context.digest(work_registry["items"])},
+        work_registry) if work_registry else None)
 
     def prepare_definition(case_id, spec, usage):
         """One explicit declaration file, no inferred dispatch or caller expansion."""
@@ -693,6 +699,7 @@ def run(args, legacy, worker):
     def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True,
                        prepared_question=()):
         profile = "routine" if question is not None or not question_routing else "expert"
+        available_assertions = [dep for _, answer in question_results for dep in answer.get("assertions", [])]
         command = source_commands[profile]
         command_binding = command_bindings[profile]
         provider = runtime.get("provider") if profile == "routine" else runtime["orchestration"]["expert"]
@@ -1028,6 +1035,8 @@ def run(args, legacy, worker):
                             "case_id": domain_case["id"], "case_index": 0, "cases": [domain_state["cases"][case_index]]}
                 if work_registry:
                     frame["research"]["required_checks"] = domain_case["checks"]
+                    if available_assertions:
+                        frame["research"]["available_assertions"] = available_assertions
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 if question_budget:
@@ -1262,7 +1271,8 @@ def run(args, legacy, worker):
 
             proofs = []
             if work_registry:
-                review_work.check_results(domain_case["checks"], last.get("work_checks"))
+                review_work.check_results(domain_case["checks"], last.get("work_checks"),
+                    available_assertions if available_assertions else None)
                 for check in last["work_checks"]:
                     proofs.extend(citations(check))
             for assessment in last["results"]:
@@ -1389,11 +1399,10 @@ def run(args, legacy, worker):
             return completed
 
         if work_registry:
-            work_results = {}
             work_lock = worker.threading.Lock()
 
             def save_work():
-                report = review_work.ledger(work_registry, list(work_results.values()),
+                report = review_work.ledger(work_registry, case_store.results(),
                     budget=review_budget.snapshot(budget_path), metrics=list(source_metrics))
                 worker.write(stage / "work-ledger.json", report)
                 worker.write_text(stage / "remaining-work.md", review_work.markdown(report))
@@ -1405,7 +1414,7 @@ def run(args, legacy, worker):
                 case = job["case"]
                 case_started = time.monotonic()
                 with work_lock:
-                    work_results[case["id"]] = {"case_id": case["id"], "status": "running", "calls": 0}
+                    case_store.submit("start:" + case["id"], {"kind":"start", "case_id":case["id"]})
                     save_work()
                 job_directory = context.digest(["work-item", case["id"]])
                 assignment = {**by_id[case["assignment_id"]], "_job_id": job_directory, "_work_item_id": case["id"],
@@ -1445,8 +1454,13 @@ def run(args, legacy, worker):
                                     or review_budget.capacity(budget_path)):
                                 skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
                                 break
-                            answers.append((check, assignment_job(assignment, question=check, supporting_cards=cards,
-                                owner_required=not fact_only, prepared_question=prepared)))
+                            answer = assignment_job(assignment, question=check, supporting_cards=cards,
+                                owner_required=not fact_only, prepared_question=prepared)
+                            answer["assertions"] = case_store.record_question(case["id"], check,
+                                stage / "jobs" / context.digest([job_directory, "question", check["id"]]) / "result.json")
+                            answers.append((check, answer))
+                            with work_lock:
+                                save_work()
                     result = (review_questions.fact_only_result(assignment, case["checks"], answers) if fact_only else
                         assignment_job(assignment, question_results=answers, prepaid=prepaid,
                             supporting_cards=cards if question_budget else None, prepared_question=owner_prepared))
@@ -1478,7 +1492,10 @@ def run(args, legacy, worker):
             for job, result in review_scheduler.run({"ai": jobs}, execute_work, workers=args.workers, budget_path=budget_path):
                 result.update(case_id=job["id"], domain_id=job["id"])
                 with work_lock:
-                    work_results[job["id"]] = result
+                    result_path = stage / "case-results" / (context.digest(job["id"]) + ".json")
+                    result_path.parent.mkdir(exist_ok=True)
+                    worker.write(result_path, result)
+                    case_store.record_result(job["id"], result_path)
                     save_work()
                 results.append(result)
                 worker.write(stage / "progress.json", results)
@@ -1555,7 +1572,9 @@ def run(args, legacy, worker):
         raise ValueError("source work changed before native handoff")
     if question_budget:
         question_budget.close()
-    successful = [r for r in results if r["status"] == "complete"]
+    if case_store:
+        results = [r for r in results if "case_id" not in r] + case_store.results()
+    successful = [r for r in results if r["status"] == "complete" and not r.get("reconsideration")]
     admission = {
         "plan": plan,
         "inspected": [w for r in successful for w in r["inspected"]],

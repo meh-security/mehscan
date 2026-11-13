@@ -10,6 +10,24 @@ import test_domain_protocol as domain_fixtures
 
 
 class WorkChecks(unittest.TestCase):
+    def test_owner_dependencies_must_name_offered_assertion_versions(self):
+        self.task["research"]["available_assertions"] = [{"assertion_id":"fact-one", "version":2}]
+        check = self.reply["draft"]["work_checks"][0]
+        check["assertion_dependencies"] = [{"assertion_id":"fact-one", "version":2}]
+        validator = Draft202012Validator(codex_protocol.build_schema(self.task))
+        validator.validate(self.reply)
+        self.assertEqual(protocol.envelope(self.reply, self.task)["draft"]["work_checks"][0]["assertion_dependencies"],
+                         check["assertion_dependencies"])
+        for invalid in ([{"assertion_id":"other", "version":2}],
+                        [{"assertion_id":"fact-one", "version":1}],
+                        check["assertion_dependencies"] * 2):
+            bad = copy.deepcopy(self.reply)
+            bad["draft"]["work_checks"][0]["assertion_dependencies"] = invalid
+            with self.assertRaisesRegex(ValueError, "assertion dependency"):
+                protocol.envelope(bad, self.task)
+        del self.reply["draft"]["work_checks"][0]["assertion_dependencies"]
+        self.assertTrue(list(validator.iter_errors(self.reply)))
+
     def test_bound_question_role_runs_evidence_only_adapter(self):
         fixture=domain_fixtures.DomainProtocol();fixture.setUp();self.addCleanup(fixture.doCleanups)
         task,packet=fixture.tasks[0],fixture.packets[0]

@@ -176,16 +176,30 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
         coverage_plan={"goal": goal, "target_ids": target_ids if goal == "coverage" else []})
 
 
-def check_results(required, rows):
+def check_results(required, rows, available_assertions=None):
     """Validate closure claims before source-proof validation; no semantic verdict inference."""
     expected = {check["id"] for check in required}
     if not isinstance(rows, list) or len(rows) != len(expected):
         raise ValueError("work result must answer every required check exactly once")
     seen = set()
     for row in rows:
-        if (not isinstance(row, dict) or set(row) != {"check_id", "status", "summary", "evidence", "next_deciding_fact"}
+        fields = {"check_id", "status", "summary", "evidence", "next_deciding_fact"}
+        if (not isinstance(row, dict) or not fields <= set(row) or set(row) - fields - {"assertion_dependencies"}
                 or row["check_id"] not in expected or row["check_id"] in seen or row["status"] not in CHECK_STATES):
             raise ValueError("work check identity, state or fields differ from the plan")
+        dependencies = row.get("assertion_dependencies", [])
+        if (available_assertions is not None and "assertion_dependencies" not in row
+                or not isinstance(dependencies, list)):
+            raise ValueError("owner checks must declare their assertion dependencies")
+        offered = {(dep["assertion_id"], dep["version"]) for dep in (available_assertions or [])}
+        seen_dependencies = set()
+        for dep in dependencies:
+            if (not isinstance(dep, dict) or set(dep) != {"assertion_id", "version"}
+                    or not isinstance(dep["assertion_id"], str) or type(dep["version"]) is not int
+                    or (dep["assertion_id"], dep["version"]) not in offered
+                    or dep["assertion_id"] in seen_dependencies):
+                raise ValueError("assertion dependency is foreign, duplicate or stale")
+            seen_dependencies.add(dep["assertion_id"])
         seen.add(row["check_id"])
         text(row["summary"], "check conclusion")
         evidence = row["evidence"]
@@ -213,7 +227,11 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         if result:
             state, reason = result["status"], result.get("detail")
             if state == "complete":
-                check_rows = result["draft"]["work_checks"]
+                check_rows = copy.deepcopy(result["draft"]["work_checks"])
+                for check in check_rows:
+                    reason = result.get("reconsideration", {}).get(check["check_id"])
+                    if reason:
+                        check.update(status="not_checked", next_deciding_fact=reason)
                 unresolved = any(row["status"] in ("unresolved", "not_checked") for row in check_rows)
                 unresolved |= any(row["decision"] == "needs_review" for row in result["draft"]["results"])
                 state = "investigated_unresolved" if unresolved else "closed"
@@ -235,6 +253,8 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
                "question_work": copy.deepcopy(result.get("question_work", [])) if result else [],
+               "provisional_fact_answers": copy.deepcopy(result.get("provisional_fact_answers", {})) if result else {},
+               "reconsideration": copy.deepcopy(result.get("reconsideration", {})) if result else {},
                "job_directory": result.get("job_directory") if result else None,
                "usage_complete": bool(result and result["status"] == "complete" and len(usage_rows) == result.get("calls", 0)
                    and all(not set(metric.get("unknown_delta_counters", [])).intersection(

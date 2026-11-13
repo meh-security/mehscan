@@ -50,7 +50,7 @@ def read(path):
 def implementation():
     directory = Path(__file__).resolve().parent
     return {name:worker.digest_file(directory / name) for name in (
-        "review_workspace_bridge.py", "review_workspace.py", "review_workspace_actions.py",
+        "review_workspace_bridge.py", "review_workspace.py", "review_evidence.py", "review_workspace_actions.py",
         "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py",
         "review_source_profile.py")}
 

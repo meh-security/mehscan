@@ -386,6 +386,8 @@ def prepare(get=None, execute=run_command):
                           "review_domains_sha256": file_digest(Path(__file__).with_name("review_domains.py")),
                           "review_work_sha256": file_digest(Path(__file__).with_name("review_work.py")),
                           "review_questions_sha256": file_digest(Path(__file__).with_name("review_questions.py")),
+                          "review_evidence_sha256": file_digest(Path(__file__).with_name("review_evidence.py")),
+                          "review_case_state_sha256": file_digest(Path(__file__).with_name("review_case_state.py")),
                           "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
                           "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
                           "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
@@ -640,6 +642,8 @@ def review_tools(plan, execute):
                       ("review_domains.py", "review_domains_sha256"),
                       ("review_work.py", "review_work_sha256"),
                       ("review_questions.py", "review_questions_sha256"),
+                      ("review_evidence.py", "review_evidence_sha256"),
+                      ("review_case_state.py", "review_case_state_sha256"),
                       ("review_source_profile.py", "source_profile_sha256"),
                       ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
         if file_digest(Path(__file__).with_name(name)) != config[key]:

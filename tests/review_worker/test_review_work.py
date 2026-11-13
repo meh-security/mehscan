@@ -14,6 +14,16 @@ import test_review_domains as domain_fixtures
 
 
 class WorkPlan(unittest.TestCase):
+    def test_reconsideration_reopens_check_without_rewriting_historical_result(self):
+        registry = self.validate(goal="coverage")
+        result = self.result("higher")
+        result["reconsideration"] = {"binding":"A consumed assertion was disputed."}
+        report = work.ledger(registry, [result])
+        row = next(row for row in report["items"] if row["id"] == "higher")
+        self.assertEqual(row["status"], "investigated_unresolved")
+        self.assertEqual(row["check_results"][0]["status"], "not_checked")
+        self.assertEqual(result["draft"]["work_checks"][0]["status"], "satisfied")
+        self.assertFalse(report["target_complete"])
     def setUp(self):
         fixture = domain_fixtures.DomainPlan()
         fixture.setUp()

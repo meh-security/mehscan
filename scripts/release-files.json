@@ -31,6 +31,8 @@
   "scripts/review_domains.py",
   "scripts/review_work.py",
   "scripts/review_questions.py",
+  "scripts/review_evidence.py",
+  "scripts/review_case_state.py",
   "scripts/review_budget.py",
   "scripts/review_scheduler.py",
   "scripts/review_source_profile.py",

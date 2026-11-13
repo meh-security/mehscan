@@ -7,6 +7,14 @@ ephemeral runners do not share a store; see [Action coordination](github-action.
 
 ## Claim a generation
 
+Source-bound work-goal reviews also retain `source-review/case-state.sqlite`.
+It records factual assertion revisions, original result references and the checks
+that explicitly use those assertions. A disputed or replaced assertion reopens
+its dependent checks without rewriting native decision history. The JSON work
+ledger projects this state, while existing budget receipts govern execution.
+See [work-goal evidence and completion](../skills/mehscan-security/references/work-goals.md#read-the-ledger)
+for dependencies, partial factual results and source validation.
+
 Create a current native inventory with an explicit stable repository namespace.
 For a fork PR, use the base product's repository ID and preserve the fork ID as
 source provenance. Keep inventory, bundles and state outside the source root.

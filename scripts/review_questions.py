@@ -101,6 +101,7 @@ def answer_note(check, result):
         "provider": copy.deepcopy(result.get("question_provider")),
         "conversation_id": result.get("question_conversation_id"),
         "answers": copy.deepcopy(result.get("draft", {}).get("work_checks", [])),
+        "assertions": copy.deepcopy(result.get("assertions", [])),
         "authority": "Model interpretation, not an established security fact or verdict. Original source is supplied separately."}
 
 

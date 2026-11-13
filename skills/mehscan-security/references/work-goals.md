@@ -320,9 +320,33 @@ updates them as work starts and completes:
 | Artifact | Meaning |
 | --- | --- |
 | `work-plan.json` | Normalized source-bound backlog and fixed target membership |
+| `case-state.sqlite` | Transactional case state, assertion revisions, source bindings and explicit check dependencies |
 | `work-ledger.json` | Required checks, cited answers, blockers, potential impact, observed usage and remaining estimates |
 | `remaining-work.md` | Human-readable residual work and cost/coverage limits |
 | `lead-accounting.json` | Native IDs mapped to roles, including unclassified IDs |
+
+The case store saves source-validated question answers before the owner runs.
+Their original result artifacts and provider attribution survive an owner failure.
+Ledger JSON and Markdown are projections of this state; native decision history
+and the execution budget remain under their existing authorities.
+
+When attributed factual assertions are offered, the owner returns
+`assertion_dependencies` on every required check: exact `assertion_id` and
+`version` pairs for interpretations used, or an empty array for an independent
+source proof or rejected suggestion. Inspect the deciding original evidence and
+caller conditions. These declarations track recorded reliance; they cannot prove
+that an interpretation is correct or expose every influence on a model's answer.
+
+A controller dispute or replacement retains assertion history and reopens only
+checks that recorded reliance on it. Reopened checks lose completed-coverage
+status and name the reason for reconsideration. Independent checks retain their
+results. Previously admitted native verdicts remain historical until explicitly
+superseded through normal admission. An unresolved replacement cannot clear a
+dependent security conclusion. Models do not directly edit the store.
+
+The store rejects altered result artifacts, stale assertion versions and changed
+deciding source. This state support does not enable automatic interrupted-run
+resume or a new audit phase; those invocation restrictions above still apply.
 
 The ledger separates unresolved planned high-impact work, lower-priority work,
 out-of-target work and unclassified material with unknown importance. It also

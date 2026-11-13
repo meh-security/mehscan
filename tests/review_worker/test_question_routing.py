@@ -1,5 +1,6 @@
 """Bound question roles with real native handoff and deterministic providers."""
-import copy,json,sys,unittest
+import copy,json,sys,unittest,sqlite3
+from contextlib import closing
 from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
@@ -89,6 +90,9 @@ class Questions(unittest.TestCase):
             assessment=dict(decision='not_issue',confidence='medium',summary='Fixture decision.',reason='Scoped fixture transport.',checks=[],blockers=[],evidence=[cite])
             state='unresolved' if owner_unresolved and not q else 'satisfied'
             checks=[dict(check_id=c['id'],status=state,summary='Fixture property answer.',evidence=[cite],next_deciding_fact='Unresolved actor binding.' if state=='unresolved' else None) for c in task['research']['required_checks']]
+            if 'available_assertions' in task['research']:
+                for check in checks:
+                    check['assertion_dependencies'] = task['research']['available_assertions'] if check['check_id'] == 'authority' else []
             rows=[dict(assessment,review_id=rid) for rid in task['review_ids']]
             if q and bad_question and (not isinstance(bad_question,str) or case_id==bad_question):
                 rows=[dict(assessment,review_id='forbidden')]
@@ -125,6 +129,13 @@ class Questions(unittest.TestCase):
             ('ai-only','expert'):1,('bad-fact','routine'):2,('bad-fact','expert'):1}))
         self.assertEqual(ledger['summary']['routing']['question_worker_calls'],8)
         self.assertEqual(ledger['summary']['routing']['owner_calls'],4)
+        with closing(sqlite3.connect(f.base/'worker/source-review/case-state.sqlite')) as db:
+            state = json.loads(db.execute('SELECT body FROM workspace').fetchone()[0])
+        self.assertEqual(len(state['assertions']), 3)
+        self.assertTrue(state['cases']['native']['dependencies']['authority'])
+        self.assertEqual(state['cases']['owner-only']['dependencies']['authority'], [])
+        self.assertTrue(state['cases']['facts-only']['questions']['execution']['assertions'])
+        self.assertTrue(next(row for row in ledger['items'] if row['id']=='native')['provisional_fact_answers'])
         self.assertTrue((f.base/'worker/findings.json').exists())
 
     def test_single_call_allowance_is_reserved_for_owner(self):
