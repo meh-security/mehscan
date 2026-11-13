@@ -1,8 +1,12 @@
 """Interrupted source attempts conserve source bindings, receipts and allowance."""
 import json
+from contextlib import closing
 from pathlib import Path
 import tempfile
 import unittest
+import sqlite3
+import subprocess
+import sys
 
 import test_worker
 import review_budget as budget
@@ -98,6 +102,26 @@ class SourceRecovery(unittest.TestCase):
         self.assertFalse((next_stage / "budget.json").exists())
         with self.assertRaisesRegex(ValueError, "already continued"):
             recovery.restore(self.parent, next_stage, self.binding, self.root, worker)
+
+    def test_killed_sqlite_transaction_retains_only_committed_case_state(self):
+        path = self.old / "case-state.sqlite"
+        with closing(sqlite3.connect(path)) as database, database:
+            database.execute("CREATE TABLE cases (value TEXT)")
+            database.execute("INSERT INTO cases VALUES ('committed')")
+        script = """import os,sqlite3,sys
+database=sqlite3.connect(sys.argv[1])
+database.execute('PRAGMA cache_size=1')
+database.execute('BEGIN IMMEDIATE')
+database.execute('DELETE FROM cases')
+database.executemany('INSERT INTO cases VALUES (?)',[('uncommitted'*10000,)]*20)
+os._exit(0)
+"""
+        subprocess.run([sys.executable, "-c", script, str(path)], check=True, timeout=15)
+        self.assertTrue(Path(str(path) + "-journal").exists())
+        recovery.restore(self.parent, self.new, self.binding, self.root, worker)
+        with closing(sqlite3.connect(self.new / "case-state.sqlite")) as database:
+            self.assertEqual(database.execute("PRAGMA integrity_check").fetchone(), ("ok",))
+            self.assertEqual(database.execute("SELECT value FROM cases").fetchall(), [("committed",)])
 
 
 if __name__ == "__main__":

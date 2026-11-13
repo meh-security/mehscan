@@ -1,8 +1,10 @@
 """Source-phase checkpoints. Recorded responses never authorize a paid replay."""
 import copy
+from contextlib import closing
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 
 import review_budget
 import review_work
@@ -79,7 +81,13 @@ def restore(parent, stage, binding, root, worker):
         if path.exists():
             if path.is_symlink():
                 raise ValueError("source recovery state cannot be redirected")
-            shutil.copyfile(path, stage / name)
+            if name == "case-state.sqlite":
+                # A killed transaction can leave a hot journal. SQLite recovers
+                # committed state before backup; a bare file copy loses that journal.
+                with closing(sqlite3.connect(path)) as source_db, closing(sqlite3.connect(stage / name)) as target_db:
+                    source_db.backup(target_db)
+            else:
+                shutil.copyfile(path, stage / name)
     return record
 
 
