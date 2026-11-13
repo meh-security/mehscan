@@ -36,6 +36,8 @@ For cheaper factual research, [question delegation](references/work-goals.md#que
 routes explicit source propositions to a bounded question worker. Security
 decisions default to the review owner. Do not assign a general first pass,
 threat model or safety dismissal to the cheaper worker as factual research.
+When delegation is enabled, select useful factual questions during ordinary work
+planning; follow the selection criteria in that reference without an extra planning pass.
 
 For an explicitly requested domain review, use [domain review](references/domain-review.md)
 and a bound `--domain-plan`. It gives native material three roles: concrete claims

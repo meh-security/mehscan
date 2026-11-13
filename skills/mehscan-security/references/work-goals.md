@@ -151,7 +151,40 @@ inventory and selected IDs. Refresh the native work package after admitting the
 bound two-profile plan; never hand-edit its runtime.
 
 Checks default to `security_decision` and go to the owner. Only explicitly scoped
-`source_fact` checks are delegated. For example:
+`source_fact` checks are delegated.
+
+When using delegation, the agent preparing the work plan selects questions
+automatically during its existing source orientation; the user need not author
+them. Keep this in the same planning step, using the configured profiles rather
+than buying a separate model call to classify each check. For each selected
+control or suspected failure:
+
+- Reuse deciding facts already available in cited source or native/compiler
+  context. Do not create a paid question just to repeat them.
+- Choose a remaining factual proposition only if its answer changes the owner's
+  next decision. Name its actual producer, consumer or registration edge, bounded
+  scope and deciding evidence. Prefer one useful preparation question per item;
+  combine repeated caller questions when they share the deciding implementation,
+  preserving different caller conditions and repair points.
+- Keep authorization policy, conflicting effective bindings, deployment assumptions,
+  dependency guarantees, actor/victim impact and dismissal decisions with the
+  owner. Split a factual prerequisite from that decision only when it saves
+  research; retain the security check rather than replacing it with the fact.
+- If a useful proposition cannot be bounded from the available orientation,
+  leave the check with the owner. Native/AI origin, file count, API category and
+  confidence alone do not select the route. No quota requires a Luna question.
+
+For example, a source question about the registered middleware and identity
+assignment can prepare an owner decision about unauthorized record access. The
+factual answer alone cannot close that security decision. Conversely, if the
+effective assignment is already shown, give it directly to the owner and omit
+the extra question. Apply the same selection to AI-only items and native leads;
+Verify IDs keep their owner assessments regardless of preparation.
+
+The controller enforces explicit routes, bounded fields and evidence admission;
+it does not certify that the planner's question is easy or semantically correct.
+Inspect the declared fact/owner split before dispatch, and report actual question
+calls separately from planned checks. For example:
 
 ```json
 {
@@ -203,6 +236,10 @@ The ledger's routing summary separates declared fact/owner checks, question-work
 calls, owner calls and provisional answers. Item `question_work` records link to
 the exact provider, conversation and result directory. Provisional answers and
 accepted item closure are different counts.
+Requested questions skipped during execution have `status: skipped`, zero calls,
+a reason and no conversation/result directory. The routing summary counts these
+as `skipped_question_checks`; they do not imply that the owner left the check
+unanswered. Unstarted items remain visible in the ordinary work ledger.
 
 Missing implementations first need source collection, not automatic expert
 escalation. Group repeated caller questions by control and repair point, retaining

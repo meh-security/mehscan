@@ -24,4 +24,21 @@ class Questions(unittest.TestCase):
         self.assertEqual(result['status'],'incomplete')
         self.assertNotIn('draft',result)
 
+    def test_skipped_preparation_is_distinct_from_attempted_unresolved_answer(self):
+        checks=[dict(id=key,question='Locate the registered producer.',route='source_fact',
+                     scope='The named route.',acceptance='Cite the registration and assignment.') for key in ('a','b')]
+        checks.append(dict(id='owner',question='Does this violate account authority?'))
+        answer=dict(status='complete',calls=1,question_conversation_id='turn-a',
+                    draft=dict(work_checks=[dict(check_id='a',status='unresolved')]))
+        notes=questions.execution_notes(checks,[(checks[0],answer)],{'model':'routine'},
+                                       lambda key:'jobs/'+key,'Owner capacity reserved.')
+        self.assertEqual([row['check_id'] for row in notes],['a','b'])
+        self.assertEqual(notes[0]['answer_status'],'unresolved')
+        self.assertEqual(notes[0]['conversation_id'],'turn-a')
+        self.assertEqual(notes[1]['status'],'skipped')
+        self.assertEqual(notes[1]['calls'],0)
+        self.assertIsNone(notes[1]['directory'])
+        self.assertIsNone(notes[1]['conversation_id'])
+        self.assertEqual(notes[1]['reason'],'Owner capacity reserved.')
+
 if __name__=='__main__':unittest.main()

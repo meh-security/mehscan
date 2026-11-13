@@ -124,5 +124,12 @@ class Questions(unittest.TestCase):
         code,calls,record=self.invoke(command+['--max-calls','1'])
         self.assertEqual(code,0,record)
         self.assertEqual(calls,[('expert','investigator')],record)
+        ledger=json.loads((self.f.base/'worker/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['summary']['routing']['skipped_question_checks'],1)
+        self.assertEqual(ledger['summary']['routing']['question_worker_calls'],0)
+        self.assertEqual(ledger['summary']['routing']['owner_calls'],1)
+        note=ledger['items'][0]['question_work'][0]
+        self.assertEqual(note['status'],'skipped')
+        self.assertIsNone(note['conversation_id'])
 
 if __name__=='__main__':unittest.main()

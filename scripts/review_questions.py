@@ -50,6 +50,24 @@ def answer_note(check, result):
         "authority": "Model interpretation, not an established security fact or verdict. Original source is supplied separately."}
 
 
+def execution_notes(checks, answers, provider, directory_for, skipped_reason):
+    """Account for every requested fact check, including preparation never started."""
+    by_id = {check["id"]: answer for check, answer in answers}
+    notes = []
+    for check in checks:
+        if validate_check(check) != "source_fact":
+            continue
+        answer = by_id.get(check["id"])
+        notes.append({"check_id":check["id"], "status":answer["status"] if answer else "skipped",
+            "provider":copy.deepcopy(provider), "calls":answer["calls"] if answer else 0,
+            "reason":answer.get("detail") if answer else skipped_reason,
+            "conversation_id":answer.get("question_conversation_id") if answer else None,
+            "directory":directory_for(check["id"]) if answer else None,
+            "answer_status":next((row["status"] for row in answer.get("draft", {}).get("work_checks", [])
+                if row["check_id"] == check["id"]), None) if answer else None})
+    return notes
+
+
 def check_draft(draft):
     if draft.get("results") or draft.get("proposals"):
         raise ValueError("question worker cannot submit findings or native decisions")

@@ -1345,6 +1345,7 @@ def run(args, legacy, worker):
                 assignment = {**by_id[case["assignment_id"]], "_job_id": job_directory, "_work_item_id": case["id"],
                               "review_ids": case["verify_review_ids"]}
                 answers = []
+                skipped_reason = "Question preparation did not start; owner reservation or source collection did not complete."
                 prepaid = None
                 fact_only = bool(question_budget and not case["verify_review_ids"] and
                     all(review_questions.validate_check(check) == "source_fact" for check in case["checks"]))
@@ -1362,6 +1363,7 @@ def run(args, legacy, worker):
                                 continue
                             if (question_budget.remaining(case["id"], "model_calls") < (1 if fact_only else 2)
                                     or review_budget.capacity(budget_path)):
+                                skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
                                 break
                             answers.append((check, assignment_job(assignment, question=check, supporting_cards=cards, owner_required=not fact_only)))
                     result = (review_questions.fact_only_result(assignment, case["checks"], answers) if fact_only else
@@ -1379,12 +1381,9 @@ def run(args, legacy, worker):
                     if question_budget:
                         question_budget.end_case(case["id"])
                 if question_budget:
-                    result["question_work"] = [{"check_id":check["id"], "status":answer["status"],
-                        "provider":runtime["provider"], "calls":answer["calls"],
-                        "conversation_id":answer.get("question_conversation_id"),
-                        "directory":"source-review/jobs/" + context.digest([job_directory, "question", check["id"]]),
-                        "answer_status":next((row["status"] for row in answer.get("draft", {}).get("work_checks", [])
-                                              if row["check_id"] == check["id"]), None)} for check, answer in answers]
+                    result["question_work"] = review_questions.execution_notes(case["checks"], answers,
+                        runtime["provider"], lambda check_id:"source-review/jobs/" + context.digest(
+                            [job_directory, "question", check_id]), skipped_reason)
                     for key in ("calls", "queries", "bytes", "unknown_provider_calls"):
                         result[key] += sum(answer[key] for _, answer in answers)
                     result["seconds"] = time.monotonic() - case_started

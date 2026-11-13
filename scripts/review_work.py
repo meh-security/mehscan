@@ -286,6 +286,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
             routing=dict(declared_fact_checks=sum(check.get("route") == "source_fact" for row in rows for check in row["required_checks"]),
                 declared_owner_checks=sum(check.get("route", "security_decision") == "security_decision" for row in rows for check in row["required_checks"]),
                 question_worker_calls=sum(q["calls"] for row in rows for q in row["question_work"]),
+                skipped_question_checks=sum(q["status"] == "skipped" for row in rows for q in row["question_work"]),
                 owner_calls=sum(row["calls"] - sum(q["calls"] for q in row["question_work"]) for row in rows),
                 provisional_answers=sum(q["status"] == "complete" for row in rows for q in row["question_work"])),
             required=len(required), required_closed=sum(row["status"] == "closed" for row in required),
