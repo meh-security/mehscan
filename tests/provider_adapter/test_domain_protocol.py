@@ -112,6 +112,25 @@ class DomainProtocol(unittest.TestCase):
         self.assertTrue(receipts[1]['domain_case_start'])
         self.assertEqual(receipts[0]['domain_prefix_sha256'], receipts[1]['domain_prefix_sha256'])
 
+    def test_bound_expert_owner_uses_real_adapter_with_domain_metadata(self):
+        packet=self.packets[0]
+        expert=fixtures.launcher.provider_contract(self.f.config)
+        packet['work']['runtime']['orchestration']={'expert':expert}
+        packet['work']['runtime']['provider']={**expert,'model':'other-routine-model'}
+        packet['job_binding']={'profile':'expert','role':'investigator','provider':expert}
+        self.tasks[0]['profile']='expert'
+        self.update_packet(0)
+        self.responses=[self.final(0)]
+        result=self.invoke(0)
+        self.assertEqual(result['draft']['results'][0]['review_id'],'review-0')
+        self.assertEqual(len(self.calls),1)
+
+    def test_unbound_expert_domain_is_rejected_before_provider(self):
+        self.tasks[0]['profile']='expert'
+        with self.assertRaisesRegex(ValueError,'ordinary source-review'):
+            self.invoke(0)
+        self.assertEqual(self.calls,[])
+
     def test_research_continuation_does_not_allow_next_case_before_final(self):
         research = {'action': 'research', 'research': [{'tool': 'source', 'review_id': None,
                     'purpose': 'Inspect the deciding helper.', 'arguments': {'path': 'shared.py',

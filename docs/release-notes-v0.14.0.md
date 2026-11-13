@@ -15,6 +15,7 @@
 
 - Preserve completed findings when source-review tasks fail, keeping unanswered work explicit.
 - Handle repository-root lookup filters without aborting a review.
+- Fix expert-owner startup when factual-question delegation uses domain sessions.
 
 - Improve Python ORM query coverage and reduce duplicate candidates.
 - Preserve valid review results when optional grouping annotations are invalid.

@@ -70,7 +70,11 @@ def metadata(task, packet):
     flattened = [i for v in roles.values() for i in v]
     if len(flattened) != len(set(flattened)):
         raise ValueError("domain evidence roles overlap")
-    if (task.get("kind") != "source_review" or task.get("profile", "routine") != "routine"
+    profile = task.get("profile", "routine")
+    expert = ((packet.get("work", {}).get("runtime", {}).get("orchestration") or {}).get("expert"))
+    bound_owner = profile == "expert" and isinstance(expert, dict) and bool(expert) and packet.get("job_binding") == {
+        "profile":"expert", "role":"investigator", "provider":expert}
+    if (task.get("kind") != "source_review" or (profile != "routine" and not bound_owner)
             or task.get("review_role", "investigator") != "investigator"
             or task.get("second_pass") or task.get("workspace_protocol")):
         raise ValueError("domain sessions require ordinary source-review investigation")
