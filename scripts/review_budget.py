@@ -53,6 +53,28 @@ def estimate_cost(usage, rates):
     return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
+def provider_cost_policy(limit, models):
+    """Reserve conservatively; price each observed receipt with its own model."""
+    validated = {model:cost_policy(None, rates)["rates"] for model, rates in models.items()}
+    if not validated:
+        raise ValueError("provider cost rates cannot be empty")
+    maximum = {key:str(max(Decimal(rates[key]) for rates in validated.values()))
+               for key in next(iter(validated.values()))}
+    policy = cost_policy(limit, maximum)
+    policy["provider_rates"] = validated
+    return policy
+
+
+def abandon(path, lease):
+    """Release unused headroom, preserving the reservation history and call count."""
+    with locked(path):
+        state = json.loads(Path(path).read_text(encoding="utf8"))
+        entry = state["leases"][lease]
+        if entry["status"] == "reserved":
+            entry.update(status="unused", input_tokens=0, estimated_cost_micros=0)
+            _write(path, state)
+
+
 class BudgetExhausted(ValueError):
     pass
 
@@ -232,7 +254,9 @@ def finish(path, lease, receipt):
         if cost:
             cost_known = isinstance(usage, dict) and isinstance(unknown, list) and not set(unknown).intersection(
                 ("input_tokens", "cached_input_tokens", "output_tokens"))
-            amount = estimate_cost(usage, cost["rates"]) if cost_known else None
+            rates = (cost["provider_rates"].get((receipt.get("provider") or {}).get("model"))
+                     if "provider_rates" in cost else cost["rates"])
+            amount = estimate_cost(usage, rates) if cost_known and rates is not None else None
             entry["estimated_cost_micros"] = amount
             if amount is None:
                 cost["complete"] = False

@@ -5,6 +5,7 @@ import copy
 import json
 
 import review_domains as domains
+import review_questions
 
 VERSION = "mehscanWorkPlan/v1"
 IMPACTS = ("critical", "high", "unknown", "medium", "low")
@@ -86,13 +87,14 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
             raise ValueError("each item requires one to sixteen named checks")
         check_ids = set()
         for check in checks:
-            if not isinstance(check, dict) or set(check) != {"id", "question"}:
+            if not isinstance(check, dict) or not {"id", "question"} <= set(check):
                 raise ValueError("check requires id and question")
             check_id = domains._name(check["id"], "check")
             if check_id in check_ids:
                 raise ValueError("duplicate check identifier")
             check_ids.add(check_id)
             text(check["question"], "check question")
+            review_questions.validate_check(check)
         estimate = raw.get("estimate", {})
         if not isinstance(estimate, dict) or set(estimate) - {"calls", "input_tokens", "output_tokens"}:
             raise ValueError("unknown effort estimate")
@@ -232,6 +234,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "required_checks": item["checks"], "check_results": check_rows,
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
+               "question_work": copy.deepcopy(result.get("question_work", [])) if result else [],
                "job_directory": result.get("job_directory") if result else None,
                "usage_complete": bool(result and result["status"] == "complete" and len(usage_rows) == result.get("calls", 0)
                    and all(not set(metric.get("unknown_delta_counters", [])).intersection(
@@ -280,6 +283,11 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
             remaining=len(remaining), by_status=dict(Counter(row["status"] for row in rows)),
             checks_total=sum(len(row["required_checks"]) for row in rows),
             checks_closed=sum(check["status"] in ("satisfied", "violated") for row in rows for check in row["check_results"]),
+            routing=dict(declared_fact_checks=sum(check.get("route") == "source_fact" for row in rows for check in row["required_checks"]),
+                declared_owner_checks=sum(check.get("route", "security_decision") == "security_decision" for row in rows for check in row["required_checks"]),
+                question_worker_calls=sum(q["calls"] for row in rows for q in row["question_work"]),
+                owner_calls=sum(row["calls"] - sum(q["calls"] for q in row["question_work"]) for row in rows),
+                provisional_answers=sum(q["status"] == "complete" for row in rows for q in row["question_work"])),
             required=len(required), required_closed=sum(row["status"] == "closed" for row in required),
             remaining_by_potential_impact=dict(residual),
             unclassified_native_ids=[rid for rid, row in registry["lead_accounting"].items() if row["role"] == "unclassified"]),

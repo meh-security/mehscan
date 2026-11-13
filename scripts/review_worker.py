@@ -142,6 +142,10 @@ class ResearchBatchError(ValueError):
         self.error_count = len(errors)
 
 
+class SourceUnanswered(ValueError):
+    """A source-stage obligation has no answer; never buy a fallback review."""
+
+
 def missing_source_result(query, error):
     """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
@@ -553,7 +557,7 @@ class NativeWrites:
         "plan": ({"--input", "--work-package", "--expected-plan-id"}, set()),
         "pending": ({"--input"}, set()),
         "pending-batch": ({"--input"}, set()),
-        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution"}),
+        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution", "--allow-partial"}),
     }
     PATHS = {"--input", "--work-package", "--run", "--supersessions", "--review-execution"}
 
@@ -674,6 +678,11 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     required, optional = definitions[tool]
     if not required <= values.keys() or values.keys() - required - optional:
         raise ValueError("unsupported research arguments")
+    omitted_root_filters = []
+    for key in ("path", "path_prefix"):
+        if key in optional and values.get(key) in ("", ".", "./"):
+            omitted_root_filters.append(key)
+            values.pop(key)
     if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
         values["path_prefix"] = values["path_prefix"].rstrip("/")
     for key in ("path", "path_prefix"):
@@ -720,7 +729,10 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     # All arguments and both scopes pass validation before this narrow repair.
     # Never turn different filters, unknown paths or required-file tools into
     # a directory search. Keep the original request separate from effective argv.
-    normalization = None
+    normalization = ({"code":"authorized_root_filter_omitted",
+        "original_arguments":query["arguments"].copy(), "effective_arguments":values.copy(),
+        "authority":"Optional root alias omitted within the authorized source; not source evidence."}
+        if omitted_root_filters else None)
     if (tool in ("references", "symbol", "definition") and "path_prefix" in optional and "path" in values
             and (root / values["path"]).is_dir()
             and ("path_prefix" not in values or values["path_prefix"] == values["path"])):
@@ -890,6 +902,8 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
+        raise ValueError("question routing requires all-phase work goals")
     work_path = getattr(args, "work_plan", None)
     if not work_path and any(getattr(args, key, None) is not None for key in ("review_goal", "coverage_target", "cost_budget", "cost_rates")):
         raise ValueError("review goals, targets and cost allowances require a source-bound work plan")
@@ -1195,6 +1209,8 @@ def run_locked(args):
         if source_prepared and task["kind"] == "native_bundle" and not task.get("second_pass") and not task.get("stage_context"):
             prepared=read(source_prepared)
             rows=prepared["assessments"]
+            if not set(task["review_ids"]) <= set(rows):
+                raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
             if set(task["review_ids"]) <= set(rows):
                 draft={"results":[rows[rid] for rid in task["review_ids"]]}
                 validate_native_candidate(task,job,draft,args.timeout)
@@ -2357,10 +2373,12 @@ def run_locked(args):
                     "waiting_questions":sum(row["status"] == "waiting" for row in dependencies.values())}
                 if waiting and not failures:
                     raise ValueError("research dependencies remain unresolved; no complete report can be admitted")
-                if failures:
+                if failures and (not source_prepared or any(not isinstance(error, SourceUnanswered) for error in failures)):
                     # Preserve completed drafts/responses; never fabricate the missing
                     # ones or admit a partial set as a complete native run.
                     raise failures[0]
+                if failures:
+                    record["source_unanswered_results"] = True
                 if second_mode != "off":
                     original_metrics = []
                     if first_directory:
@@ -2556,7 +2574,7 @@ def run_locked(args):
                         "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
                 # Report validates the completed response set before a state write.
                 report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
-                                 "--reviewer", args.reviewer_label])
+                                 "--reviewer", args.reviewer_label, *(["--allow-partial", "true"] if source_prepared else [])])
                 write(output / "findings.json", report)
                 execution_path = output / "review-execution.json"
                 if tiered_policy:
@@ -2575,6 +2593,8 @@ def run_locked(args):
                 copy_bundle_run(run_dir, admitted_run, response_dir)
                 record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
                                   "--reviewer": args.reviewer_label}
+                if source_prepared:
+                    record_options["--allow-partial"] = "true"
                 if links:
                     links_path = output / "supersessions.json"
                     write(links_path, links)
@@ -2622,9 +2642,10 @@ def run_locked(args):
         work_review = source.get("work_review")
         source_incomplete = (work_review["completed_items"] != work_review["funded_items"] if work_review else
             source["completed_assignments"] != source.get("selected_assignments", source["assignments"]))
-        if source_incomplete:
-            record["status"]="incomplete"
-            record["detail"]="Native results retained; some assigned source ranges were not reviewed."
+        if source_incomplete or record.get("source_unanswered_results"):
+            if record["status"] != "cancelled":
+                record["status"]="incomplete"
+            record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
         record["source_review"]["calls"]=source["calls"]
         record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] not in ("complete", "deferred")]
         record["source_review"]["deferred_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] == "deferred"]
@@ -2727,6 +2748,7 @@ def main():
     parser.add_argument("--research-queries", type=int)
     parser.add_argument("--research-bytes", type=int)
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
+    parser.add_argument("--question-routing", action="store_true", help="work goals only: routine profile answers explicit source_fact checks; expert owns security decisions")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
     parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")

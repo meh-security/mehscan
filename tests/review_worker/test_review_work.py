@@ -149,6 +149,20 @@ class WorkPlan(unittest.TestCase):
 
 
 class CostBudget(unittest.TestCase):
+    def test_provider_prices_are_separate_and_unused_owner_lease_is_not_unknown(self):
+        cheap=dict(input_per_million=.1,cached_input_per_million=.01,output_per_million=.5)
+        budget.initialize(self.path,cost=budget.provider_cost_policy(None,{'routine':cheap,'owner':self.rates}))
+        leases=[budget.reserve(self.path,'source_review') for _ in range(3)]
+        usage=dict(input_tokens=1000,cached_input_tokens=0,output_tokens=100)
+        for lease,model in zip(leases,['routine','owner']):
+            budget.finish(self.path,lease,{'provider':{'model':model},'usage':usage})
+        budget.abandon(self.path,leases[2])
+        state=budget.snapshot(self.path)
+        self.assertEqual(state['cost']['observed_micros'],1650)
+        self.assertTrue(state['cost']['complete'])
+        self.assertFalse(state['fenced'])
+        self.assertEqual(state['leases'][leases[2]]['status'],'unused')
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

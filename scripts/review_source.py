@@ -13,6 +13,8 @@ import review_budget
 import review_scheduler
 import review_domains
 import review_work
+import review_questions
+import review_orchestration
 
 
 def selection_options(plan):
@@ -363,7 +365,15 @@ def run(args, legacy, worker):
         or runtime["engine_sha256"] != scanner_sha
     ):
         raise ValueError("source review runtime changed")
-    if runtime.get("orchestration"):
+    question_routing = bool(getattr(args, "question_routing", False))
+    if question_routing and (not work_path or not runtime.get("orchestration") or not args.expert_command):
+        raise ValueError("question routing requires a work plan, native bound routine/expert profiles and --expert-command")
+    if question_routing and any((runtime["orchestration"].get("quality") or {}).values()):
+        raise ValueError("question routing uses an expert owner; native paired-verdict QA requires the separate native workflow")
+    if question_routing and (getattr(args, "expert_workers", 1) != 1 or getattr(args, "expert_review_ids", None)
+            or getattr(args, "source_collector_profile", None)):
+        raise ValueError("question routing uses --workers for case capacity; native profile routing overrides are separate")
+    if runtime.get("orchestration") and not question_routing:
         raise ValueError(
             "repository source review currently uses one configured model; use native phase for explicit experimental tiered bundles"
         )
@@ -375,14 +385,24 @@ def run(args, legacy, worker):
     provider_config = worker.validate_provider_command(
         command, runtime.get("provider"), skill, root, artifact_root
     )
+    source_commands = {"routine": command}
+    if question_routing:
+        expert = worker.read(worker.outside(args.expert_command, root))
+        if not isinstance(expert, list) or not expert or any(not isinstance(v, str) for v in expert):
+            raise ValueError("invalid expert command")
+        if not Path(expert[0]).is_absolute():
+            raise ValueError("expert reviewer must use a trusted absolute executable")
+        for argument in expert:
+            if Path(argument).is_file():
+                worker.outside(argument, root)
+        owner_config = worker.validate_provider_command(expert, runtime["orchestration"]["expert"], skill, root, artifact_root)
+        if any(config.get("schema_mode", "stable") != "stable" for config in (provider_config, owner_config)):
+            raise ValueError("question routing requires stable provider schemas")
+        source_commands["expert"] = expert
+    command_bindings = {profile:context.digest([argv, [worker.digest_file(v) for v in argv if Path(v).is_file()]])
+                        for profile, argv in source_commands.items()}
     if domain_path and provider_config is not None and provider_config.get("schema_mode", "stable") != "stable":
         raise ValueError("domain review requires the stable provider schema before call admission")
-    command_binding = context.digest(
-        [
-            command,
-            [worker.digest_file(value) for value in command if Path(value).is_file()],
-        ]
-    )
     limits = runtime["limits"]
     for key, name in [
         ("rounds", "research_rounds"),
@@ -436,6 +456,8 @@ def run(args, legacy, worker):
             targets = [value.strip() for value in targets.split(",")] if targets is not None else None
             work_registry = review_work.validate(manifest, plan, original_ids, validate_selection=validate_selection,
                 goal=getattr(args, "review_goal", None) or "budget", targets=targets)
+            if question_routing and any(len(case["verify_review_ids"]) > runtime["orchestration"]["max_reviews_per_job"] for case in work_registry["cases"]):
+                raise ValueError("question routing verification membership exceeds the bound case size")
             domain_registry = work_registry
             worker.write(stage / "work-plan.json", work_registry)
         else:
@@ -471,9 +493,16 @@ def run(args, legacy, worker):
                 raise ValueError("cost accounting requires a work plan and model rate file")
             rates = worker.read(worker.outside(args.cost_rates, root))
             model = (runtime.get("provider") or {}).get("model")
-            if not model or rates.get("model") != model or rates.get("currency") != "USD":
-                raise ValueError("cost rate model/currency differs from the provider binding")
-            cost = review_budget.cost_policy(getattr(args, "cost_budget", None), rates.get("rates"))
+            if question_routing:
+                models = {model, runtime["orchestration"]["expert"]["model"]}
+                if rates.get("currency") != "USD" or not models <= set(rates.get("models", {})):
+                    raise ValueError("question routing cost rates require USD models entries for both bound providers")
+                cost = review_budget.provider_cost_policy(getattr(args, "cost_budget", None),
+                    {m:rates["models"][m] for m in models})
+            else:
+                if not model or rates.get("model") != model or rates.get("currency") != "USD":
+                    raise ValueError("cost rate model/currency differs from the provider binding")
+                cost = review_budget.cost_policy(getattr(args, "cost_budget", None), rates.get("rates"))
         review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
             input_limit=getattr(args, "input_token_budget", 1_500_000),
             admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
@@ -607,8 +636,18 @@ def run(args, legacy, worker):
         return any(w["path"] == p["path"] and w["start_line"] <= p["end_line"] and p["start_line"] <= w["end_line"]
                    for w in assignment["windows"] for p in partial_windows)
 
-    def assignment_job(assignment):
+    question_budget = (review_orchestration.SharedReviewBudget(stage / "question-budget.json",
+        runtime["orchestration"], worker.write) if question_routing else None)
+
+    def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True):
+        profile = "routine" if question is not None or not question_routing else "expert"
+        command = source_commands[profile]
+        command_binding = command_bindings[profile]
+        provider = runtime.get("provider") if profile == "routine" else runtime["orchestration"]["expert"]
         job_id = assignment.get("_job_id", assignment["id"])
+        if question is not None:
+            job_id = context.digest([job_id, "question", question["id"]])
+            assignment = {**assignment, "review_ids": []}
         directory = stage / "jobs" / job_id
         directory.mkdir(parents=True)
         prior_job = reuse_jobs.get(assignment["id"])
@@ -644,7 +683,12 @@ def run(args, legacy, worker):
             worker.write(directory / "result.json", result)
             return result
         domain_case = case_by_assignment.get(assignment.get("_work_item_id", job_id))
+        if question is not None:
+            domain_case = {**domain_case, "checks": [question]}
         domain_state = domain_states[domain_case["domain_id"]] if domain_case else None
+        if question is not None:
+            signals = [review_domains._shared_fact(cite, plan) for cite in domain_case["focus"]["signal"]["evidence"]]
+            domain_state = {**domain_state, "shared_facts":[*domain_state["shared_facts"], *signals]}
         case_index = next(i for i, c in enumerate(domain_state["cases"]) if c["id"] == domain_case["id"]) if domain_case else 0
         source_offset = case_index * 1000
         # Keep the native exporter and sweep, including their SQL/control facts,
@@ -652,7 +696,7 @@ def run(args, legacy, worker):
         try:
             card_ids = ([rid for role in review_domains.ROLES for rid in domain_case["review_roles"][role]]
                         if domain_case else assignment["review_ids"])
-            native_cards = load_native_cards(native, root, inventory, stage, card_ids, job_id)
+            native_cards = supporting_cards if supporting_cards is not None else load_native_cards(native, root, inventory, stage, card_ids, job_id)
         except Exception as error:
             result = {"assignment_id": assignment["id"], "status": "incomplete",
                       "review_ids": assignment["review_ids"], "error": type(error).__name__,
@@ -670,7 +714,7 @@ def run(args, legacy, worker):
                 "artifact_id": context.digest([plan["plan_id"], w]),
                 "complete_file": False,
             }
-            for w in assignment["windows"]
+            for w in (review_questions.owner_windows(assignment, domain_case["focus"]) if question is not None else assignment["windows"])
         ]
         packet = {
             "schema_version": "1",
@@ -735,9 +779,24 @@ def run(args, legacy, worker):
                 "Its actor and conditions describe the planning scope, not established source facts. "
                 "Bind actual applicability and protected effects with cited evidence. Do not expand into a general lifecycle audit. "
                 "Finalize once each required check has an evidenced answer or a concrete unresolved deciding fact.")
+        if question_routing:
+            packet["job_binding"] = {"profile":profile, "role":"question_answerer" if question is not None else "investigator", "provider":provider}
+        if question is not None:
+            packet["contract"] = review_questions.FACT_CONTRACT
+            packet["native_questions"] = []
+            packet["known_native_questions"] = []
+            packet["supporting_native_facts"] = [{"review_id":rid, "facts":card["facts"]}
+                for rid, card in native_cards.items()]
+            packet["review_focus"] = {"question":question["question"], "scope":question["scope"], "acceptance":question["acceptance"]}
+        elif question_results:
+            packet["question_answers"] = [review_questions.answer_note(check, result) for check, result in question_results]
+            packet["contract"] += ("\nQuestion answers are attributed model interpretations, not security verdicts. "
+                "Reuse the delivered original source; inspect the deciding relationship and remaining applicability/impact. "
+                "Do not repeat source searches simply to recreate the question worker's evidence. Conflicting or incomplete answers remain unresolved.")
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
-            [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(output)]
+            [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(output),
+             *([["question", question["id"]]] if question is not None else [])]
         )
         facts = copy.deepcopy(domain_state["facts"]) if domain_state else []
         inspected = copy.deepcopy(domain_state["inspected"]) if domain_state else []
@@ -756,11 +815,17 @@ def run(args, legacy, worker):
         unknown_calls = 0
         started = time.monotonic()
         last = None
+        local_rounds = min(limits["rounds"], 1) if question is not None else limits["rounds"]
+        local_seconds = limits["timeout_seconds"]
+        if question is not None and owner_required:
+            local_seconds = min(local_seconds, max(0, question_budget.remaining(domain_case["id"], "timeout_seconds")) / 2)
         working_chain = ""
         feedback = None
 
         def remaining():
-            left = limits["timeout_seconds"] - (time.monotonic() - started)
+            left = local_seconds - (time.monotonic() - started)
+            if question_budget:
+                left = min(left, question_budget.remaining(domain_case["id"], "timeout_seconds"))
             if left <= 0:
                 raise TimeoutError("source assignment deadline exhausted")
             return left
@@ -790,8 +855,15 @@ def run(args, legacy, worker):
                 facts.append(fact)
                 offer_source(prepared, "f" + str(len(facts) - 1))
 
+        for _, answer in question_results:
+            for fact in answer.get("facts", []):
+                if any(f["result_id"] == fact["result_id"] for f in facts):
+                    continue
+                facts.append(copy.deepcopy(fact))
+                offer_source(fact["result"], "f" + str(len(facts) - 1))
+
         try:
-            for turn in range(limits["rounds"] + 1):
+            for turn in range(local_rounds + 1):
                 if native(["state", "work", *common, *runtime_options]) != package:
                     raise ValueError("source work was superseded")
                 if context.skill_bundle_id(skill) != runtime["skill_bundle_id"]:
@@ -838,7 +910,7 @@ def run(args, legacy, worker):
                     "inventory": str(inventory),
                     "work_package": str(args.work_package),
                     "review_ids": assignment["review_ids"],
-                    "review_role": "investigator",
+                    "review_role": "question_answerer" if question is not None else "investigator",
                     "followup_selection": True,
                     "evidence_packet": str(directory / "context.json"),
                     "shared_facts": str(directory / "facts.json"),
@@ -852,10 +924,10 @@ def run(args, legacy, worker):
                     ),
                     "research": {
                         "round": turn,
-                        "rounds_remaining": limits["rounds"] - turn,
+                        "rounds_remaining": local_rounds - turn,
                         "queries_remaining": (
                             limits["queries"] - queries
-                            if turn < limits["rounds"]
+                            if turn < local_rounds
                             else 0
                         ),
                         "bytes_remaining": limits["bytes"] - received,
@@ -873,7 +945,15 @@ def run(args, legacy, worker):
                         "feedback": feedback,
                     },
                 }
-                if domain_case:
+                if question_routing:
+                    frame["profile"] = profile
+                    frame["research"]["rounds_remaining"] = min(frame["research"]["rounds_remaining"],
+                        max(0, question_budget.remaining(domain_case["id"], "model_calls") - (2 if question is not None and owner_required else 1)))
+                    frame["research"]["queries_remaining"] = min(frame["research"]["queries_remaining"],
+                        max(0, question_budget.remaining(domain_case["id"], "queries")))
+                if question is not None:
+                    frame["research"]["question_only"] = True
+                if domain_case and question is None:
                     frame["domain_session"] = {"id": domain_state["id"], "binding": domain_state["binding"],
                         "case_id": domain_case["id"], "case_index": case_index, "cases": domain_state["cases"]}
                     if getattr(args, "domain_session_mode", "shared") == "isolated":
@@ -884,7 +964,14 @@ def run(args, legacy, worker):
                     frame["research"]["required_checks"] = domain_case["checks"]
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
-                lease = review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None
+                if question_budget:
+                    if question is not None and question_budget.remaining(domain_case["id"], "model_calls") < (2 if owner_required else 1):
+                        raise review_orchestration.BudgetExhausted("Reserved final owner call; question work stopped")
+                    question_budget.reserve(domain_case["id"], "model_calls", 1)
+                if prepaid is not None and budget_path and review_budget.snapshot(budget_path).get("fenced"):
+                    raise review_budget.BudgetExhausted("Observed usage fenced further calls")
+                lease = (prepaid if turn == 0 and prepaid is not None else
+                    review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None)
                 if budget_path:
                     budget_state = review_budget.snapshot(budget_path)
                     remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"]
@@ -898,12 +985,12 @@ def run(args, legacy, worker):
                 calls += 1
                 unknown_calls += 1
                 response = worker.execute_provider(command, directory, env, remaining(), frame,
-                                                   runtime.get("provider"), budget_path, lease=lease)
+                                                   provider, budget_path, lease=lease)
                 worker.write(directory / (str(turn) + "-response.json"), response)
                 receipt = worker.observed_turn(
                     directory,
                     frame["research"] | {"conversation_id": conversation},
-                    runtime.get("provider"),
+                    provider,
                     require_complete_usage=False,
                 )
                 if runtime.get("provider") and receipt is None:
@@ -920,7 +1007,7 @@ def run(args, legacy, worker):
                 if "draft" in response:
                     last = response["draft"]
                     break
-                if turn == limits["rounds"]:
+                if turn == local_rounds:
                     raise ValueError(
                         "source reviewer requested evidence after final consuming call"
                     )
@@ -930,15 +1017,23 @@ def run(args, legacy, worker):
                         "source reviewer returned neither a draft nor a deciding lookup"
                     )
                 working_chain = response.get("working_chain", "")
-                requests, prepared, feedback = worker.research_batch_plan(
-                    requests,
-                    root,
-                    [],
-                    directory,
-                    limits["queries"] - queries,
-                    api=api,
-                    guidance=guidance,
-                )
+                try:
+                    requests, prepared, feedback = worker.research_batch_plan(
+                        requests,
+                        root,
+                        [],
+                        directory,
+                        limits["queries"] - queries,
+                        api=api,
+                        guidance=guidance,
+                    )
+                except worker.ResearchBatchError as error:
+                    feedback = {"reason":"invalid_research_arguments", "errors":error.errors,
+                        "instruction":"No query executed. Repair only the reported arguments within the remaining allowance, or preserve the missing fact."}
+                    worker.write(directory / (str(turn) + "-lookup-feedback.json"), feedback)
+                    continue
+                if question_budget:
+                    question_budget.reserve(domain_case["id"], "queries", worker.research_cost(requests, api=api))
                 queries += worker.research_cost(requests, api=api)
                 batch = []
                 for query, arguments in zip(requests, prepared):
@@ -1009,6 +1104,8 @@ def run(args, legacy, worker):
                         if result is None:
                             raise
                     size = len(json.dumps(result, ensure_ascii=False).encode())
+                    if question_budget:
+                        question_budget.reserve(domain_case["id"], "bytes", size)
                     if received + size > limits["bytes"]:
                         raise ValueError(
                             "source result exceeds received-byte allowance"
@@ -1021,6 +1118,8 @@ def run(args, legacy, worker):
                         "query": query,
                         "result": result,
                     }
+                    if getattr(arguments, "filter_normalization", None):
+                        item["filter_normalization"] = arguments.filter_normalization
                     facts.append(item)
                     batch.append(item)
                     worker.write(directory / (str(turn) + "-lookups.json"), batch)
@@ -1028,6 +1127,8 @@ def run(args, legacy, worker):
                 worker.write(directory / (str(turn) + "-lookups.json"), batch)
             if last is None:
                 raise ValueError("source review did not finalize its assignment")
+            if question is not None:
+                review_questions.check_draft(last)
             if work_registry:
                 # Different work items may inspect the same physical assignment.
                 # Namespace proposal keys without changing their evidence/verdicts.
@@ -1035,7 +1136,7 @@ def run(args, legacy, worker):
                     proposal["key"] = "work-" + context.digest([domain_case["id"], proposal["key"]])
             expected = {
                 (w["path"], w["start_line"], w["end_line"])
-                for w in assignment["windows"]
+                for w in windows
             }
             actual = [
                 (w["path"], w["start_line"], w["end_line"]) for w in last["coverage"]
@@ -1148,7 +1249,7 @@ def run(args, legacy, worker):
                 "unknown_provider_calls": unknown_calls,
                 "seconds": time.monotonic() - started,
             }
-            if domain_state:
+            if domain_state and question is None:
                 domain_state["facts"] = copy.deepcopy(facts)
                 domain_state["inspected"] = copy.deepcopy(inspected)
                 domain_state["citation_windows"] = {k: copy.deepcopy(v) for k, v in citation_windows.items() if k.startswith("f")}
@@ -1157,7 +1258,7 @@ def run(args, legacy, worker):
                 receipt = worker.observed_turn(
                     directory,
                     frame["research"] | {"conversation_id": conversation},
-                    runtime.get("provider"),
+                    provider,
                     require_complete_usage=False,
                 )
                 if receipt:
@@ -1174,7 +1275,11 @@ def run(args, legacy, worker):
                 "calls": calls,
                 "unknown_provider_calls": unknown_calls,
                 "seconds": time.monotonic() - started,
+                "facts": facts,
+                "inspected": inspected,
             }
+        if question is not None:
+            result.update(question_provider=provider, question_conversation_id=conversation)
         worker.write(directory / "result.json", result)
         return result
 
@@ -1232,14 +1337,59 @@ def run(args, legacy, worker):
 
             def execute_work(job):
                 case = job["case"]
+                case_started = time.monotonic()
                 with work_lock:
                     work_results[case["id"]] = {"case_id": case["id"], "status": "running", "calls": 0}
                     save_work()
                 job_directory = context.digest(["work-item", case["id"]])
                 assignment = {**by_id[case["assignment_id"]], "_job_id": job_directory, "_work_item_id": case["id"],
                               "review_ids": case["verify_review_ids"]}
-                result = assignment_job(assignment)
+                answers = []
+                prepaid = None
+                fact_only = bool(question_budget and not case["verify_review_ids"] and
+                    all(review_questions.validate_check(check) == "source_fact" for check in case["checks"]))
+                if question_budget:
+                    question_budget.begin_case(case["id"])
+                try:
+                    if question_budget:
+                        # Hold the owner's first turn before optional preparation.
+                        if not fact_only:
+                            prepaid = review_budget.reserve(budget_path, "source_review")
+                        cards = load_native_cards(native, root, inventory, stage,
+                            [rid for role in review_domains.ROLES for rid in case["review_roles"][role]], job_directory)
+                        for check in case["checks"]:
+                            if review_questions.validate_check(check) != "source_fact":
+                                continue
+                            if (question_budget.remaining(case["id"], "model_calls") < (1 if fact_only else 2)
+                                    or review_budget.capacity(budget_path)):
+                                break
+                            answers.append((check, assignment_job(assignment, question=check, supporting_cards=cards, owner_required=not fact_only)))
+                    result = (review_questions.fact_only_result(assignment, case["checks"], answers) if fact_only else
+                        assignment_job(assignment, question_results=answers, prepaid=prepaid,
+                            supporting_cards=cards if question_budget else None))
+                except (review_budget.BudgetExhausted, review_orchestration.BudgetExhausted) as error:
+                    result = {**review_scheduler.deferred(job, str(error)), "assignment_id":assignment["id"]}
+                except Exception as error:
+                    result = {"assignment_id":assignment["id"], "review_ids":assignment["review_ids"],
+                        "status":"incomplete", "error":type(error).__name__, "detail":getattr(error, "stderr", str(error)),
+                        "calls":0, "queries":0, "bytes":0, "unknown_provider_calls":0, "seconds":0}
+                finally:
+                    if prepaid is not None:
+                        review_budget.abandon(budget_path, prepaid)
+                    if question_budget:
+                        question_budget.end_case(case["id"])
+                if question_budget:
+                    result["question_work"] = [{"check_id":check["id"], "status":answer["status"],
+                        "provider":runtime["provider"], "calls":answer["calls"],
+                        "conversation_id":answer.get("question_conversation_id"),
+                        "directory":"source-review/jobs/" + context.digest([job_directory, "question", check["id"]]),
+                        "answer_status":next((row["status"] for row in answer.get("draft", {}).get("work_checks", [])
+                                              if row["check_id"] == check["id"]), None)} for check, answer in answers]
+                    for key in ("calls", "queries", "bytes", "unknown_provider_calls"):
+                        result[key] += sum(answer[key] for _, answer in answers)
+                    result["seconds"] = time.monotonic() - case_started
                 result.update(case_id=case["id"], domain_id=case["domain_id"], job_directory="source-review/jobs/" + job_directory)
+                (stage / "jobs" / job_directory).mkdir(parents=True, exist_ok=True)
                 worker.write(stage / "jobs" / job_directory / "result.json", result)
                 return result
 
@@ -1276,6 +1426,9 @@ def run(args, legacy, worker):
         domain_usage = []
         for domain in domain_registry["domains"]:
             conversations = {case["conversation_id"] for case in domain_states[domain["id"]]["cases"]}
+            if question_routing:
+                conversations.update(note["conversation_id"] for case in domain["cases"]
+                    for note in by_case.get(case["id"], {}).get("question_work", []) if note.get("conversation_id"))
             rows = [row for row in metrics if row.get("conversation_id") in conversations]
             domain_usage.append({"id": domain["id"], "wall_seconds": domain_timings.get(domain["id"], by_case.get(domain["id"], {}).get("seconds", 0)),
                 "calls": len(rows), "cold_turns": sum(not row.get("resumed", False) for row in rows),
@@ -1318,6 +1471,8 @@ def run(args, legacy, worker):
                 worker.write(stage / "progress.json", results)
     if native(["state", "work", *common, *runtime_options]) != package:
         raise ValueError("source work changed before native handoff")
+    if question_budget:
+        question_budget.close()
     successful = [r for r in results if r["status"] == "complete"]
     admission = {
         "plan": plan,
@@ -1421,6 +1576,17 @@ def run(args, legacy, worker):
         "--owner",
         next_claim["result"]["owner"],
     ]
+    final_runtime = runtime
+    if question_routing:
+        # Only the expert's security decisions enter native finalization. The
+        # routine stage remains attributed evidence, not a native assessment.
+        final_runtime = {k:v for k,v in runtime.items() if k != "orchestration"}
+        final_runtime["provider"] = runtime["orchestration"]["expert"]
+        worker.write(private / "provider.json", final_runtime["provider"])
+        runtime_options = ["--skill-root", str(skill), "--provider-contract", str(private / "provider.json")]
+        args.provider_contract = str(private / "provider.json")
+        args.reviewer_command = args.expert_command
+        args.expert_command = None
     draft = native(
         [
             "state",
@@ -1437,7 +1603,7 @@ def run(args, legacy, worker):
         ]
     )
     # Preserve the exact runtime allowance/provider; no implicit reset of model budgets.
-    draft["runtime"] = runtime
+    draft["runtime"] = final_runtime
     draft.setdefault("deferred_review_ids", {})
     draft.setdefault("excluded_review_ids", {})
     failed_ids = {
@@ -1478,6 +1644,10 @@ def run(args, legacy, worker):
         ] = "Source assignment did not complete; no automatic replacement model call."
     membership_changes = reconcile_completion_plan(draft,
         [entry["review_id"] for entry in worker.read(augmented / "inventory.json")["entries"]])
+    if payload["policy"] == "comprehensive":
+        # Keep all admitted obligations, including unanswered/refilled IDs.
+        draft["selected_review_ids"] = sorted(set(draft["selected_review_ids"]) | set(draft["deferred_review_ids"]))
+        draft["deferred_review_ids"] = {}
     worker.write(stage / "membership-changes.json", membership_changes)
     worker.write(private / "plan.json", draft)
     native(
@@ -1504,6 +1674,7 @@ def run(args, legacy, worker):
             augmented,
             "--review-ids",
             ",".join(work["payload"]["review_ids"]),
+            *(["--max-reviews", "1"] if set(work["payload"]["review_ids"]) - set(assessments) else []),
             "--output",
             bundles,
         ]
@@ -1590,6 +1761,9 @@ def run(args, legacy, worker):
     if work_registry:
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
+    if question_routing:
+        summary["question_routing"] = {"routine":runtime["provider"], "owner":final_runtime["provider"],
+            "budget":"question-budget.json", "authority":"Question answers are supporting evidence; expert owns security conclusions."}
     worker.write(stage / "summary.json", summary)
     with (stage / "provider-metrics.jsonl").open("w", encoding="utf8") as handle:
         for metric in source_metrics:

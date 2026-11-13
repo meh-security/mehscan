@@ -32,6 +32,11 @@ information; do not impose a monetary cap unless the user requests one.
 Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 
+For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
+routes explicit source propositions to a bounded question worker. Security
+decisions default to the review owner. Do not assign a general first pass,
+threat model or safety dismissal to the cheaper worker as factual research.
+
 For an explicitly requested domain review, use [domain review](references/domain-review.md)
 and a bound `--domain-plan`. It gives native material three roles: concrete claims
 to verify, operation markers guiding flow coverage, and supporting facts. Related

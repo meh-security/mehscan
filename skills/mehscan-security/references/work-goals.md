@@ -136,7 +136,86 @@ and four MiB of metadata. Source bodies are delivered only for started work.
 Source-backed signal excerpts outside an item's primary packet are registered
 as cited initial evidence when it starts, so they do not require a duplicate lookup.
 
+## Question delegation
+
+Use this optional layer when specific factual questions can reduce the owner's
+research. Bind the routine and expert provider descriptors through the existing
+native `--review-orchestration` plan contract, then add `--question-routing` and
+`--expert-command FILE` to the work-goal worker invocation. Luna medium is suitable
+for the routine question role; keep the user's chosen capable review model as
+expert owner. Use stable schemas and separate trusted provider configurations/private directories.
+Without this flag, the ordinary configured-model workflow remains unchanged.
+Prepare the work plan from the ordinary zero-AI checkpoint before binding the
+two profiles, or use read-only `investigate source-review-plan` for the same
+inventory and selected IDs. Refresh the native work package after admitting the
+bound two-profile plan; never hand-edit its runtime.
+
+Checks default to `security_decision` and go to the owner. Only explicitly scoped
+`source_fact` checks are delegated. For example:
+
+```json
+{
+  "id": "subject_binding",
+  "route": "source_fact",
+  "question": "Before this handler executes, is UserId overwritten from token-backed identity?",
+  "scope": "The declared route, its middleware order and this handler's selector.",
+  "acceptance": "Cite the registered middleware, the identity-to-field assignment and the selector consuming that field."
+}
+```
+
+Keep one proposition per delegated check. Suitable work includes locating an
+implementation, extracting an input or guard, and binding a specific producer
+to a consumer. The worker receives the named owner range, cited signals and
+supporting native/compiler facts; other source remains queryable. It has one
+focused lookup batch and a final answer, within the shared allowances. If that
+cannot settle the proposition, retain its concrete missing fact. Do not assign
+open-ended caller searches, deployment decisions, dependency-security guarantees,
+attacker-to-victim reasoning, severity or broad negative verdicts as source facts.
+A rule name or API category cannot establish an appropriate delegation.
+
+Question workers return cited `work_checks`, never native verdicts, proposals,
+severity or audited coverage. `satisfied` means the explicit proposition is
+supported; `violated` means contradicted. Unresolved answers do not close a
+coverage target. Purely factual items without Verify IDs can finish with the
+question worker alone; closed then means facts answered, not security clearance.
+Items with security decisions or Verify IDs retain an expert owner. The owner
+receives attributed answers and their validated original source, checks the
+remaining security inference, and avoids re-searching evidence already supplied.
+No model answer becomes an established security fact merely by being cited.
+
+The controller owns routing, budgets, state and byte-proof validation. It reserves
+an owner turn before optional question work and preserves time for the owner.
+Only `--workers` controls this mode's total case concurrency. Native bundle
+audits, quality/revalidation, `--expert-review-ids`, `--expert-workers` overrides
+and native source-collector settings remain separate; they are not silently
+applied to question mode. Native/AI origin roles and SQL/compiler facts retain
+their existing meaning. Generic markers do not become extra paid questions.
+
+With cost accounting, supply a USD `models` map keyed by both exact bound model
+names instead of the single-model `model`/`rates` pair. Each model entry contains
+`input_per_million`, `cached_input_per_million` and `output_per_million`.
+Reservations conservatively use the highest configured rates; observed receipts
+use their actual model's rates. Without an explicit monetary cap these remain
+informational. An unknown paid turn is retained and fences further calls rather
+than being replayed. See `source-review/question-budget.json`, the job receipts
+and the work ledger for spend and unanswered work.
+The ledger's routing summary separates declared fact/owner checks, question-worker
+calls, owner calls and provisional answers. Item `question_work` records link to
+the exact provider, conversation and result directory. Provisional answers and
+accepted item closure are different counts.
+
+Missing implementations first need source collection, not automatic expert
+escalation. Group repeated caller questions by control and repair point, retaining
+their conditions. A useful later layer may add new work items for consequential
+remaining gaps; this flag does not launch a general orchestrator or extra pass.
+
 ## Evidence and completion
+
+Comprehensive keeps failed native obligations selected. Successful siblings may
+be finalized and exported while unanswered IDs remain unreviewed and execution
+remains incomplete. A partial export does not create a verdict for missing work
+or authorize replacement inference. Present native responses still require
+normal validation.
 
 The reviewer returns `draft.work_checks` with exactly one answer per controller
 check ID. Each answer contains `check_id`, `status`, `summary`, `evidence` and
@@ -181,8 +260,10 @@ even when the selected target is complete.
 
 ## Configured-rate allowance
 
-Keep the rate file outside the reviewed source root. Its model must exactly match
-the admitted provider contract; no prices are assumed automatically:
+Keep the rate file outside the reviewed source root. For ordinary single-profile
+work, its model must exactly match the admitted provider contract; no prices are
+assumed automatically. Question delegation uses the per-model map described
+above instead:
 
 ```json
 {

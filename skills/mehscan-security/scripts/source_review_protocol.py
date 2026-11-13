@@ -164,6 +164,10 @@ def schema(task, base, api, guidance, bound_handles=True):
             "summary": text, "evidence": {"type": "array", "maxItems": 8, "items": citation},
             "next_deciding_fact": {"type": ["string", "null"]}})}
         draft["required"].append("work_checks")
+    if task["research"].get("question_only"):
+        draft["properties"]["results"]["maxItems"] = 0
+        draft["properties"]["proposals"]["maxItems"] = 0
+        draft["properties"]["coverage"]["items"]["properties"]["status"]["enum"] = ["deferred"]
     variants = []
     for tool in api["tools"]:
         props = {
@@ -249,6 +253,11 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             "requires deciding source citations and null next_deciding_fact. An unresolved/not_checked answer requires "
             "the concrete missing fact; it does not count as target completion. Finding severity and potential scheduling "
             "impact are separate. Required checks:\n" + json.dumps(research["required_checks"], ensure_ascii=False))
+    if research.get("question_only"):
+        value += ("\nEvidence-only question task. No findings, severity or native decisions; results/proposals must be empty. "
+            "Mark every coverage row deferred. Answer only the explicit proposition, preserving scope and conditions. "
+            "satisfied=proposition supported, violated=proposition contradicted, unresolved=deciding fact missing. "
+            "Do not turn your answer into a security verdict.")
     if "citation_windows" in research:
         value += (
             "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
@@ -315,6 +324,9 @@ def envelope(response, task):
     ):
         raise ValueError("source reviewer combined incompatible actions")
     draft = copy.deepcopy(response["draft"])
+    if task["research"].get("question_only") and (draft.get("results") or draft.get("proposals")
+            or any(row["status"] != "deferred" for row in draft.get("coverage", []))):
+        raise ValueError("question worker cannot return verdicts or source audit coverage")
     if "required_checks" in task["research"]:
         expected = {check["id"] for check in task["research"]["required_checks"]}
         actual = [check["check_id"] for check in draft.get("work_checks", [])]

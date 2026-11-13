@@ -10,6 +10,44 @@ import test_domain_protocol as domain_fixtures
 
 
 class WorkChecks(unittest.TestCase):
+    def test_bound_question_role_runs_evidence_only_adapter(self):
+        fixture=domain_fixtures.DomainProtocol();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        task,packet=fixture.tasks[0],fixture.packets[0]
+        response=fixture.final(0)
+        task.pop('domain_session')
+        task.update(profile='routine',review_role='question_answerer',review_ids=[])
+        task['research'].update(question_only=True,required_checks=[dict(id='fact',question='Is this value returned?',route='source_fact',scope='This function.',acceptance='Cite the return expression.')])
+        provider=packet['work']['runtime']['provider']
+        packet['work']['runtime']['orchestration']={'expert':{**provider,'model':'expert-model'}}
+        packet['job_binding']=dict(profile='routine',role='question_answerer',provider=provider)
+        packet['native_questions']=[]
+        fixture.update_packet(0)
+        response['draft']['results']=[]
+        for row in response['draft']['coverage']:row['status']='deferred'
+        response['draft']['work_checks']=[dict(check_id='fact',status='satisfied',summary='The source returns the value.',evidence=[dict(source_ref='s0',line=1)],next_deciding_fact=None)]
+        fixture.responses=[response]
+        answer=fixture.invoke(0)
+        self.assertEqual(answer['draft']['results'],[])
+        self.assertEqual(answer['draft']['work_checks'][0]['evidence'][0]['path'],'operation0.py')
+        task['research']['required_checks'][0]['route']='security_decision'
+        with self.assertRaisesRegex(ValueError,'explicit source facts'):
+            fixture.invoke(0)
+
+    def test_question_only_schema_and_envelope_reject_verdicts_and_audit_claims(self):
+        self.task['research']['question_only'] = True
+        self.reply['draft']['results'] = []
+        self.reply['draft']['proposals'] = []
+        for row in self.reply['draft']['coverage']:
+            row['status'] = 'deferred'
+        validator = Draft202012Validator(codex_protocol.build_schema(self.task))
+        validator.validate(self.reply)
+        protocol.envelope(self.reply, self.task)
+        bad = copy.deepcopy(self.reply)
+        bad['draft']['coverage'][0]['status'] = 'examined'
+        self.assertTrue(list(validator.iter_errors(bad)))
+        with self.assertRaisesRegex(ValueError, 'question worker'):
+            protocol.envelope(bad, self.task)
+
     def setUp(self):
         f = fixtures.SourceCoverageTests()
         f.setUp()

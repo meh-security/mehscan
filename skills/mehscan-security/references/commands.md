@@ -234,6 +234,12 @@ a separately required change pass.
 
 ## Tiered controller
 
+The following is the native bundle workflow. Source work goals support a separate
+[question-delegation mode](work-goals.md#question-delegation): `--question-routing`
+uses declared factual checks for the routine profile and an expert owner for
+security decisions. Its owner-only native handoff is controller-generated; do not
+substitute it into the paired-verdict workflow described below.
+
 Opt in at `state runtime-template` or `state plan-template` with
 `--review-orchestration FILE`, alongside the normal primary `--provider-contract`.
 The trusted JSON declares `expert` (a different model's provider descriptor),

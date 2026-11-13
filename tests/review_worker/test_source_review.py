@@ -59,6 +59,36 @@ class SourceReuse(unittest.TestCase):
 
 
 class SourceReview(unittest.TestCase):
+    def test_partial_comprehensive_retains_answers_without_replacement_inference(self):
+        for folder in ('feature','other'):
+            (self.root/folder).mkdir()
+            (self.root/folder/'app.js').write_text('function run(request) { eval(request.query.code); }\n')
+        self.inventory=self.base/'partial-inventory'
+        self.native('investigate','review-inventory',self.root,'--repository-key','acceptance:partial','--output',self.inventory)
+        command=self.prepare_worker(proposal=False)
+        del command[command.index('--source-selection'):]
+        claim=json.loads((self.base/'claim.json').read_text())['result']
+        common=['--store',self.base/'state','--stream','source','--inventory',self.inventory,'--source-root',self.root,'--generation',claim['generation'],'--owner',claim['owner'],'--skill-root',SKILL]
+        old=json.loads((self.base/'work.json').read_text())['payload']['plan_id']
+        plan=self.native('state','plan-template','--inventory',self.inventory,'--source-root',self.root,'--policy','comprehensive','--skill-root',SKILL)
+        path=self.base/'comprehensive.json';path.write_text(json.dumps(plan))
+        self.native('state','plan',*common,'--input',path,'--expected-plan-id',old,'--operation-key','comprehensive')
+        (self.base/'work.json').write_text(json.dumps(self.native('state','work',*common)))
+        reviewer=self.base/'reviewer.py'
+        reviewer.write_text(reviewer.read_text().replace("if False: raise RuntimeError('fixture source failure')", "if packet['primary']['windows'][0]['path']=='feature/app.js': raise RuntimeError('fixture source failure')"))
+        result=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=180)
+        self.assertEqual(result.returncode,2,result.stdout+result.stderr+self.debug_output())
+        output=self.base/'worker'
+        record=json.loads((output/'worker.json').read_text())
+        self.assertTrue(record.get('source_unanswered_results'),record)
+        self.assertTrue(record.get('native_admission'),record)
+        report=json.loads((output/'findings.json').read_text())
+        self.assertGreater(len(report['decision_records']),0)
+        source=json.loads((output/'source-review/summary.json').read_text())
+        self.assertTrue(source['native_unreviewed_ids'])
+        for frame in (output/'source-review/jobs').glob('*/0-input.json'):
+            self.assertEqual(json.loads(frame.read_text())['kind'],'source_review')
+
     def test_budget_partial_review_exports_options_for_completed_native_decisions(self):
         for directory in ("feature", "other"):
             (self.root / directory).mkdir()

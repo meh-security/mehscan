@@ -297,10 +297,19 @@ def run_bound(config, task, launcher_factory=Launcher):
     role = task.get("review_role", "investigator")
     quality = (runtime.get("orchestration") or {}).get("quality") or {}
     second_role = role in ("second_pass_fast", "second_pass_compare")
+    if task.get("research", {}).get("question_only") and role != "question_answerer":
+        raise ValueError("evidence-only source questions require the question_answerer role")
     if second_role and (profile != "routine" or task.get("second_pass") != (
             "fast" if role == "second_pass_fast" else "full") or packet.get("second_pass") != task["second_pass"]):
         raise ValueError("second-pass role requires an explicit matching controller mode")
-    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection", "second_pass_fast", "second_pass_compare") or (
+    if role == "question_answerer" and (task.get("kind") != "source_review" or profile != "routine"
+            or not runtime.get("orchestration") or not task.get("research", {}).get("question_only")
+            or task.get("review_ids") or not task["research"].get("required_checks")
+            or any(check.get("route") != "source_fact" or any(not isinstance(check.get(key), str)
+                or not check[key].strip() or len(check[key]) > 4000 for key in ("scope", "acceptance"))
+                for check in task["research"]["required_checks"])):
+        raise ValueError("question answering requires explicit source facts and bound routine/expert profiles")
+    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection", "second_pass_fast", "second_pass_compare", "question_answerer") or (
             role == "collection" and (profile not in ("routine", "expert") or not runtime.get("orchestration"))) or (
             role == "research" and (profile != "expert" or not runtime.get("orchestration"))) or (
             role in ("adjudication", "final_qa") and (profile != "expert" or not quality.get(

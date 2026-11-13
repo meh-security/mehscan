@@ -112,7 +112,9 @@ missing guard. It avoids additional lookups solely to shorten quotations.
 
 Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
 or `--phase change-pass` for only the existing Changed comparison. Experimental
-tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor
+bundle-level tiered orchestration uses `--phase native`. Source work goals also
+support optional [question delegation](../skills/mehscan-security/references/work-goals.md#question-delegation)
+with bound routine/expert profiles. SDK-assisted Razor/Blazor
 generation remains optional; ordinary AI source review needs no source generator.
 
 For an opt-in Python ORM operation pilot, add `--group-operations` with
@@ -147,11 +149,23 @@ For explicitly requested domain review, use the separate
 [domain-plan path](#opt-in-domain-review). Ordinary source selection and exact-ID
 triage retain their existing membership and verdict requirements.
 
-Use one configured capable model with direct source lookups and native
+By default, use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. Group claims only when they share the actual operation and implementation;
 a shared file or CWE alone is insufficient. The profile allowances are ceilings:
 finish settled relationships early and keep an essential unresolved fact pending.
+
+Source work goals can optionally delegate explicit factual questions through
+`--question-routing`; see [question delegation](../skills/mehscan-security/references/work-goals.md#question-delegation)
+for provider binding, check declarations and phase accounting. This is a bounded
+evidence layer, separate from native paired-verdict orchestration.
+
+When source tasks fail, successful native answers can still be finalized and
+exported. Comprehensive retains every admitted obligation; missing source answers
+remain unreviewed, with an incomplete execution status and no replacement model
+call. Partial exports validate present responses normally and do not fabricate
+verdicts for missing IDs. Source results and remaining obligations stay in the
+attempt even when later native validation fails.
 
 ## Bounded Value selection
 
