@@ -244,8 +244,8 @@ class HybridNativeTests(unittest.TestCase):
     def test_partial_native_usage_stops_assembly_without_discarding_workspace_result(self):
         f,root=self.prepare();_,_,setup,_=hybrid.load(root)
         provider=self.provider(setup,self.final);command=worker.read(setup["arms"]["treatment"]["command"])
-        def execute(argv,cwd,env,timeout,payload=None):
-            reply=provider(argv,cwd,env,timeout,payload)
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
+            reply=provider(argv,cwd,env,timeout,payload,**kwargs)
             if argv==command:
                 task=json.loads(payload)
                 if not task.get("workspace_protocol"):
