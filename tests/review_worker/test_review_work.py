@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import review_budget as budget
@@ -14,6 +15,12 @@ import test_review_domains as domain_fixtures
 
 
 class WorkPlan(unittest.TestCase):
+    def test_native_audits_do_not_add_marker_or_discovered_claims_to_fixed_target(self):
+        gaps = work.audit_case_gaps(self.validate(), [
+            {"review_id":"failure", "outcome":"corrected"},
+            {"review_id":"marker", "outcome":"reopened"},
+            {"review_id":"new-ai-claim", "outcome":"corrected"}])
+        self.assertEqual(gaps, [{"case_id":"lower", "review_id":"failure", "outcome":"corrected"}])
     def test_owner_effort_is_preserved_without_double_counting_total_calls(self):
         self.manifest["items"][0]["estimate"]["owner_calls"] = [1, 3]
         registry = self.validate()
@@ -167,6 +174,51 @@ class WorkPlan(unittest.TestCase):
 
 
 class CostBudget(unittest.TestCase):
+    def test_handoff_keeps_spend_mutable_but_rejects_artifact_and_policy_drift(self):
+        stage = self.path.parent / "source-review"
+        stage.mkdir()
+        budget_path = stage / "budget.json"
+        budget.initialize(budget_path, cost=budget.cost_policy("0.7", self.rates))
+        usage = {"usage":{"input_tokens":100, "cached_input_tokens":0, "output_tokens":1}}
+        first = budget.reserve(budget_path, "first-pass")
+        budget.finish(budget_path, first, usage)
+        def read(path):
+            return json.loads(Path(path).read_text())
+        def write(path, value):
+            Path(path).write_text(json.dumps(value))
+        import hashlib
+        helper = SimpleNamespace(read=read, write=write,
+            digest_file=lambda path:hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+            outside=lambda path, root:Path(path).resolve())
+        for name in ("work-plan.json", "work.json", "provider-metrics.jsonl", "case-state.sqlite"):
+            (stage / name).write_text("original")
+        write(stage / "summary.json", {"budget_path":str(budget_path)})
+        work.freeze_handoff(stage, "manifest", {"runtime":"bound"}, helper)
+        _, _, inherited = work.read_handoff(stage.parent, stage.parent / "source", helper)
+        lease = budget.reserve(inherited, "audit")
+        budget.finish(inherited, lease, usage)
+        work.read_handoff(stage.parent, stage.parent / "source", helper)
+        state = read(budget_path)
+        state["max_calls"] += 1
+        write(budget_path, state)
+        with self.assertRaisesRegex(ValueError, "allowance changed"):
+            work.read_handoff(stage.parent, stage.parent / "source", helper)
+        state["max_calls"] -= 1
+        state["cost"]["limit_micros"] += 1
+        write(budget_path, state)
+        with self.assertRaisesRegex(ValueError, "allowance changed"):
+            work.read_handoff(stage.parent, stage.parent / "source", helper)
+        state["cost"]["limit_micros"] -= 1
+        original_calls = state["reserved_calls"]
+        state["reserved_calls"] = 0
+        write(budget_path, state)
+        with self.assertRaisesRegex(ValueError, "reset prior usage"):
+            work.read_handoff(stage.parent, stage.parent / "source", helper)
+        state["reserved_calls"] = original_calls
+        write(budget_path, state)
+        (stage / "work.json").write_text("changed")
+        with self.assertRaisesRegex(ValueError, "artifact changed"):
+            work.read_handoff(stage.parent, stage.parent / "source", helper)
     def test_completion_holds_protect_multiple_turns_without_fake_calls(self):
         budget.initialize(self.path, max_calls=3, input_limit=300000)
         hold = budget.hold_completion(self.path, 'high', 2)

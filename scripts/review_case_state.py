@@ -24,7 +24,8 @@ class CaseState(AtomicState):
             raise ValueError("case state must be outside reviewed source")
         cases = {item["id"]:{"checks":[check["id"] for check in item["checks"]],
             "questions":{}, "execution":"unstarted", "result":None, "result_history":[],
-            "evidence":[], "dependencies":{}, "reconsideration":{}}
+            "evidence":[], "dependencies":{}, "reconsideration":{}, "native_reconsideration":{},
+            "verify_review_ids":list(item.get("verify_review_ids", []))}
             for item in registry["items"]}
         cls.publish(path, {"version":cls.version, "binding":copy.deepcopy(binding), "revision":0,
             "source_root":str(root), "cases":cases, "assertions":{}, "evidence":{}})
@@ -106,6 +107,13 @@ class CaseState(AtomicState):
 
     def _action(self, state, action, operation_key):
         kind = action["kind"]
+        if kind == "native_audit":
+            case = state["cases"][action["case_id"]]
+            if not action["review_ids"] or not set(action["review_ids"]) <= set(case.get("verify_review_ids", [])):
+                raise ValueError("native audit must select this case's required Verify IDs")
+            for review_id in action["review_ids"]:
+                case["native_reconsideration"][review_id] = action["reason"]
+            return {"case_id":action["case_id"]}
         if kind == "start":
             state["cases"][action["case_id"]]["execution"] = "running"
             return {"case_id":action["case_id"]}
@@ -155,6 +163,7 @@ class CaseState(AtomicState):
                     self.validate_dependencies(state, deps)
                     dependencies[row["check_id"]] = copy.deepcopy(deps)
                 case["reconsideration"] = {}
+                case["native_reconsideration"] = {}
                 case["dependencies"] = dependencies
             if case["result"]:
                 case["result_history"].append(case["result"])
@@ -192,6 +201,7 @@ class CaseState(AtomicState):
                     "case_id":case_id, "status":case["execution"], "calls":0}
                 self._fresh(state, case["evidence"])
                 row["reconsideration"] = copy.deepcopy(case["reconsideration"])
+                row["native_reconsideration"] = copy.deepcopy(case.get("native_reconsideration", {}))
                 row["provisional_fact_answers"] = copy.deepcopy(case["questions"])
                 results.append(row)
             return results

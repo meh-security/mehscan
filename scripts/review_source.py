@@ -278,13 +278,30 @@ def run(args, legacy, worker):
                 )
             return legacy(args)
         data = worker.read(previous)
+        if data.get("work_review"):
+            handoff, data, inherited_budget = review_work.read_handoff(Path(args.resume_from), root, worker)
+            if getattr(args, "work_plan", None) and worker.digest_file(args.work_plan) != handoff["manifest_sha256"]:
+                raise ValueError("work-plan continuation requires the original unchanged manifest")
+            args._review_budget = inherited_budget
         if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
                 and not data.get("budget_path")):
             raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
         for name, value in data["effective_args"].items():
             setattr(args, name, value)
         args._source_prepared = str(previous)
-        return legacy(args)
+        result = legacy(args)
+        if data.get("work_review") and (Path(args.resume_from) / "source-review/work-ledger.json").is_file():
+            prior = worker.read(Path(args.resume_from) / "source-review/work-ledger.json")
+            if prior:
+                result["work_goal"] = {"goal":prior["goal"], "status":prior["target_status"],
+                    "target_complete":prior["target_complete"], "completed_items":prior["summary"]["closed"],
+                    "remaining_items":prior["summary"]["remaining"], "ledger":str(Path(args.resume_from) / "source-review/work-ledger.json"),
+                    "authority":"Historical first-pass checks retained during native handoff continuation."}
+                result["work_goal"]["continuation_of"] = str(Path(args.resume_from).resolve())
+                if prior.get("goal") == "coverage" and not prior.get("target_complete"):
+                    result["status"] = "incomplete"
+                worker.write(output / "worker.json", result)
+        return result
     started_run = time.monotonic()
     started_epoch = time.time()
     output.mkdir(parents=True, exist_ok=False)
@@ -1645,6 +1662,8 @@ def run(args, legacy, worker):
         for r in successful
         for row in r["draft"]["results"]
     }
+    question_cases = {row["review_id"]:[r["case_id"]] for r in successful if "case_id" in r
+        for row in r["draft"]["results"]}
     priorities = {}
     followups = [note for r in successful for note in r.get("followups", [])]
     claim_contexts = [value for r in successful for value in r.get("claim_contexts", [])]
@@ -1658,6 +1677,8 @@ def run(args, legacy, worker):
             if identity in assessments and assessments[identity] != row:
                 raise ValueError("duplicate questions have conflicting assessments")
             assessments[identity] = row
+            if "case_id" in result:
+                question_cases.setdefault(identity, []).append(result["case_id"])
             priorities[identity] = proposal["priority"]
             if proposal["key"] in result.get("proposal_followups", {}):
                 followups.append({**result["proposal_followups"][proposal["key"]], "review_id":identity})
@@ -1889,6 +1910,7 @@ def run(args, legacy, worker):
         "claim_contexts": claim_contexts,
         "claim_context_errors": context_errors,
         "question_assignments": question_assignments,
+        "question_cases": question_cases,
         "source_questions": len(priorities),
         "calls": sum(r["calls"] for r in results),
         "unknown_provider_calls": sum(r["unknown_provider_calls"] for r in results),
@@ -1902,6 +1924,7 @@ def run(args, legacy, worker):
     if work_registry:
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
+        summary["effective_args"].update(reviewer_command=args.reviewer_command, provider_contract=args.provider_contract)
     if question_routing:
         summary["question_routing"] = {"routine":runtime["provider"], "owner":final_runtime["provider"],
             "budget":"question-budget.json", "authority":"Question answers are supporting evidence; expert owns security conclusions."}
@@ -1909,11 +1932,21 @@ def run(args, legacy, worker):
     with (stage / "provider-metrics.jsonl").open("w", encoding="utf8") as handle:
         for metric in source_metrics:
             handle.write(json.dumps(metric) + "\n")
+    if work_registry:
+        review_work.freeze_handoff(stage, worker.digest_file(work_path), case_store.binding, worker)
     for name, value in summary["effective_args"].items():
         setattr(args, name, value)
     args._source_prepared = str(stage / "summary.json")
     result = legacy(args)
     if work_registry:
+        if (output / "second-pass.json").is_file():
+            audit = worker.read(output / "second-pass.json")
+            for gap in review_work.audit_case_gaps(work_registry, audit["results"]):
+                case_store.submit(context.digest(["native-audit", gap]),
+                    {"kind":"native_audit", "case_id":gap["case_id"], "review_ids":[gap["review_id"]],
+                     "reason":"A second-pass native proof changed; reconcile the original case checks with its new evidence."})
+            results = [r for r in results if "case_id" not in r] + case_store.results()
+            review_work.freeze_handoff(stage, worker.digest_file(work_path), case_store.binding, worker)
         report = review_work.ledger(work_registry, results, budget=review_budget.snapshot(budget_path), metrics=source_metrics)
         report["native_admission_status"] = result["status"]
         failures = [row for row in results if row["status"] == "incomplete" and row.get("error") != "BudgetExhausted"]

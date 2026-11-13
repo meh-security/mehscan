@@ -910,9 +910,8 @@ def run(args):
     if work_path and (args.phase != "all" or getattr(args, "domain_plan", None) or getattr(args, "source_selection", None)
             or getattr(args, "group_operations", False) or getattr(args, "source_profile", None)
             or getattr(args, "validate_only", False) or getattr(args, "first_pass", None)
-            or getattr(args, "resume_from", None) or getattr(args, "reuse_source_results", None)
-            or getattr(args, "second_pass", "off") != "off" or getattr(args, "native_share", 80) != 80):
-        raise ValueError("work goals require a fresh all-phase work plan without legacy selection, reuse or follow-up")
+            or getattr(args, "reuse_source_results", None) or getattr(args, "native_share", 80) != 80):
+        raise ValueError("work goals require all-phase work without legacy selection or source-result reuse")
     if work_path:
         args.domain_session_mode = "isolated"
     if getattr(args, "domain_session_mode", "shared") != "shared" and not (getattr(args, "domain_plan", None) or work_path):
@@ -985,8 +984,25 @@ def run_locked(args):
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
     first_directory = outside(first_path, root) if first_path else None
-    if first_directory and read(first_directory / "worker.json")["status"] not in ("admitted", "source_validated"):
-        raise ValueError("first pass must have complete source-validated results")
+    if first_directory:
+        first_record = read(first_directory / "worker.json")
+        partial_work = first_directory / "source-review/work-ledger.json"
+        admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
+            and partial_work.is_file() and read(partial_work).get("native_admission_status") == "admitted"
+            and (first_directory / "source-review/work-handoff.json").is_file())
+        if first_record["status"] not in ("admitted", "source_validated") and not admitted_partial:
+            raise ValueError("first pass must have source-validated native results")
+    work_followup = None
+    if first_directory and (first_directory / "source-review/work-plan.json").is_file() and not (
+            first_directory / "source-review/work-handoff.json").is_file():
+        raise ValueError("work-plan first pass lacks a bound handoff; cannot start a fresh follow-up allowance")
+    if first_directory and (first_directory / "source-review/work-handoff.json").is_file():
+        import review_work
+        handoff, parent_source, parent_budget = review_work.read_handoff(first_directory, root, sys.modules[__name__])
+        args._review_budget = parent_budget
+        work_followup = {"parent_attempt":str(first_directory), "budget_path":parent_budget,
+            "case_coverage":"Historical first-pass checks; this follow-up audits native claims.",
+            "handoff_sha256":digest_file(first_directory / "source-review/work-handoff.json")}
     rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
     if rates_path:
         second_pass.validate_rates(read(rates_path))
@@ -2680,6 +2696,13 @@ def run_locked(args):
         except (OSError, ValueError, KeyError, TypeError) as error:
             record["second_pass_export_error"] = type(error).__name__
             record["status"] = "incomplete"
+    if work_followup:
+        if (output / "second-pass.json").is_file():
+            audit = read(output / "second-pass.json")
+            work_followup["case_reconsideration"] = review_work.audit_case_gaps(
+                read(first_directory / "source-review/work-plan.json"), audit["results"])
+        record["work_followup"] = work_followup
+        write(output / "work-followup.json", work_followup)
     if record["status"] not in ("admitted", "source_validated") and "package" in locals():
         try:
             partial = save_partial_results(output, package)

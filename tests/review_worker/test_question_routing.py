@@ -155,6 +155,16 @@ class Questions(unittest.TestCase):
         self.assertEqual(note['status'],'skipped')
         self.assertIsNone(note['conversation_id'])
 
+    def test_expert_owner_empty_fast_queue_makes_no_extra_calls(self):
+        f, command = self.prepare()
+        code, calls, record = self.invoke(command + ['--second-pass', 'fast', '--max-calls', '1'])
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [('expert','investigator')])
+        audit = json.loads((f.base/'worker/second-pass.json').read_text())
+        self.assertEqual(audit['accounting']['second_pass']['calls'], 0)
+        summary=json.loads((f.base/'worker/source-review/summary.json').read_text())
+        self.assertEqual(Path(summary['effective_args']['reviewer_command']), f.base/'expert-command.json')
+
     def test_completion_reserves_two_owner_turns_after_optional_preparation(self):
         f, command = self.prepare()
         code, calls, record = self.invoke(command + ['--max-calls', '3'], owner_lookup=True)

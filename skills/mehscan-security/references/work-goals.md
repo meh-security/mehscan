@@ -46,12 +46,28 @@ target needs more work. A cost allowance can also guard coverage work. Reaching
 any allowance leaves the target incomplete. Blocked or unresolved required checks
 also leave it incomplete. A completed target never clears out-of-target risks.
 
-This path supports fresh Value or Comprehensive native plans. It cannot combine
-with source/domain selection, source-result reuse, resume, grouping, native-only
-profiles, first-pass handoff, a second pass or native-share overrides. Work items
-use isolated provider sessions and a single ranked queue. The controller does not
-automatically resume interrupted work or import prior work-ledger conclusions.
-Existing source/native reuse routes remain available separately.
+This path supports Value or Comprehensive native plans, including an explicitly
+requested Fast/Full audit after the source pass. It cannot combine with
+source/domain selection, source-result reuse, operation grouping, native-only
+profiles or native-share overrides. Work items use isolated provider sessions
+and a single ranked queue.
+
+Use `--resume-from OLD_ATTEMPT` with the original work-plan invocation and a new
+output directory to recover native finalization after the source handoff exists.
+The manifest must be unchanged. Completed source answers, the bound owner profile,
+existing allowance and recovery receipts are retained. This does not resume an
+interrupted source investigation before handoff, add checks or buy replacement
+inference for unanswered source cases.
+
+For a later audit, use the ordinary native-phase `--first-pass OLD_ATTEMPT`,
+`--second-pass fast|full` and `--supersede` workflow with current native work.
+Do not pass `--work-plan` to that native invocation. A bound work-plan parent
+automatically supplies its original budget; counters and limits are not reset.
+Use the summary's effective owner reviewer/provider configuration, without the
+source-only `--question-routing` flag.
+The audit reports historical first-pass case coverage separately from its native
+claim results. Partial coverage targets can supply an admitted native subset,
+but every selected audit ID must exist in the validated first report.
 
 ## Prepare the work plan
 
@@ -344,6 +360,7 @@ updates them as work starts and completes:
 | --- | --- |
 | `work-plan.json` | Normalized source-bound backlog and fixed target membership |
 | `case-state.sqlite` | Transactional case state, assertion revisions, source bindings and explicit check dependencies |
+| `work-handoff.json` | Bound source results, case state, owner work package and original allowance policy |
 | `work-ledger.json` | Required checks, cited answers, blockers, potential impact, observed usage and remaining estimates |
 | `remaining-work.md` | Human-readable residual work and cost/coverage limits |
 | `lead-accounting.json` | Native IDs mapped to roles, including unclassified IDs |
@@ -375,8 +392,17 @@ superseded through normal admission. An unresolved replacement cannot clear a
 dependent security conclusion. Models do not directly edit the store.
 
 The store rejects altered result artifacts, stale assertion versions and changed
-deciding source. This state support does not enable automatic interrupted-run
-resume or a new audit phase; those invocation restrictions above still apply.
+deciding source. The handoff rejects changed artifacts, larger allowances, rate
+changes and reset usage/fences before inference. Older work-plan attempts without
+a bound handoff do not silently receive a fresh follow-up allowance.
+
+An immediate Fast/Full correction or reopening of a required Verify claim marks
+the affected case for native proof reconciliation. Additional proposal audits
+do not enlarge a fixed target. Original property answers and factual assertions remain
+historical; a changed native proof cannot silently keep the case target complete.
+A later native audit leaves the original attempt unchanged and writes
+`work-followup.json` with the parent and shared allowance. Neither route
+automatically schedules another source investigation.
 
 The ledger separates unresolved planned high-impact work, lower-priority work,
 out-of-target work and unclassified material with unknown importance. It also

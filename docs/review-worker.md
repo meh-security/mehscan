@@ -18,6 +18,11 @@ potential-impact priority from verified severity, and report remaining work unde
 below describe the existing mixed source-selection path. Both paths retain native
 SQL/control facts and source-proof validation.
 
+Work plans support explicitly requested Fast/Full audits under their remaining
+allowance and recovery of native finalization from the saved source handoff.
+Later native audits inherit the bound parent allowance; they do not repeat source
+discovery. The work-goal guide describes the supported continuation boundaries.
+
 The default Value `all` phase requires a bound coverage plan before provider review.
 Without `--source-selection FILE`, it prepares a selection checkpoint and exits
 with `selection_required`, making zero AI calls. The host agent combines native

@@ -3,9 +3,71 @@
 from collections import Counter
 import copy
 import json
+from pathlib import Path
 
 import review_domains as domains
 import review_questions
+
+HANDOFF_VERSION = "mehscanWorkHandoff/v1"
+
+
+def audit_case_gaps(registry, rows):
+    """Only required native obligations can reopen a fixed case target."""
+    owners = {rid:item["id"] for item in registry["items"] for rid in item["verify_review_ids"]}
+    return [{"case_id":owners[row["review_id"]], "review_id":row["review_id"], "outcome":row["outcome"]}
+            for row in rows if row["outcome"] in ("corrected", "reopened") and row["review_id"] in owners]
+
+
+def _handoff_budget_policy(budget):
+    keys = ("max_calls", "input_limit", "reservation_per_call", "max_call_input_tokens", "deadline_epoch")
+    cost_keys = ("currency", "limit_micros", "rates", "provider_rates", "output_reservation", "reservation_micros")
+    cost = budget.get("cost")
+    return {**{key:budget[key] for key in keys},
+            "cost":{key:cost[key] for key in cost_keys if key in cost} if cost else None}
+
+
+def freeze_handoff(stage, manifest_sha256, case_binding, worker):
+    """Bind first-pass artifacts and immutable budget policy, never reset usage."""
+    directory = Path(stage)
+    files = ("summary.json", "work-plan.json", "case-state.sqlite", "work.json", "provider-metrics.jsonl")
+    budget = worker.read(directory / "budget.json")
+    record = {"schema_version":HANDOFF_VERSION, "manifest_sha256":manifest_sha256,
+        "case_binding":case_binding, "files":{name:worker.digest_file(directory / name) for name in files},
+        "budget_policy":_handoff_budget_policy(budget),
+        "usage_floor":{"reserved_calls":budget["reserved_calls"], "observed_input_tokens":budget["observed_input_tokens"],
+                      "cost_micros":budget.get("cost", {}).get("observed_micros", 0)},
+        "fenced":budget["fenced"]}
+    worker.write(directory / "work-handoff.json", record)
+    return record
+
+
+def read_handoff(attempt, root, worker):
+    """Fail before inference on changed artifacts or a replacement allowance."""
+    attempt = worker.outside(attempt, root)
+    stage = attempt / "source-review"
+    record = worker.read(stage / "work-handoff.json")
+    expected = {"summary.json", "work-plan.json", "case-state.sqlite", "work.json", "provider-metrics.jsonl"}
+    if record.get("schema_version") != HANDOFF_VERSION or set(record.get("files", {})) != expected:
+        raise ValueError("unsupported work-plan handoff")
+    for name, digest in record["files"].items():
+        path = stage / name
+        if path.is_symlink() or worker.digest_file(path) != digest:
+            raise ValueError("work-plan handoff artifact changed: " + name)
+    budget_path = stage / "budget.json"
+    if budget_path.is_symlink():
+        raise ValueError("work-plan allowance cannot be redirected")
+    budget = worker.read(budget_path)
+    if _handoff_budget_policy(budget) != record["budget_policy"]:
+        raise ValueError("work-plan continuation allowance changed")
+    floor = record["usage_floor"]
+    if (budget["reserved_calls"] < floor["reserved_calls"] or budget["observed_input_tokens"] < floor["observed_input_tokens"]
+            or budget.get("cost", {}).get("observed_micros", 0) < floor["cost_micros"]
+            or record["fenced"] and not budget["fenced"]):
+        raise ValueError("work-plan continuation cannot reset prior usage or fences")
+    summary = worker.read(stage / "summary.json")
+    if Path(summary["budget_path"]).resolve() != budget_path.resolve():
+        raise ValueError("work-plan handoff budget binding differs")
+    return record, summary, str(budget_path)
 
 VERSION = "mehscanWorkPlan/v1"
 IMPACTS = ("critical", "high", "unknown", "medium", "low")
@@ -234,10 +296,13 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                         check.update(status="not_checked", next_deciding_fact=reason)
                 unresolved = any(row["status"] in ("unresolved", "not_checked") for row in check_rows)
                 unresolved |= any(row["decision"] == "needs_review" for row in result["draft"]["results"])
+                unresolved |= bool(result.get("native_reconsideration"))
                 state = "investigated_unresolved" if unresolved else "closed"
                 reason = "Evidence-backed check answers; source validation does not prove reasoning correct."
         outstanding = [row for row in check_rows if row["status"] in ("unresolved", "not_checked")]
         deciding = [row["next_deciding_fact"] for row in outstanding]
+        if result:
+            deciding.extend(result.get("native_reconsideration", {}).values())
         if result and result["status"] == "complete":
             deciding.extend(question for assessment in result["draft"]["results"] if assessment["decision"] == "needs_review"
                             for question in assessment.get("checks", []))
@@ -257,6 +322,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "completion_reservation": copy.deepcopy(result.get("completion_reservation")) if result else None,
                "provisional_fact_answers": copy.deepcopy(result.get("provisional_fact_answers", {})) if result else {},
                "reconsideration": copy.deepcopy(result.get("reconsideration", {})) if result else {},
+               "native_reconsideration": copy.deepcopy(result.get("native_reconsideration", {})) if result else {},
                "job_directory": result.get("job_directory") if result else None,
                "usage_complete": bool(result and result["status"] == "complete" and len(usage_rows) == result.get("calls", 0)
                    and all(not set(metric.get("unknown_delta_counters", [])).intersection(

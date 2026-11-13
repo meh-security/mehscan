@@ -19,7 +19,8 @@ class Cases(unittest.TestCase):
         self.root.mkdir()
         (self.root / "guard.js").write_text("function guard() { return true; }\n", encoding="utf8")
         self.binding = {"snapshot":"one", "plan":"one", "runtime":"one"}
-        self.registry = {"items":[{"id":name, "checks":[{"id":"fact"}, {"id":"security"}]}
+        self.registry = {"items":[{"id":name, "checks":[{"id":"fact"}, {"id":"security"}],
+                                  "verify_review_ids":["native-id"] if name == "native" else []}
                                   for name in ("native", "ai-only", "independent")]}
         self.store = CaseState.create(self.base / "state.sqlite", self.root, self.binding, self.registry)
         self.check = dict(id="fact", question="Does this guard return true?", scope="This body.",
@@ -108,6 +109,19 @@ class Cases(unittest.TestCase):
         (self.root / "guard.js").write_text("function guard() { return false; }\n")
         with self.assertRaisesRegex(ValueError, "source changed"):
             CaseState.validate_dependencies(self.store.snapshot(), refs)
+
+    def test_native_audit_preserves_assertions_and_marks_case_reconciliation(self):
+        refs = self.question()
+        self.finish("native", refs)
+        self.store.submit("audit", dict(kind="native_audit", case_id="native",
+            review_ids=["native-id"], reason="Native proof changed."))
+        row = self.store.results()[0]
+        self.assertEqual(row["native_reconsideration"], {"native-id":"Native proof changed."})
+        self.assertEqual(row["draft"]["work_checks"][1]["status"], "satisfied")
+        self.assertEqual(self.store.snapshot()["assertions"][refs[0]["assertion_id"]][-1]["status"], "available")
+        with self.assertRaisesRegex(ValueError, "required Verify IDs"):
+            self.store.submit("new-proposal-audit", dict(kind="native_audit", case_id="ai-only",
+                review_ids=["new-proposal"], reason="Do not expand a fixed target."))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,14 @@ Use only when the user requests Fast or Full second-pass review. The default is
 off; this option is independent of Value/Comprehensive. Keep exact claim IDs and
 their actor, operand, branch, selected property and effect separate.
 
+A work-plan first pass can add `--second-pass fast|full` directly. Its prepared
+source and assessments enter this same audit pipeline under the remaining shared
+allowance. For a later audit, use the native-phase first-pass workflow below;
+the bound work-plan handoff preserves the parent allowance and reports the
+original case checks as historical coverage. See
+[work-goal continuation](work-goals.md#choose-the-goal) for compatibility and
+native-finalization recovery.
+
 ## Automatic Fast selection
 
 First-pass assessments can return a nullable `followup` scheduling note with a
