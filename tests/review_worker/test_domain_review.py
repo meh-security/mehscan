@@ -84,6 +84,24 @@ class DomainReview(unittest.TestCase):
         self.assertEqual(len(list((stage / "native-inputs").iterdir())), 1)
         self.assertTrue((f.base / "worker/review-options.json").exists())
 
+    def test_isolated_sessions_keep_the_same_roles_and_shared_evidence_plan(self):
+        f, command, ids = self.prepare()
+        result = subprocess.run(command + ["--domain-session-mode", "isolated"], capture_output=True,
+                                text=True, encoding="utf8", timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + f.debug_output())
+        stage = f.base / "worker/source-review"
+        frames = [json.loads(p.read_text()) for p in (stage / "jobs").glob("*/0-input.json")]
+        self.assertEqual(len({frame["domain_session"]["id"] for frame in frames}), 2)
+        self.assertTrue(all(frame["domain_session"]["case_index"] == 0 for frame in frames))
+        self.assertTrue(all(len(frame["domain_session"]["cases"]) == 1 for frame in frames))
+        self.assertTrue(all("f0" in frame["research"]["citation_windows"] for frame in frames))
+        summary = json.loads((stage / "summary.json").read_text())
+        self.assertEqual(set(summary["assessments"]), set(ids["feature/app.js"]))
+        self.assertEqual(summary["domain_review"]["session_mode"], "isolated")
+        metrics = json.loads((stage / "domain-metrics.json").read_text())
+        self.assertEqual(metrics["session_mode"], "isolated")
+        self.assertEqual(metrics["provider_calls"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

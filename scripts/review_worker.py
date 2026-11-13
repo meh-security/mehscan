@@ -890,6 +890,8 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    if getattr(args, "domain_session_mode", "shared") != "shared" and not getattr(args, "domain_plan", None):
+        raise ValueError("domain session mode requires an explicit domain plan")
     if getattr(args, "domain_plan", None) and (args.phase != "all" or getattr(args, "group_operations", False)
             or getattr(args, "source_profile", None) or getattr(args, "validate_only", False)):
         raise ValueError("domain review requires fresh all-phase source work without grouping or native-only profiles")
@@ -2679,6 +2681,8 @@ def main():
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
     parser.add_argument("--domain-plan", help="opt-in source-bound domain cases with verify/cover/context evidence roles")
+    parser.add_argument("--domain-session-mode", choices=("shared", "isolated"), default="shared",
+                        help="share a thread across domain cases, or isolate cases while retaining the same evidence plan")
     parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
     parser.add_argument("--max-calls", type=int, default=40, help="shared Value provider-call ceiling")
     parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")

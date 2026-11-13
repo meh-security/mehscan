@@ -117,6 +117,12 @@ membership and citations outside the bound plan are invalid.
 
 ## Budget, reporting and reuse
 
+`--domain-session-mode shared` keeps a thread across the domain's cases. For an
+explicit comparison, `isolated` creates a fresh thread for each case while keeping
+the case plan and controller-validated shared evidence unchanged. Both modes
+share the original global budget. Isolation does not disable applicable fact reuse
+and is not an independent audit with earlier evidence withheld.
+
 The domain plan orders funded cases; an origin-based native/AI split is not
 automatically imposed on it. Honor the original overall call/input/deadline
 allowance across all cases, domain sessions and finalization. Closing one case

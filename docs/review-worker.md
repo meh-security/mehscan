@@ -296,6 +296,12 @@ assumed from a shared topic or session. Cached input still consumes context and
 can incur provider charges. A higher cache fraction alone does not establish a
 cheaper or better review.
 
+`--domain-session-mode shared` is the default. Use `isolated` to start a separate
+provider thread for each case while retaining the same case order, evidence roles,
+controller-validated shared facts and overall budget. This option requires a
+domain plan. It permits comparing session reuse without changing the review plan;
+isolated cases can still use applicable evidence obtained by earlier cases.
+
 All domain cases and finalization use the same whole-review budget. Case changes
 do not reset it. A budget stop leaves explicit unfinished cases and coverage gaps.
 The ordinary native/AI allocation is not automatically applied to the ordered

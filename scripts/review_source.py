@@ -830,6 +830,10 @@ def run(args, legacy, worker):
                 if domain_case:
                     frame["domain_session"] = {"id": domain_state["id"], "binding": domain_state["binding"],
                         "case_id": domain_case["id"], "case_index": case_index, "cases": domain_state["cases"]}
+                    if getattr(args, "domain_session_mode", "shared") == "isolated":
+                        frame["domain_session"] = {"id": context.digest([domain_state["id"], domain_case["id"]]),
+                            "binding": context.digest([domain_state["binding"], domain_case["id"]]),
+                            "case_id": domain_case["id"], "case_index": 0, "cases": [domain_state["cases"][case_index]]}
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 lease = review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None
@@ -1189,6 +1193,7 @@ def run(args, legacy, worker):
                 "max_turn_input_tokens": max((row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows), default=0),
                 "provider_elapsed_ms": sum(row.get("elapsed_ms", 0) or 0 for row in rows)})
         worker.write(stage / "domain-metrics.json", {
+            "session_mode": getattr(args, "domain_session_mode", "shared"),
             "domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
             "completed_cases": sum(result["status"] == "complete" for result in by_case.values()),
             "provider_calls": sum(result["calls"] for result in by_case.values()),
@@ -1457,6 +1462,7 @@ def run(args, legacy, worker):
         "selected_assignments": len(selected),
         "schedule": "schedule.json" if queues is not None or domain_registry else None,
         "domain_review": {"domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
+            "session_mode": getattr(args, "domain_session_mode", "shared"),
             "completed_cases": len(successful), "role_counts": role_counts,
             "lead_accounting": "lead-accounting.json", "metrics": "domain-metrics.json"} if domain_registry else None,
         "native_admitted_ids": ids,
