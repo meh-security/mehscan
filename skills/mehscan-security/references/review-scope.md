@@ -11,9 +11,10 @@ queue entry is not proof that it deserves its assigned priority.
 
 Value seeks the highest-severity findings with credible source support first,
 from admitted native candidates and bounded additional AI discovery. A compact
-application-aware plan prioritizes both within a shared
-budget, initially allocating 80% to native review and 20% to additional discovery.
-The mix is adjustable; unused allocation can transfer when a queue finishes.
+application-aware work plan prioritizes both within a shared budget or fixed
+coverage target. Use [work goals](work-goals.md) for new repository Value reviews.
+The existing explicitly mixed source-selection path starts with an adjustable
+80% native / 20% additional-discovery call allocation; unused allocation can transfer when a queue finishes.
 Explicit AI-only/native-only requests limit scheduling to that queue; they do not
 automatically enable the other queue when work finishes.
 Choose additional discovery operations from actual source bodies, normally a few
@@ -62,7 +63,8 @@ audit, repeatedly enumerate hypothetical attacks, or keep researching to spend
 the remaining allowance. Record real findings at their supported severity even
 when they are below the current scheduling priority.
 
-The ordinary controller follows host-ranked queues and an adjustable origin-based
+The work-goal controller dispatches host-ranked individual items across both
+origins. The existing mixed controller follows host-ranked queues and an adjustable origin-based
 call split; it does not calculate a severity ranking. Choose ordering and the
 supported mix to serve the strongest leads, and disclose allocation constraints.
 Domain plans use their ordered cases instead. Neither route should add paid work

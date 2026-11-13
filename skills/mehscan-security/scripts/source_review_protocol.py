@@ -158,6 +158,12 @@ def schema(task, base, api, guidance, bound_handles=True):
         coverage["items"]["required"] = ["window_ref", "status", "summary"]
         if bound_handles:
             coverage.update(minItems=len(windows), maxItems=len(windows))
+    if "required_checks" in task["research"]:
+        draft["properties"]["work_checks"] = {"type": "array", "items": obj({
+            "check_id": text, "status": {"type": "string", "enum": ["satisfied", "violated", "unresolved", "not_checked"]},
+            "summary": text, "evidence": {"type": "array", "maxItems": 8, "items": citation},
+            "next_deciding_fact": {"type": ["string", "null"]}})}
+        draft["required"].append("work_checks")
     variants = []
     for tool in api["tools"]:
         props = {
@@ -238,6 +244,11 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             + json.dumps(guides, ensure_ascii=False)
         )
     research = task["research"]
+    if "required_checks" in research:
+        value += ("\nAnswer every required check exactly once in draft.work_checks. A closed satisfied/violated answer "
+            "requires deciding source citations and null next_deciding_fact. An unresolved/not_checked answer requires "
+            "the concrete missing fact; it does not count as target completion. Finding severity and potential scheduling "
+            "impact are separate. Required checks:\n" + json.dumps(research["required_checks"], ensure_ascii=False))
     if "citation_windows" in research:
         value += (
             "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
@@ -304,6 +315,11 @@ def envelope(response, task):
     ):
         raise ValueError("source reviewer combined incompatible actions")
     draft = copy.deepcopy(response["draft"])
+    if "required_checks" in task["research"]:
+        expected = {check["id"] for check in task["research"]["required_checks"]}
+        actual = [check["check_id"] for check in draft.get("work_checks", [])]
+        if len(actual) != len(set(actual)) or set(actual) != expected:
+            raise ValueError("work checks must match controller-owned check identities exactly once")
     if "citation_windows" in task["research"]:
         windows = task["research"]["citation_windows"]
 
@@ -338,6 +354,8 @@ def envelope(response, task):
             proposal["anchor"] = expand(proposal["anchor"], anchor=True)
             proposal["evidence"] = [expand(c) for c in proposal["evidence"]]
             assessment_citations(proposal["assessment"])
+        for check in draft.get("work_checks", []):
+            check["evidence"] = [expand(c) for c in check["evidence"]]
     if "coverage_windows" in task["research"]:
         windows = task["research"]["coverage_windows"]
         refs = [row["window_ref"] for row in draft["coverage"]]

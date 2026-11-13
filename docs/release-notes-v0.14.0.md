@@ -2,6 +2,8 @@
 
 ## Features
 
+- Add budget and coverage targets with ranked investigations and reports of unfinished checks and risks.
+
 - Plan Value reviews across native candidates and bounded AI discovery with a configurable mix and shared budget; scripted Value reviews now require a selection or domain plan. Use Comprehensive for broader coverage.
 - Add opt-in domain reviews that reuse related source context while keeping claims and flow coverage distinct.
 - Add automatically selected Fast reviews, Full audits and scoped threat follow-up for AI-only source reviews.

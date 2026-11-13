@@ -5,7 +5,15 @@ costs, limits and on-demand category guides, use [the worker API](worker-api.md)
 `definition` and `guidance` are broker operations, not native CLI subcommands.
 For execution diagnosis, use [the trace guide](execution-trace.md).
 
-The Python controller's default Value `all` phase first prepares a zero-AI
+For a ranked backlog and a spending or completion target, use
+[work goals](work-goals.md): `--work-plan FILE --review-goal budget|coverage`.
+Coverage can select `--coverage-target ITEM,ITEM`; budget and coverage can use
+`--cost-budget USD --cost-rates FILE` as a configured-rate managed-work allowance.
+Remaining obligations, potential impact and unknown scope are retained in the
+controller-owned ledger. These goals are separate from the mixed allocation below.
+
+The existing mixed source-selection path below remains available when requested.
+The Python controller's bare Value `all` phase first prepares a zero-AI
 `selection_required` checkpoint under `source-review/`. Use bounded source
 orientation in the host agent to plan native review and choose a few additional
 AI-discovery operations, then invoke it with

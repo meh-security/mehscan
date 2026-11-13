@@ -22,6 +22,13 @@ Comprehensive still select review depth within that scope.
 
 ## Modes and queue
 
+For new repository Value work, a user-specified allowance or a set of checks,
+use [work goals](work-goals.md), normally with the budget goal.
+The source-bound work ledger separates potential-impact priority, required check
+answers and unclassified gaps. Budget and coverage targets use one ranked backlog;
+native/AI origin does not decide priority. Existing mixed-queue instructions below
+apply when that work-plan path is not selected.
+
 For membership and rationale, use [review scope policy](review-scope.md).
 For Value, follow its [priority and spending rules](review-scope.md#value-priority-and-continued-spending):
 fund the strongest credible security impact first. A compact surface inventory
@@ -420,9 +427,11 @@ Keep this as lightweight review navigation, updated during first pass. It does
 not require a separate model call, complete architecture or threat-model report
 before inspecting source. Exact-ID and bounded source assignments start directly.
 
-For the default Value `all` phase, first run the controller without a source
-selection. It prepares `source-review/plan.json`, `selection-options.json` and
+For the bare Value `all` phase, first run the controller without a source or work
+plan. It prepares `source-review/plan.json`, `selection-options.json` and
 `checkpoint.json`, reports `selection_required` and makes no provider calls.
+Use [work goals](work-goals.md) to bind new ranked budget/coverage work. The
+existing mixed source-selection route below remains available when requested.
 Use this source index, native leads, route/job registration and bounded source
 reads in the host agent's current context to prepare a compact coverage plan:
 application actors and protected effects, candidate concentrations, existing

@@ -1,6 +1,7 @@
 """Cross-process admission gate for a bounded review, using observed input usage."""
 
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import json
 import math
 import os
@@ -13,6 +14,43 @@ MAX_INPUT = 1_500_000
 RESERVATION = 100_000
 MAX_CALL_INPUT = 250_000
 ADMISSION_SECONDS = 20 * 60
+
+
+def decimal(value, label):
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(label + " must be a finite nonnegative number") from None
+    if isinstance(value, bool) or not result.is_finite() or result < 0:
+        raise ValueError(label + " must be a finite nonnegative number")
+    return result
+
+
+def cost_policy(limit, rates, output_reservation=16000):
+    keys = {"input_per_million", "cached_input_per_million", "output_per_million"}
+    if not isinstance(rates, dict) or set(rates) != keys:
+        raise ValueError("cost rates require ordinary input, cached input and output rates")
+    normalized = {key: str(decimal(rates[key], key)) for key in keys}
+    amount = decimal(limit, "cost allowance")
+    if amount <= 0 or type(output_reservation) is not int or output_reservation < 1:
+        raise ValueError("cost allowance and output reservation must be positive")
+    micros = lambda value: int(value.to_integral_value(rounding=ROUND_CEILING))
+    return {"currency": "USD", "limit_micros": micros(amount * 1_000_000), "rates": normalized,
+            "output_reservation": output_reservation,
+            "reservation_micros": micros(Decimal(MAX_CALL_INPUT) * max(Decimal(normalized[key]) for key in
+                ("input_per_million", "cached_input_per_million")) + Decimal(output_reservation) * Decimal(normalized["output_per_million"])),
+            "observed_micros": 0, "complete": True,
+            "basis": "Configured-rate estimate, not an invoice. Unreported cache writes and host work are excluded; reservations and observed fences are not hard currency caps."}
+
+
+def estimate_cost(usage, rates):
+    values = [usage.get(key) for key in ("input_tokens", "cached_input_tokens", "output_tokens")]
+    if any(type(value) is not int or value < 0 for value in values) or values[1] > values[0]:
+        return None
+    ordinary, cached, output = values[0] - values[1], values[1], values[2]
+    total = (ordinary * Decimal(rates["input_per_million"]) + cached * Decimal(rates["cached_input_per_million"])
+             + output * Decimal(rates["output_per_million"]))
+    return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
 class BudgetExhausted(ValueError):
@@ -64,7 +102,7 @@ def _write(path, state):
 
 def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
                reservation_per_call=RESERVATION, admission_seconds=ADMISSION_SECONDS,
-               native_percent=None, max_call_input_tokens=MAX_CALL_INPUT):
+               native_percent=None, max_call_input_tokens=MAX_CALL_INPUT, cost=None, started_at=None):
     for name, value in (("max_calls", max_calls), ("input_limit", input_limit),
                         ("reservation_per_call", reservation_per_call),
                         ("max_call_input_tokens", max_call_input_tokens)):
@@ -76,15 +114,19 @@ def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
     if native_percent is not None and (type(native_percent) not in (int, float)
             or not math.isfinite(native_percent) or not 0 <= native_percent <= 100):
         raise ValueError("native_percent must be between zero and one hundred")
+    if started_at is not None and (type(started_at) not in (int, float) or not math.isfinite(started_at) or started_at <= 0):
+        raise ValueError("review start time must be positive and finite")
     with locked(path):
         if Path(path).exists():
             raise ValueError("review budget already exists; never reset a live ledger")
-        state = {"schema_version": 1, "deadline_epoch": time.time() + admission_seconds,
+        state = {"schema_version": 1, "deadline_epoch": (time.time() if started_at is None else started_at) + admission_seconds,
                       "max_calls": max_calls, "input_limit": input_limit,
                       "reservation_per_call": reservation_per_call, "reserved_calls": 0,
                       "max_call_input_tokens": max_call_input_tokens,
                       "observed_input_tokens": 0, "leases": {}, "fenced": False,
                       "limitations": "Observed input limit with in-flight reservation headroom; a provider call can exceed its reservation."}
+        if cost is not None:
+            state["cost"] = cost
         if native_percent is not None:
             native_calls = int(max_calls * native_percent / 100 + 0.5)
             state["native_percent"] = native_percent
@@ -104,12 +146,15 @@ def snapshot(path):
 
 def _admission_reason(state, lane=None):
     if state["fenced"]:
-        return "unknown usage or oversized prior call fenced the review"
+        return state.get("fence_reason", "unknown usage or oversized prior call fenced the review")
     if time.time() >= state["deadline_epoch"]:
         return "review new-call admission deadline reached"
     if state["reserved_calls"] >= state["max_calls"]:
         return "review provider-call limit reached"
     active = sum(entry["status"] == "reserved" for entry in state["leases"].values())
+    cost = state.get("cost")
+    if cost and cost["observed_micros"] + (active + 1) * cost["reservation_micros"] > cost["limit_micros"]:
+        return "review estimated cost allowance and in-flight reservation reached"
     reservation = state["reservation_per_call"]
     if state["observed_input_tokens"] + (active + 1) * reservation > state["input_limit"]:
         return "review observed input limit and in-flight headroom reached"
@@ -183,6 +228,23 @@ def finish(path, lease, receipt):
         if known:
             entry["input_tokens"] = tokens
             state["observed_input_tokens"] += tokens
+        cost = state.get("cost")
+        if cost:
+            cost_known = isinstance(usage, dict) and isinstance(unknown, list) and not set(unknown).intersection(
+                ("input_tokens", "cached_input_tokens", "output_tokens"))
+            amount = estimate_cost(usage, cost["rates"]) if cost_known else None
+            entry["estimated_cost_micros"] = amount
+            if amount is None:
+                cost["complete"] = False
+                state["fenced"] = True
+                state["fence_reason"] = "provider cost counters unknown; estimated allowance fenced"
+            else:
+                cost["observed_micros"] += amount
+                if (cost["observed_micros"] > cost["limit_micros"]
+                        or usage["output_tokens"] > cost["output_reservation"]):
+                    state["fenced"] = True
+                    state["fence_reason"] = ("observed estimated cost allowance exceeded" if cost["observed_micros"] > cost["limit_micros"]
+                        else "provider output exceeded the cost reservation; new calls fenced")
         # Reservation estimates concurrent headroom; it is not the per-call fence.
         # Existing ledgers retain the threshold with which they were initialized.
         call_limit = state.get("max_call_input_tokens", state["reservation_per_call"])

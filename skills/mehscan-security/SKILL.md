@@ -9,17 +9,25 @@ Default to **Value**: pursue the highest-severity findings supported by plausibl
 source evidence first, within the user's budget. Rank by credible impact, actor
 exposure and evidence of a failed control, then the cost of the next deciding check;
 neither a severity label nor a sensitive feature name establishes that priority.
-Preserve the in-scope native queue and discover consequential relationships the
-scanner does not represent. The ordinary controller starts with an adjustable 80%
-native / 20% additional AI-discovery allocation; that split is not a severity rank.
-Use the ranked plan and supported mix to fund the strongest leads, rather than
-spending the allowance on generic markers or balancing areas for coverage.
+Preserve native lead accounting and discover consequential relationships the
+scanner does not represent. Use a ranked work plan to fund the strongest leads,
+rather than spending the allowance on generic markers or balancing areas for coverage.
 The budget limits execution, not candidate membership. **Comprehensive** explicitly
 extends the admitted scope systematically. Changed,
 component and category requests constrain either mode; they are scope filters.
 Use [review planning](references/review-planning.md) for compact application-aware
 planning and bounded source orientation before repository AI work. This orientation
 happens in the host agent's current context, not as another full provider review pass.
+
+For new repository Value reviews, or when the user chooses an allowance or
+specific checks to finish, use
+[budget and coverage goals](references/work-goals.md) with a bound `--work-plan`.
+It keeps a ranked backlog, evidence-backed check answers and remaining-risk report.
+Use the budget goal by default; an explicit coverage goal keeps the declared
+target incomplete until its checks close. Unclassified material has unknown
+importance. A completed target is not whole-application security clearance.
+Existing explicitly requested native/AI mixes use the ordinary source-selection
+path; an origin allocation is not a severity rank.
 
 For an explicitly requested domain review, use [domain review](references/domain-review.md)
 and a bound `--domain-plan`. It gives native material three roles: concrete claims
@@ -219,7 +227,7 @@ source-body evidence. Plan their order around the application's actors, protecte
 effects, shared controls and coverage gaps. A severity label or filename alone
 cannot select AI-discovery scope. Give each operation one owner; reuse cited
 helper/control facts while checking every native ID and caller's conditions.
-For runtime-bound Value work, `--policy value --selection policy` supplies native
+For explicitly mixed runtime-bound Value work, `--policy value --selection policy` supplies native
 admission hints, while `--source-selection FILE` binds additional AI discovery and
 can rank native assignments without dropping queue members. Without the latter,
 the default `all` phase prepares a planning checkpoint and stops before AI calls.

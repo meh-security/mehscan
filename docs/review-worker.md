@@ -10,6 +10,14 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
+For a source-bound ranked backlog with a spending allowance or explicit checks to
+finish, use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
+and `--work-plan FILE`. Work goals preserve required check identities, distinguish
+potential-impact priority from verified severity, and report remaining work under
+`source-review/work-ledger.json` and `remaining-work.md`. The default instructions
+below describe the existing mixed source-selection path. Both paths retain native
+SQL/control facts and source-proof validation.
+
 The default Value `all` phase requires a bound coverage plan before provider review.
 Without `--source-selection FILE`, it prepares a selection checkpoint and exits
 with `selection_required`, making zero AI calls. The host agent combines native

@@ -384,6 +384,7 @@ def prepare(get=None, execute=run_command):
                           "review_budget_sha256": file_digest(Path(__file__).with_name("review_budget.py")),
                           "review_scheduler_sha256": file_digest(Path(__file__).with_name("review_scheduler.py")),
                           "review_domains_sha256": file_digest(Path(__file__).with_name("review_domains.py")),
+                          "review_work_sha256": file_digest(Path(__file__).with_name("review_work.py")),
                           "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
                           "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
                           "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
@@ -636,6 +637,7 @@ def review_tools(plan, execute):
                       ("review_budget.py", "review_budget_sha256"),
                       ("review_scheduler.py", "review_scheduler_sha256"),
                       ("review_domains.py", "review_domains_sha256"),
+                      ("review_work.py", "review_work_sha256"),
                       ("review_source_profile.py", "source_profile_sha256"),
                       ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
         if file_digest(Path(__file__).with_name(name)) != config[key]:

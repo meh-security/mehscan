@@ -166,7 +166,10 @@ Value preserves the in-scope native Value candidate queue and adds bounded
 source-driven discovery in consequential areas the scanner does not represent.
 A compact application-aware plan identifies entry points, protected effects,
 candidate concentrations, shared implementation research and uncovered areas.
-The scheduler starts with an adjustable 80% native / 20% AI-discovery allocation;
+New repository Value reviews use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
+with a ranked work ledger. Coverage targets close only with explicit check answers;
+unclassified native material and source without named owners retain unknown importance.
+The existing explicitly mixed scheduler starts with an adjustable 80% native / 20% AI-discovery allocation;
 candidate count alone does not determine investigation cost. When a queue finishes,
 its unused allocation can fund remaining authorized work. AI-only review uses the
 same bounded source selection; no candidates does not trigger an all-source pass.

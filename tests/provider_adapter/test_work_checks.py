@@ -1,0 +1,65 @@
+"""Required property identities and their delivered citations survive the adapter."""
+import copy
+import unittest
+from jsonschema import Draft202012Validator
+
+import test_source_coverage as fixtures
+import codex_protocol
+import source_review_protocol as protocol
+import test_domain_protocol as domain_fixtures
+
+
+class WorkChecks(unittest.TestCase):
+    def setUp(self):
+        f = fixtures.SourceCoverageTests()
+        f.setUp()
+        self.task, self.reply = f.task, f.reply
+        self.task["research"]["required_checks"] = [{"id":"binding", "question":"Does the control bind this actor?"}]
+        self.task["research"]["citation_windows"] = {"s0":dict(path="reader.cs", start_line=1, end_line=40, anchor=True)}
+        self.reply["draft"]["work_checks"] = [dict(check_id="binding", status="satisfied", summary="The cited control binds the actor.",
+            evidence=[dict(source_ref="s0", line=12)], next_deciding_fact=None)]
+
+    def test_schema_requires_checks_and_adapter_expands_their_source_handles(self):
+        Draft202012Validator(codex_protocol.build_schema(self.task)).validate(self.reply)
+        value = protocol.envelope(self.reply, self.task)
+        self.assertEqual(value["draft"]["work_checks"][0]["evidence"], [dict(path="reader.cs", start_line=12, end_line=12)])
+        other = copy.deepcopy(self.reply)
+        del other["draft"]["work_checks"]
+        self.assertTrue(list(Draft202012Validator(codex_protocol.build_schema(self.task)).iter_errors(other)))
+
+    def test_foreign_or_duplicate_check_identity_is_rejected(self):
+        for rows in ([], [self.reply["draft"]["work_checks"][0]] * 2,
+                     [{**self.reply["draft"]["work_checks"][0], "check_id":"foreign"}]):
+            reply = copy.deepcopy(self.reply)
+            reply["draft"]["work_checks"] = rows
+            with self.assertRaisesRegex(ValueError, "check identities"):
+                protocol.envelope(reply, self.task)
+
+    def test_check_cannot_cite_unseen_source(self):
+        reply = copy.deepcopy(self.reply)
+        reply["draft"]["work_checks"][0]["evidence"] = [dict(source_ref="f999", line=1)]
+        with self.assertRaisesRegex(ValueError, "not offered"):
+            protocol.envelope(reply, self.task)
+
+    def test_stable_schema_keeps_check_ids_out_of_schema_prefix(self):
+        other = copy.deepcopy(self.task)
+        other["research"]["required_checks"] = [{"id":"different", "question":"Another control?"}]
+        self.assertEqual(codex_protocol.build_schema(self.task, bound_handles=False),
+                         codex_protocol.build_schema(other, bound_handles=False))
+
+    def test_domain_adapter_transports_checks_with_receipts_and_case_identity(self):
+        fixture = domain_fixtures.DomainProtocol()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.tasks[0]["research"]["required_checks"] = [{"id":"binding", "question":"Does the control bind this actor?"}]
+        response = fixture.final(0)
+        response["draft"]["work_checks"] = copy.deepcopy(self.reply["draft"]["work_checks"])
+        response["draft"]["work_checks"][0]["evidence"] = [dict(source_ref="s0", line=1)]
+        fixture.responses = [response]
+        result = fixture.invoke(0)
+        self.assertEqual(result["draft"]["work_checks"][0]["evidence"][0]["path"], "operation0.py")
+        self.assertEqual(len(fixture.calls), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

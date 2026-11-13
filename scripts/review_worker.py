@@ -890,7 +890,18 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
-    if getattr(args, "domain_session_mode", "shared") != "shared" and not getattr(args, "domain_plan", None):
+    work_path = getattr(args, "work_plan", None)
+    if not work_path and any(getattr(args, key, None) is not None for key in ("review_goal", "coverage_target", "cost_budget", "cost_rates")):
+        raise ValueError("review goals, targets and cost allowances require a source-bound work plan")
+    if work_path and (args.phase != "all" or getattr(args, "domain_plan", None) or getattr(args, "source_selection", None)
+            or getattr(args, "group_operations", False) or getattr(args, "source_profile", None)
+            or getattr(args, "validate_only", False) or getattr(args, "first_pass", None)
+            or getattr(args, "resume_from", None) or getattr(args, "reuse_source_results", None)
+            or getattr(args, "second_pass", "off") != "off" or getattr(args, "native_share", 80) != 80):
+        raise ValueError("work goals require a fresh all-phase work plan without legacy selection, reuse or follow-up")
+    if work_path:
+        args.domain_session_mode = "isolated"
+    if getattr(args, "domain_session_mode", "shared") != "shared" and not (getattr(args, "domain_plan", None) or work_path):
         raise ValueError("domain session mode requires an explicit domain plan")
     if getattr(args, "domain_plan", None) and (args.phase != "all" or getattr(args, "group_operations", False)
             or getattr(args, "source_profile", None) or getattr(args, "validate_only", False)):
@@ -1192,14 +1203,17 @@ def run_locked(args):
                 material=[]
                 for assignment in source_plan["assignments"]:
                     if assignment["id"] not in assignment_ids:continue
-                    result=next(r for r in prepared["results"] if r["assignment_id"]==assignment["id"])
-                    facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
-                        "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
-                        "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
-                    for index, fact in enumerate(facts):
-                        reuse = result.get("reuse") if index < len(result["facts"]) else None
-                        material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
-                            "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
+                    matches=[r for r in prepared["results"] if r["assignment_id"]==assignment["id"] and r["status"]=="complete"]
+                    for result in matches:
+                        facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
+                            "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
+                            "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
+                        for index, fact in enumerate(facts):
+                            if any(prior["result_id"]==fact["result_id"] for prior in material):
+                                continue
+                            reuse = result.get("reuse") if index < len(result["facts"]) else None
+                            material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
+                                "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
                 job.save(results=material,source_assignment_ids=sorted(assignment_ids),
                     claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
                     claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
@@ -2604,8 +2618,11 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review") if k in source})
-        if source["completed_assignments"] != source.get("selected_assignments", source["assignments"]):
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review", "work_review") if k in source})
+        work_review = source.get("work_review")
+        source_incomplete = (work_review["completed_items"] != work_review["funded_items"] if work_review else
+            source["completed_assignments"] != source.get("selected_assignments", source["assignments"]))
+        if source_incomplete:
             record["status"]="incomplete"
             record["detail"]="Native results retained; some assigned source ranges were not reviewed."
         record["source_review"]["calls"]=source["calls"]
@@ -2681,10 +2698,15 @@ def main():
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
     parser.add_argument("--domain-plan", help="opt-in source-bound domain cases with verify/cover/context evidence roles")
+    parser.add_argument("--work-plan", help="source-bound ranked work items with required evidence-backed checks")
+    parser.add_argument("--review-goal", choices=("budget", "coverage"), help="work plan stopping goal (default: budget)")
+    parser.add_argument("--coverage-target", help="comma-separated work item IDs to complete; coverage defaults to all declared items")
+    parser.add_argument("--cost-budget", help="configured-rate USD admission allowance for managed work; not an invoice cap")
+    parser.add_argument("--cost-rates", help="trusted JSON token rates bound to the configured provider model")
     parser.add_argument("--domain-session-mode", choices=("shared", "isolated"), default="shared",
                         help="share a thread across domain cases, or isolate cases while retaining the same evidence plan")
     parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
-    parser.add_argument("--max-calls", type=int, default=40, help="shared Value provider-call ceiling")
+    parser.add_argument("--max-calls", type=int, default=40, help="shared provider-call ceiling for Value and work goals")
     parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")
     parser.add_argument("--admission-seconds", type=int, default=1200, help="Value new-call admission window; active work can drain")
     parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
@@ -2727,6 +2749,8 @@ def main():
         summary["second_pass"] = result["second_pass"]
     if "review_options" in result:
         summary["review_options"] = result["review_options"]
+    if "work_goal" in result:
+        summary["work_goal"] = result["work_goal"]
     print(json.dumps(summary))
     return 0 if result["status"] in ("admitted", "source_validated", "selection_required") else 2
 
