@@ -99,6 +99,16 @@ importance unknown. Do not assign high impact solely from an API name or CWE.
 The controller validates source bindings and membership, not the truth of the
 host's impact judgment.
 
+Before funding an item, make the required question answerable at one named
+boundary: a particular caller and guard, a query predicate, or a consequential
+write and its failure condition. Avoid applying the same broad authority,
+invalidation and deployment checklist to every method in a domain. If a question
+requires those relationships, retain them explicitly instead of silently narrowing
+the completion claim. Repeated gaps in the same helper are a reason to prepare
+its cited implementation and binding once as shared evidence, preserving each
+caller's conditions; they are not a reason to buy the same extraction per caller
+or inherit another case's security verdict.
+
 ```json
 {
   "schema_version": "mehscanWorkPlan/v1",
