@@ -16,6 +16,13 @@ Start with the native inventory and bounded source orientation. Identify the
 actual actor or local contract, protected effect, applicable control and next
 deciding fact. Keep native IDs and source anchors available for precise lookups;
 do not reduce a domain to counts or a filename shortlist.
+For Value, order cases by the [strongest credible security impact](review-scope.md#value-priority-and-continued-spending),
+regardless of native or AI origin. Domain affinity saves research; it is not a
+reason to fund a weaker case ahead of an unrelated stronger lead. Keep each case
+focused on a consequential control question and a deciding fact rather than a
+general review of every property in that area. An evidence-supported failure
+hypothesis guides deeper investigation; do not invent one from a Cover marker.
+Broad systematic coverage is Comprehensive.
 
 Assign material a role according to its source evidence, independently of whether
 the scanner or AI supplied it:

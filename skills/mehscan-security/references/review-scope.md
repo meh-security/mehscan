@@ -9,8 +9,9 @@ queue entry is not proof that it deserves its assigned priority.
 
 ## Two public modes
 
-Value is the default review of admitted native candidates plus bounded additional
-AI discovery. A compact application-aware plan prioritizes both within a shared
+Value seeks the highest-severity findings with credible source support first,
+from admitted native candidates and bounded additional AI discovery. A compact
+application-aware plan prioritizes both within a shared
 budget, initially allocating 80% to native review and 20% to additional discovery.
 The mix is adjustable; unused allocation can transfer when a queue finishes.
 Explicit AI-only/native-only requests limit scheduling to that queue; they do not
@@ -27,7 +28,7 @@ planning checkpoint, operation ownership and shared limits.
 
 | Queue | Include when | Rationale |
 | --- | --- | --- |
-| **Value** | Keep in-scope native Value candidates. For additional AI discovery, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the bounded first review budget on useful findings and conclusions. Useful medium issues can qualify; actor, effect, conditions and source evidence decide priority, rather than severity alone. Budget deferral is not a policy exclusion. |
+| **Value** | Keep in-scope native Value candidates. For additional AI discovery, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Fund the strongest credible high-impact leads first. Useful medium issues remain eligible, but eligibility is not equal scheduling priority. Actor, effect, conditions and source evidence must support the impact; budget deferral is not a policy exclusion. |
 | **Comprehensive** | Across the broader admitted scope, a plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next deciding fact. | Extend Value's matched-scope work systematically while excluding source-established ordinary reads. Raw native profile hints can differ; they do not discard completed Value facts or verdicts. |
 | **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
 
@@ -35,6 +36,38 @@ Unknown attacker control does not automatically discard a dangerous construction
 An unknown caller does not automatically make every filesystem or output API
 worth investigating either. Judge the concrete operation and likely boundary.
 Keep conditional activation/exposure in the verdict and confidence.
+
+## Value priority and continued spending
+
+Rank concrete failure hypotheses, not files, categories, native occurrence counts
+or completed-case totals. Use credible protected impact first, then reachability
+and actor prerequisites, evidence of a control mismatch, and the expected cost of
+the next deciding fact. Ordinary use of a powerful API does not establish a severe
+failure. An unresolved authentication or recovery boundary can deserve priority
+over an easily confirmed narrow administrative integrity defect; bind the actual
+actor, supported configuration and effect rather than assuming either severity.
+
+Apply the same ranking to native and AI-origin leads. Generic operation markers
+help locate consequential flows, and supporting native facts reduce investigation
+cost; neither creates an equally funded review job. Preserve unstarted native
+membership explicitly. Supplied exact-ID triage still requires the selected IDs'
+dispositions; Value prioritization does not authorize silently dropping them.
+
+Give an investigation one suspected failed control and a next deciding fact.
+Continue deeper when new evidence sustains a consequential failure and the next
+lookup can establish or reject a material part of it. Stop when the relationship
+is settled; park a lower-impact or unsupported concern with its deciding gap when
+stronger ready work remains. Do not turn one missing helper into a broad lifecycle
+audit, repeatedly enumerate hypothetical attacks, or keep researching to spend
+the remaining allowance. Record real findings at their supported severity even
+when they are below the current scheduling priority.
+
+The ordinary controller follows host-ranked queues and an adjustable origin-based
+call split; it does not calculate a severity ranking. Choose ordering and the
+supported mix to serve the strongest leads, and disclose allocation constraints.
+Domain plans use their ordered cases instead. Neither route should add paid work
+merely to cover every category. Comprehensive provides systematic broader review;
+Value reports the high-priority work completed and the important work left open.
 
 ## Conditions by security family
 

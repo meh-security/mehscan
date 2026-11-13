@@ -5,11 +5,17 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
-Default to **Value**: preserve the in-scope native Value candidate queue, identify
-consequential source areas the scanner does not represent, and prioritize their
-investigations within a shared budget. Start with an adjustable 80% native review /
-20% additional AI-discovery allocation. The budget limits execution, not candidate
-membership. **Comprehensive** explicitly extends the admitted scope. Changed,
+Default to **Value**: pursue the highest-severity findings supported by plausible
+source evidence first, within the user's budget. Rank by credible impact, actor
+exposure and evidence of a failed control, then the cost of the next deciding check;
+neither a severity label nor a sensitive feature name establishes that priority.
+Preserve the in-scope native queue and discover consequential relationships the
+scanner does not represent. The ordinary controller starts with an adjustable 80%
+native / 20% additional AI-discovery allocation; that split is not a severity rank.
+Use the ranked plan and supported mix to fund the strongest leads, rather than
+spending the allowance on generic markers or balancing areas for coverage.
+The budget limits execution, not candidate membership. **Comprehensive** explicitly
+extends the admitted scope systematically. Changed,
 component and category requests constrain either mode; they are scope filters.
 Use [review planning](references/review-planning.md) for compact application-aware
 planning and bounded source orientation before repository AI work. This orientation

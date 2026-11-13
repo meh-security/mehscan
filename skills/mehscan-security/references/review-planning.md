@@ -23,6 +23,12 @@ Comprehensive still select review depth within that scope.
 ## Modes and queue
 
 For membership and rationale, use [review scope policy](review-scope.md).
+For Value, follow its [priority and spending rules](review-scope.md#value-priority-and-continued-spending):
+fund the strongest credible security impact first. A compact surface inventory
+helps avoid missing such leads; spreading paid reviews across that inventory is
+not a Value objective. Rank both native work and additional discovery by the same
+actor/effect/evidence criteria, and use the supported allocation to serve that rank.
+The controller's native/AI split does not calculate security priority for the host.
 Current queue assignments can be broader than that policy; inspect concentrated
 lanes with real snippets and record useful refinements in the existing plan.
 
@@ -434,8 +440,8 @@ separate full screening, review and threat passes.
 Retain all native Value assignments in the mixed review queue; their supplied
 questions need no additional discovery-selection gate. The native assignment
 groups organize existing source/context; they are not proof of shared controls.
-Rank groups by the deciding native question, useful consequence, source evidence
-and expected shared research, keeping every ID's caller and effect conditions.
+Rank groups by the credible severity of the deciding failure, actor exposure,
+source evidence and next-check cost, keeping every ID's caller and effect conditions.
 With many independent groups, the budget may leave a visible unfinished queue.
 
 Choose a few additional AI-discovery operations, normally 4–6 (the controller
@@ -447,6 +453,9 @@ relationship with a suspected control mismatch. A question about an unread
 helper alone does not qualify. Use source evidence to choose security controls,
 parser implementations and other dedicated bodies as needed;
 do not simply take the first six files or highest native severity labels.
+Prefer a specific consequential failure hypothesis over a question asking whether
+an entire controller or lifecycle is secure. Do not fill the discovery allowance
+with lower-priority operations while stronger ready native or AI leads remain.
 Keep native and additional-discovery work in one coverage plan. An unknown helper
 without a concrete consequential relationship stays a coverage note.
 Assign one owner per operation and preserve shared cited facts for its related
@@ -484,7 +493,7 @@ category or question scope:
 
 | Mode | Scope |
 | --- | --- |
-| **Value (default)** | Preserve admitted native candidates and investigate bounded additional source-backed operations. Plan both against the application and prioritize within the chosen mix and budget. Useful medium issues and dangerous constructions with unresolved exposure can qualify. Report candidate completion, source coverage and budget-deferred work separately. |
+| **Value (default)** | Pursue the highest-severity findings with credible source support first, across admitted native candidates and bounded additional discovery. Rank impact, exposure, control evidence and next-check cost within the chosen mix and budget. Medium issues remain eligible without equal funding priority. Report candidate completion, source coverage and budget-deferred work separately. |
 | **Comprehensive (explicit)** | Systematically review the broader admitted plausible medium-or-higher relationships within the same user scope, retaining completed Value facts and results and adding remaining work. Ordinary low-effect API use remains context. |
 
 Pre-assessment must state the review scope before building bundles. Its inputs
