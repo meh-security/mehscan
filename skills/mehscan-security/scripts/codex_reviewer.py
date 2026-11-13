@@ -18,6 +18,7 @@ from codex_launcher import Launcher, ProviderExecutionError, cancel, file_digest
 from codex_protocol import build_prompt, build_schema, envelope, source_presentation_mode
 from boundary_review import review_envelope
 import workspace_protocol
+import domain_review_protocol
 
 
 def read(path):
@@ -264,6 +265,21 @@ def initialize_store(private, expected):
 
 
 def run(config, task, launcher_factory=Launcher):
+    if task.get("domain_session") is None:
+        return run_bound(config, task, launcher_factory)
+    packet = read(task["evidence_packet"])
+    domain = domain_review_protocol.metadata(task, packet)
+    private = Path(config["private_directory"]).resolve()
+    root = Path(task["source_root"]).resolve(strict=True)
+    artifact_root = Path(task.get("artifact_root", Path(task["evidence_packet"]).parent)).resolve()
+    if private.is_relative_to(root) or private.is_relative_to(artifact_root):
+        raise ValueError("provider sessions/auth must stay outside source and exported artifacts")
+    initialize_store(private, provider_contract(config))
+    with domain_review_protocol.exclusive(private, domain["id"]):
+        return run_bound(config, task, launcher_factory)
+
+
+def run_bound(config, task, launcher_factory=Launcher):
     started = time.monotonic()
     boundary_checks = config.get("boundary_checks", False)
     if type(boundary_checks) is not bool:
@@ -273,6 +289,7 @@ def run(config, task, launcher_factory=Launcher):
     review_task = {**task, "boundary_checks_enabled":boundary_checks}
     presentation = source_presentation_mode(config)
     packet, facts_file = read(task["evidence_packet"]), read(task["shared_facts"])
+    domain = domain_review_protocol.metadata(task, packet)
     facts = facts_file["facts"]
     expected = provider_contract(config)
     runtime = packet["work"]["runtime"]
@@ -280,10 +297,29 @@ def run(config, task, launcher_factory=Launcher):
     role = task.get("review_role", "investigator")
     quality = (runtime.get("orchestration") or {}).get("quality") or {}
     second_role = role in ("second_pass_fast", "second_pass_compare")
+    if task.get("research", {}).get("question_only") and role not in ("question_answerer", "fact_auditor"):
+        raise ValueError("evidence-only source questions require an explicit factual role")
     if second_role and (profile != "routine" or task.get("second_pass") != (
             "fast" if role == "second_pass_fast" else "full") or packet.get("second_pass") != task["second_pass"]):
         raise ValueError("second-pass role requires an explicit matching controller mode")
-    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection", "second_pass_fast", "second_pass_compare") or (
+    if role in ("question_answerer", "fact_auditor") and (task.get("kind") != "source_review"
+            or profile != ("expert" if role == "fact_auditor" else "routine")
+            or not runtime.get("orchestration") or not task.get("research", {}).get("question_only")
+            or task.get("review_ids") or not task["research"].get("required_checks")
+            or any(check.get("route") != "source_fact" or any(not isinstance(check.get(key), str)
+                or not check[key].strip() or len(check[key]) > 4000 for key in ("scope", "acceptance"))
+                for check in task["research"]["required_checks"])):
+        raise ValueError("question answering requires explicit source facts and bound routine/expert profiles")
+    if role == "fact_auditor":
+        audit = packet.get("factual_audit", {})
+        target = task["research"].get("factual_audit")
+        if (not isinstance(audit, dict) or not isinstance(target, dict) or set(target) != {"assertion_id", "version"}
+                or not isinstance(target["assertion_id"], str) or len(target["assertion_id"]) != 64
+                or type(target["version"]) is not int or target["version"] < 1
+                or any(audit.get(key) != value for key, value in target.items())
+                or not audit.get("original_answer") or not audit.get("selection")):
+            raise ValueError("factual audit requires a bound assertion version and original answer")
+    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection", "second_pass_fast", "second_pass_compare", "question_answerer", "fact_auditor") or (
             role == "collection" and (profile not in ("routine", "expert") or not runtime.get("orchestration"))) or (
             role == "research" and (profile != "expert" or not runtime.get("orchestration"))) or (
             role in ("adjudication", "final_qa") and (profile != "expert" or not quality.get(
@@ -313,7 +349,7 @@ def run(config, task, launcher_factory=Launcher):
     metrics_path = Path(task.get("provider_metrics", public / "provider-metrics.jsonl")).resolve()
     if not metrics_path.is_relative_to(public) or metrics_path.parent != public:
         raise ValueError("provider metrics must stay in the public conversation artifact directory")
-    session = private / conversation
+    session = private / ("domain-" + domain["id"] if domain else conversation)
     session.mkdir(exist_ok=True)
     session.chmod(0o700)
     state_path = session / "conversation.json"
@@ -323,6 +359,8 @@ def run(config, task, launcher_factory=Launcher):
     schema_builder = workspace_protocol.schema if workspace_mode else build_schema
     local_schema = schema_builder(review_task)
     stable_schema = config.get("schema_mode", "stable") == "stable"
+    if domain and not stable_schema:
+        raise ValueError("domain provider sessions require the stable schema mode")
     validator = None
     if stable_schema:
         try:
@@ -343,7 +381,14 @@ def run(config, task, launcher_factory=Launcher):
     if stable_schema:
         binding["schema_mode"] = "stable"
     if presentation != "raw":binding["source_presentation"] = presentation
-    if state:
+    new_case, domain_turn = False, None
+    if domain:
+        binding = domain_review_protocol.binding(domain, packet, expected,
+            schema_builder(review_task, bound_handles=False), root, presentation, boundary_checks)
+        new_case, domain_turn = domain_review_protocol.transition(domain, state, binding, packet_hash, round_index)
+        if state:
+            uuid.UUID(state["thread_id"])
+    elif state:
         if state["binding"] != binding or round_index != state["round"] + 1:
             raise ValueError("provider continuation is stale or incompatible")
         if state.get("rejected_intent_sha256") and task["research"].get("feedback",{}).get("kind") != "local_response_validation":
@@ -351,12 +396,21 @@ def run(config, task, launcher_factory=Launcher):
         uuid.UUID(state["thread_id"])
     elif round_index != 0:
         raise ValueError("cannot silently restart a missing provider continuation")
-    log = session / ("round-" + str(round_index))
+    log = session / (("case-" + str(domain["case_index"]) + "-round-" + str(round_index))
+                     if domain else ("round-" + str(round_index)))
     log.mkdir(exist_ok=False)
-    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(review_task, packet, facts, state, source_presentation=presentation)
+    prompt = (domain_review_protocol.prompt(review_task, packet, facts, state,
+        new_case=new_case, source_presentation=presentation) if domain else
+        (workspace_protocol.prompt if workspace_mode else build_prompt)(review_task, packet, facts, state, source_presentation=presentation))
     save(log / "dispatched-task.json", task)
     (log / "prompt.txt").write_text(prompt, encoding="utf-8")
     launcher = launcher_factory(config, session)
+    if domain:
+        pending_state = {**(state or {}), "binding":binding, "round":round_index,
+                         "domain_case_index":domain["case_index"], "domain_case_id":domain["case_id"],
+                         "domain_turn":domain_turn, "domain_packet_sha256":packet_hash,
+                         "domain_inflight":True, "domain_accepted":False, "domain_sealed":False}
+        save(state_path, pending_state)
     try:
         response, events, stderr = launcher.review(prompt, schema, (state or {}).get("thread_id"), timeout=task["research"].get("seconds_remaining", 600))
     except ProviderExecutionError as error:
@@ -373,6 +427,15 @@ def run(config, task, launcher_factory=Launcher):
     next_state = {"binding": binding, "round": round_index, "thread_id": thread,
                       "sent_facts": [fact["result_id"] for fact in facts], "sent_results": len(task["research"]["results"]),
                       "reported_conversation_usage":usage}
+    if domain:
+        core_usage = ("input_tokens", "cached_input_tokens", "output_tokens")
+        usage_fenced = bool(set(unknown).intersection(core_usage)) or any(key not in delta for key in core_usage)
+        next_state.update(domain_case_index=domain["case_index"], domain_case_id=domain["case_id"],
+                          domain_turn=domain_turn, domain_packet_sha256=packet_hash,
+                          domain_inflight=False, domain_accepted=False, domain_sealed=False,
+                          domain_usage_fenced=usage_fenced,
+                          sent_facts=list(dict.fromkeys([*(state or {}).get("sent_facts", []),
+                                                       *[fact["result_id"] for fact in facts]])))
     if state and state.get("rejected_intent_sha256"):
         next_state["rejected_intent_sha256"] = state["rejected_intent_sha256"]
         next_state["rejected_response_round"] = state["rejected_response_round"]
@@ -384,8 +447,15 @@ def run(config, task, launcher_factory=Launcher):
               "boundary_checks":boundary_checks,
               "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
+    if domain:
+        metric.update(domain_session_id=domain["id"], domain_case_id=domain["case_id"],
+                      domain_case_index=domain["case_index"], domain_turn=domain_turn,
+                      domain_case_start=new_case,
+                      domain_prefix_sha256=hashlib.sha256(domain_review_protocol.common_prefix(packet).encode("utf-8")).hexdigest())
     with metrics_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(metric) + "\n")
+    if domain and next_state["domain_usage_fenced"]:
+        raise ValueError("domain provider usage is incomplete; session fenced")
     if state and state.get("rejected_intent_sha256") and review_intent(response)!=state["rejected_intent_sha256"]:
         raise ValueError("proof-reference correction changed protected review intent")
     if state and state.get("rejected_intent_sha256"):
@@ -435,6 +505,9 @@ def run(config, task, launcher_factory=Launcher):
         del next_state["rejected_intent_sha256"]
         del next_state["rejected_response_round"]
         save(state_path,next_state)
+    if domain:
+        next_state.update(domain_accepted=True, domain_sealed="draft" in accepted)
+        save(state_path, next_state)
     return accepted
 
 

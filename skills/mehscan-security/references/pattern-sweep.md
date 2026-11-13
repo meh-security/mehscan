@@ -86,9 +86,10 @@ read below; inspect missing facts normally.
 
 ## Reuse facts between chunks
 
-For an expensive contract that another chunk will actually reuse, optionally
-save only the useful source fact,
-its citations and remaining checks. Use `review-facts` to bind it to the inventory
+Reuse an available cited source fact by default when its snapshot, implementation
+and caller conditions match. For a contract another manual chunk will actually
+reuse, save only the useful source fact, its citations and remaining checks.
+Use `review-facts` to bind it to the inventory
 and embed current cited source. Next chunk loads the matching contract, checks
 the reasoning and caller applicability, and queries only the missing edge.
 Do not save a neighboring verdict as the contract. One inspected GUID writer
@@ -118,21 +119,25 @@ Fewer lookups alone is not a time saving; use notes when measured reuse pays off
 
 ## Focused exception audit for a broad review
 
-Before reporting a broad multi-bundle review, scan the small pattern notes and
-the exact ID decisions for reused facts. Queue only groups where a shared
-renderer, command builder, guard, or helper serves operations with materially
-different actors, value producers, guards, interpreter options, or sink operands.
-Name the differing edge and exact IDs. Do not repeat a focused group already completed on the
-same source revision. This is an audit queue, not a new scanner finding.
+Before reporting a broad multi-bundle review, compare the small pattern notes
+and exact ID decisions for incorrect reuse. Different actors, value producers,
+guards, interpreter options or operands warrant follow-up when a deciding
+difference was left unexamined or contradicts a conclusion. Name that edge and
+exact IDs; differences already assessed need no extra pass. Resolve a deciding
+gap in the current investigation when possible. Do not repeat a focused group
+already completed on the same source revision. This is an audit queue, not a
+new scanner finding or an automatic second-pass request.
 
-Re-review those exact IDs in a focused pass, preferably with a fresh review
-context. If the original bundle also contains other IDs, materialize an
+When follow-up is warranted within the authorized scope/budget, review those
+exact IDs. For an explicitly requested Fast/Full audit, use
+[second-pass review](second-pass-review.md). For manual independent review,
+withhold the initial verdicts as proof and preserve the broad responses.
+If the original bundle also contains other IDs, materialize an
 exact-ID bundle from the same inventory before drafting; the finalizer requires
 a decision for every ID in its bundle. Use the cards and targeted Mehscan source
 lookups; compare each
-operand's producer, actor, control, and effect. Do not give the focused reviewer
-the initial verdicts as evidence. Preserve the broad responses and save the
-focused validated responses separately. For a subset, replace only its ID
+operand's producer, actor, control, and effect. Save focused validated responses
+separately. For a subset, replace only its ID
 results in a copy of the original complete response; retain the original bundle
 fingerprint and all other IDs, then run `review-bundle-triage` and the run
 summary against that copy. If the focused pass cannot settle a policy or behavior
@@ -140,6 +145,7 @@ that changes the verdict, retain `needs_review` with that fact rather than
 forcing agreement with the broad pass. Skip this audit when no such contrast
 exists; do not re-review every ID just because it shares a CWE label.
 
-For a large repository, build the small attack-surface map in
-[review planning](review-planning.md) once per source revision. This step uses
-only the relevant part of that map; it is not a new broad mapping pass.
+Reuse relevant entrypoint and boundary clues from
+[review planning](review-planning.md); no additional mapping pass is required.
+When the gap concerns possible threats around a flow rather than a claim's
+proof, use its [scoped flow follow-up](review-planning.md#scoped-flow-follow-up).

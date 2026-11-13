@@ -271,6 +271,22 @@ complete for its requested scope while other claims remain unchecked. An executi
 failure leaves the first decision in place and the supplemental check incomplete.
 These outcomes are model assessments, not independently verified correctness.
 
+The worker also writes `review-options.json` and `review-options.md` at the
+first-pass checkpoint. They contain the proposed automatic Fast queue, each
+claim's deciding question/reason and selection source, cap/shared-root deferrals, exclusions and the
+broader Full scope. Fast's `second-pass.json` retains this plan under `selection`
+and gives unchecked claims a `selection_reason`. Unselected results retain their
+first-pass verdict and are never counted as confirmations. Full has no automatic
+narrowing. Scheduling notes and next-step artifacts are advisory; they do not
+change canonical findings or authorize a follow-up run.
+For source first passes, `review_origin` distinguishes AI-only and hybrid work.
+The threat-review option includes `source_context` with source-stage counts and
+the exact coverage-report path. This remains available with zero claim records;
+coverage supplies navigation and limits, not a vulnerability verdict.
+Scoped threat suggestions retain up to three named cited leads and the number
+of additional leads. They use the remaining authorized budget and do not start
+another review phase automatically.
+
 `training-labels.json` links the decisions to source/runtime identity, rule and
 location metadata, evidence references and captured `training-turns/`. It separates
 `model_reviewed` from `first_pass_only` authority and `candidate` from `excluded`
@@ -283,6 +299,42 @@ First/second/combined accounting retains actual call counts, token and cached-in
 receipts, timing and optional configured-rate estimates. Missing receipts or model
 rates leave estimates unavailable. These supplemental files do not replace native
 findings, source evidence or the state journal.
+
+## Causal families and applicability
+
+The worker writes `finding-groups.json` and `finding-groups.md` alongside native
+findings. These propose presentation families using an explicitly cited repair
+point, selected security property and verdict. Every member retains its exact
+review ID, summary, severity, checks and first-pass applicability/impact context.
+Different callers and reaching conditions remain visible. Missing context stays
+singleton. Grouping changes no native verdict and does not certify a unique
+vulnerability count; different locators can still describe a shared failure.
+Advisory GitHub Action artifacts include both grouped reports when available.
+
+First-pass reviewer schemas offer nullable `claim_context`, separate from the
+ordinary diagnosis and verdict:
+
+| Field | Meaning |
+| --- | --- |
+| `root` | Small source citation for the failed control or repair point, also included in the assessment's ordinary evidence. |
+| `property` | The selected security property, such as authorization, output encoding or workflow state. |
+| `applicability` | `active`, `supported_optional`, `local_contract`, `dormant` or `unresolved`. |
+| `basis` | Evidence for the runtime or contract binding. |
+| `kind` | `application_path`, `local_unsafe_construction`, `security_contract` or `configuration_exposure`. |
+| `impact` | `source_supported`, `conditional` or `unresolved`. |
+| `conditions` | Compatible prerequisites and limits on the claimed effect. |
+
+The controller strips this metadata before native finalization and retains it
+in bound job checkpoints; source-proposal keys map to admitted review IDs.
+Invalid annotations are omitted and recorded under `annotation_errors` without
+discarding otherwise source-valid review results. Group members label their
+annotations `first_pass_context`: later proof repairs can change conditions,
+so those annotations remain historical rather than overriding the final proof.
+
+Fast can select a reported issue whose explicit context exposes an activation
+or impact gap, alongside typed first-pass follow-up nominations. Selection
+questions are scheduling hypotheses to test against source. Neither metadata
+nor a second-pass confirmation establishes an independent false-positive rate.
 
 ## SARIF projection
 

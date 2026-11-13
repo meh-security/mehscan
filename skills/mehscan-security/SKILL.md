@@ -5,11 +5,68 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
+Default to **Value**: pursue the highest-severity findings supported by plausible
+source evidence first, within the user's budget. Rank by credible impact, actor
+exposure and evidence of a failed control, then the cost of the next deciding check;
+neither a severity label nor a sensitive feature name establishes that priority.
+Preserve native lead accounting and discover consequential relationships the
+scanner does not represent. Use a ranked work plan to fund the strongest leads,
+rather than spending the allowance on generic markers or balancing areas for coverage.
+The budget limits execution, not candidate membership. **Comprehensive** explicitly
+extends the admitted scope systematically. Changed,
+component and category requests constrain either mode; they are scope filters.
+Use [review planning](references/review-planning.md) for compact application-aware
+planning and bounded source orientation before repository AI work. This orientation
+happens in the host agent's current context, not as another full provider review pass.
+
+For new repository Value reviews, or when the user chooses an allowance or
+specific checks to finish, use
+[budget and coverage goals](references/work-goals.md) with a bound `--work-plan`.
+It keeps a ranked backlog, evidence-backed check answers and remaining-risk report.
+Use the budget goal by default; an explicit coverage goal keeps the declared
+target incomplete until its checks close. Unclassified material has unknown
+importance. A completed target is not whole-application security clearance.
+Lead reports with declared items/checks completed and remaining, including serious
+gaps and unknown scope. Track tokens, time and configured-rate cost as supporting
+information; do not impose a monetary cap unless the user requests one.
+Existing explicitly requested native/AI mixes use the ordinary source-selection
+path; an origin allocation is not a severity rank.
+
+For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
+routes explicit source propositions to a bounded question worker. Security
+decisions default to the review owner. Do not assign a general first pass,
+threat model or safety dismissal to the cheaper worker as factual research.
+When delegation is enabled, select useful factual questions during ordinary work
+planning; follow the selection criteria in that reference without an extra planning pass.
+Name the factual task kind and how its answer prepares the owner's decision.
+Declare their deciding source ranges or named implementations in known files.
+The controller delegates only when declared evidence is available or collected
+completely; otherwise the owner retains the check. Source readiness does not
+certify the proposition or establish which implementation executes.
+
+For an explicitly requested domain review, use [domain review](references/domain-review.md)
+and a bound `--domain-plan`. It gives native material three roles: concrete claims
+to verify, operation markers guiding flow coverage, and supporting facts. Related
+cases can reuse one domain session while retaining separate evidence and decisions.
+This opt-in path uses its case plan rather than the ordinary 80/20 candidate queue;
+supplied exact-ID triage still requires a disposition for every selected ID.
+
 For a source assignment, use [source review](references/source-review.md): review
 the assigned original source, assess existing questions and investigate additional
-consequential relationships in the same context. The default AI controller assigns
-source even when the scanner finds no candidates. New proposals require validated
+consequential relationships in the same assigned operations. The AI controller can
+assign selected source even when the scanner finds no candidates. New proposals require validated
 source and ordinary finalization; examined coverage is separate from verdicts.
+During first pass, identify the protected effect and challenge the applicable
+authority, lifecycle or interpretation boundary. Follow a deciding cross-file
+edge in that investigation; a separate threat model is not a prerequisite.
+With no or few scanner candidates, use bounded source reads to select relevant
+additional operations; never fall back to assigning all source. Unused native
+allocation can fund remaining AI discovery. A native Value candidate already
+supplies a review question; do not require it to pass the AI-discovery signal gate.
+An empty candidate list does not end the review. AI-discovered
+claims and pending questions use the same Fast/Full follow-up path after source
+validation. Scoped threat review can also use examined flows and coverage gaps
+when the AI pass produces no claims. Do not manufacture candidates to enable it.
 
 For an exact-ID source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
@@ -77,7 +134,8 @@ next missing edge through Mehscan. Start component-scoped references with
 `--summary true`, then inspect decisive source. Widen for missing edges,
 cross-component callers or truncation. Research is not limited to bundle text.
 
-Reuse inspected facts, checking each ID's actor, producer, branch, operand,
+Reuse available cited source facts by default, checking the same source snapshot
+and each ID's actor, producer, branch, operand,
 control and effect. A shared fact is not a shared verdict. Journal code-evidence
 queries under the ID that prompted them; do not repeat a query to populate
 another journal. Preserve consequential adjacent questions as separate
@@ -87,6 +145,9 @@ journal. Wait for results before choosing dependent queries; keep batches focuse
 Prioritize the fact that decides the selected claim. An inspected complete control
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
+Use the [control-to-consumer checks](references/runtime-review.md#control-to-consumer-checks)
+to distinguish identity attachment from resource restriction and a stored-value
+transformation from protection at its eventual interpreter.
 Stop once the selected relationship is settled or its decisive gap is explicit.
 Before finalizing, apply the concise [final proof check](references/final-proof-check.md)
 within the current investigation. Workers receive it in their compiled contract.
@@ -118,10 +179,10 @@ separate authority/state question. Keep those claims distinct.
 | Operator objects, NoSQL selectors, executable predicates | [Structured queries](references/categories/structured-query.md), `structured-query` |
 | Process launch, shell text, dynamic evaluation | [Process and code](references/categories/process-code.md), `process-code` |
 | Files, archives, SSRF, redirects, template paths | [Files and network](references/categories/file-network.md), `file-network` |
-| Server policy, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
+| Object/function/property permissions, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
 | Issuance, recovery, expiry, rotation, revocation | [Credential lifecycle](references/categories/credential-lifecycle.md), `credential-lifecycle` |
 | Generic updates, generated CRUD, sensitive writable fields | [Mass assignment](references/categories/mass-assignment.md), `mass-assignment` |
-| Ordering, alternate branches, quotas, payment, repetition | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
+| Business-logic bypass, payment/approval, replay, batch allowances or state reconciliation | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
 | Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
 | Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
 | XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
@@ -142,6 +203,29 @@ to inspect review progress and separate mechanical completion from review qualit
 For an explicitly requested Fast or Full second pass, read
 [second-pass review](references/second-pass-review.md). It audits completed claims,
 retains the first results and separates model-reviewed labels from training approval.
+Fast automatically selects a bounded queue from first-pass scheduling notes and
+explicit applicability/impact proof signals;
+Full audits every claim in the chosen scope. For an
+identified flow whose threat coverage needs enrichment, use
+[scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
+within the authorized scope and budget.
+
+Finish the requested first-pass scope and present findings, grouped root causes,
+pending facts, coverage limits and recorded usage before proposing more work.
+Use `finding-groups.md` for proposed causal families with every member's
+conditions. Raw issue labels and proposed group counts are different measures;
+neither is an independently adjudicated vulnerability total. The
+[repair/applicability contract](references/runtime-review.md#repair-point-applicability-and-impact)
+defines the first-pass annotations and preserves conditional library findings.
+Start with the worker's compact `review-options.md` for the proposed Fast queue
+and reasons; read JSON only for needed selection details. If no follow-up was
+requested and more work is useful, recommend a concrete next scope and ask
+the user to choose Fast, a broader Full audit, a scoped threat review or stopping.
+When no useful follow-up is identified, state that and finish.
+Do not start another pass merely because work is pending. If the user already
+requested any of these follow-ups, execute the requested sequence without another
+confirmation, within the stated scope/budget. A repository-wide first pass or
+Comprehensive scope alone does not request a Full second-pass audit.
 
 ## New scan or repository-wide review
 
@@ -152,20 +236,27 @@ retains the first results and separates model-reviewed labels from training appr
 | Local changes, PR or release review | [Changed review](references/changed-review.md) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
-Candidates are leads, not confirmed vulnerabilities. Default to Value mode.
-For runtime-bound AI work use `--policy value --selection policy` as described in
-[controller commands](references/commands.md).
-Honor Comprehensive or a requested category. Value prioritizes stronger signals,
-clearly justified fixes and promising high-impact leads, including useful medium
-issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
-not a queue for every raw sink occurrence. Excluded observations remain supporting
-facts, not safe verdicts or mandatory deferred reviews. Planning maps the stack and attack
-surface and workload before triage; use a small first chunk to measure review
-pace and plan the next pass within the user's time budget.
-Planning ranks work, accounts for deferred IDs and chooses small chunks or
-disjoint agent assignments when requested. Read it for repository scope or
-queue decisions, then use the supplied-bundle flow for each selected chunk.
-Keep the whole-run plan current and continue authorized work in auto mode.
+Candidates are leads, not confirmed vulnerabilities. Value keeps admitted native
+IDs in its queue and chooses additional AI-discovery operations from actual
+source-body evidence. Plan their order around the application's actors, protected
+effects, shared controls and coverage gaps. A severity label or filename alone
+cannot select AI-discovery scope. Give each operation one owner; reuse cited
+helper/control facts while checking every native ID and caller's conditions.
+For explicitly mixed runtime-bound Value work, `--policy value --selection policy` supplies native
+admission hints, while `--source-selection FILE` binds additional AI discovery and
+can rank native assignments without dropping queue members. Without the latter,
+the default `all` phase prepares a planning checkpoint and stops before AI calls.
+Use `--native-share` to choose the initial mix and the shared allowance to bound
+execution. Explicit AI-only/native-only endpoints are available; mixed work can
+transfer unused allocation when a queue finishes. Follow
+[controller commands](references/commands.md) and [review planning](references/review-planning.md)
+to select and launch the work. Exact-ID/native-only worker tasks, source profiles,
+compiler facts and operation grouping keep their existing paths.
+Comprehensive retains completed Value work within the same scope and extends it
+to admitted plausible medium-or-higher relationships. Ordinary API occurrences
+remain supporting facts. Keep scope and deferred coverage explicit, then finish
+the prioritized work within its shared budget. Preserve unfinished native IDs
+separately from unselected source coverage; budget exhaustion does not exclude an ID.
 
 Changed is a scope, combined with Value or Comprehensive. Use its guide before
 building an inventory; it requires a short change pass even when no IDs appear.

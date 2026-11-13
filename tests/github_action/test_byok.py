@@ -114,6 +114,12 @@ else:
             "reason":"The current code passes request.query.code into eval.",
             "evidence":[{"path":"app.js","start_line":1,"end_line":1}],
             "checks":["Additional deployment proof required."] if pending else [],"blockers":[],"diagnosis":None,"source_leads":[]} for i in ids]}
+    entry = shape.get("results",{}).get("items",{})
+    entry = entry.get("anyOf",[entry])[0]
+    if "followup" in entry.get("properties",{}):
+        for row in draft["results"]:row["followup"]=None
+    if "claim_context" in entry.get("properties",{}):
+        for row in draft["results"]:row["claim_context"]=None
     response={"action":"final","research":[],"draft":draft,"working_chain":"Inspected supplied source."}
     if "proposals" not in shape:response.update(progress=[],routing=[])
     pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps(response))
@@ -131,7 +137,7 @@ else:
             "model":"gpt-6-luna","reasoning_effort":"medium","auth_file":str(self.auth),
             "private_directory":str(self.workspace / "provider-private")}
         self.config.write_text(json.dumps(self.body))
-        os.environ.update(MEHSCAN_REVIEW_MODE="value", MEHSCAN_PROVIDER_CONFIG=str(self.config))
+        os.environ.update(MEHSCAN_REVIEW_MODE="comprehensive", MEHSCAN_PROVIDER_CONFIG=str(self.config))
 
     def ready(self):
         directory, plan = self.prepare()
@@ -164,10 +170,23 @@ else:
         self.assertEqual(usage["reported_token_sums"]["input_tokens"],200)
         self.assertIsNone(usage["cost"])
         manifest=json.loads((directory / "artifacts.json").read_text())
+        self.assertTrue({"finding-groups.json","finding-groups.md"} <= {r["path"] for r in manifest["files"]})
+        groups=json.loads((directory / "finding-groups.json").read_text())
+        self.assertEqual(groups["claim_count"],1)
         import hashlib
         for entry in manifest["files"]:
             self.assertEqual(hashlib.sha256((directory / entry["path"]).read_bytes()).hexdigest(),entry["sha256"])
         with self.assertRaises(ValueError): adapter.run_model(directory / "plan.json",self.delivery.get,self.execute)
+
+    def test_configured_value_stops_at_selection_checkpoint(self):
+        os.environ["MEHSCAN_REVIEW_MODE"] = "value"
+        directory, plan, record = self.ready()
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        self.assertEqual(result["status"], "selection_required", result)
+        self.assertNotIn("completion", result)
+        self.assertFalse((directory / "usage.json").exists())
+        self.assertFalse((directory / "review/source-review/jobs").exists())
+        self.assertTrue(Path(result["source_selection"]).is_file())
 
     def test_pending_verdict_keeps_success_separate_from_security_resolution(self):
         self.auth.write_text('{"fixture":"not-a-real-key","pending":true}')

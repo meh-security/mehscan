@@ -171,7 +171,7 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside"):
             Workspace.create(self.root / "state.sqlite", self.root, self.binding, self.claims, self.limits)
         path = self.directory / "interrupted.sqlite"
-        with patch("review_workspace.os.link", side_effect=OSError("publish failed")):
+        with patch("review_evidence.os.link", side_effect=OSError("publish failed")):
             with self.assertRaises(OSError):
                 Workspace.create(path, self.root, self.binding, self.claims, self.limits)
         self.assertFalse(path.exists())

@@ -121,6 +121,102 @@ def combine(*groups):
     return result
 
 
+def prepare_operations(root, entries, selected_ids, review_ids, snapshot_id, windows, *, source_contexts=()):
+    """Bound a small shared Python callable; every effect keeps its own ID.
+
+    Native ranges supply navigation, not equivalent authorization or callers.
+    Refuse split/ambiguous groups and read complete source without clipping.
+    """
+    selected, current = set(selected_ids), set(review_ids)
+    if len(current) != len(review_ids) or not current <= selected:
+        raise ValueError("operation review selection differs")
+    buckets, limits = {}, []
+    for entry in entries:
+        if (entry["review_id"] not in selected or not entry["path"].endswith(".py")
+                or entry["rule_id"] != "python-django-orm-resource-access"
+                or entry["capability"] != "resource_access"
+                or entry["cwe_candidates"] != ["CWE-639"]):
+            continue
+        locations = [f.get("location") for f in entry.get("operand_facts", [])
+                     if f.get("kind") == "query_structure" and f.get("value") == "local_callable_context"
+                     and f.get("role") == "resource_operation" and f.get("location")]
+        if not locations or any(loc != locations[0] for loc in locations):
+            continue
+        loc = locations[0]
+        start, end = loc.get("start", {}), loc.get("end", {})
+        coordinates = [start.get("line"), end.get("line"), start.get("byte_offset"), end.get("byte_offset")]
+        if (loc.get("path") != entry["path"] or any(type(n) is not int for n in coordinates)
+                or not 1 <= coordinates[0] <= entry["line"] <= coordinates[1]
+                or not 0 <= coordinates[2] < coordinates[3]):
+            continue
+        key = (entry["path"], *coordinates)
+        buckets.setdefault(key, []).append(entry)
+    result, extra, total = [], [], 0
+    for (path, first, last, start, end), members in sorted(buckets.items()):
+        ids = {e["review_id"] for e in members}
+        if not ids.intersection(current):
+            continue
+        reason = None
+        if not ids <= current:
+            reason = "selected callable spans different review jobs"
+        elif len(members) < 2:
+            continue
+        elif len(members) > 6:
+            reason = "callable exceeds six selected operation questions"
+        elif last - first >= 400 or end - start > 16384:
+            reason = "complete callable exceeds operation source bound"
+        if reason:
+            limits.append({"path": path, "start_line": first, "reason": reason})
+            continue
+        file = context.source_file(root, path)
+        if file.stat().st_size > context.MAX_FILE_BYTES:
+            limits.append({"path": path, "reason": "operation file exceeds preparation bound"})
+            continue
+        raw = file.read_bytes()
+        # Validate byte and line coordinates against the same source, including
+        # CRLF and UTF-8. A stale/rebound source is never silently substituted.
+        if end > len(raw) or raw[:start].count(b"\n") + 1 != first or raw[:end].count(b"\n") + 1 != last:
+            raise ValueError("operation source range differs from native location")
+        lines = context.source_lines(raw.decode("utf-8"))
+        if last > len(lines):
+            raise ValueError("operation source exceeds actual lines")
+        text = "\n".join(lines[first - 1:last])
+        if len(text.encode("utf-8")) > 16384:
+            limits.append({"path": path, "reason": "complete operation lines exceed byte bound"})
+            continue
+        window = next((w for w in [*windows, *extra] if w.get("side", "current") == "current"
+                       and w["path"] == path and w["start_line"] <= first <= last <= w["end_line"]
+                       and not w.get("clipped") and context.source_lines(w["text"]) == lines[w["start_line"] - 1:w["end_line"]]), None)
+        if window is None:
+            for record in source_contexts:
+                loc = record.get("location", {})
+                a, b = loc.get("start_line"), loc.get("end_line")
+                excerpt = record.get("excerpt")
+                if (record.get("side", "current") == "current" and loc.get("path") == path
+                        and type(a) is int and type(b) is int and 1 <= a <= first <= last <= b <= len(lines)
+                        and isinstance(excerpt, str) and excerpt.replace("\r\n", "\n") == "\n".join(lines[a - 1:b])):
+                    window = {"artifact_id": "mehscanSweepSource/v1:" + context.digest([snapshot_id, record])}
+                    break
+        if window is None:
+            size = len(text.encode("utf-8"))
+            if len(windows) + len(extra) >= 8 or total + size > 32768:
+                limits.append({"path": path, "reason": "operation preparation window/byte budget"})
+                continue
+            window = {"side": "current", "path": path, "start_line": first, "end_line": last,
+                      "text": text, "clipped": False, "complete_file": first == 1 and last == len(lines),
+                      "source_sha256": hashlib.sha256(raw).hexdigest()}
+            window["artifact_id"] = "mehscanOperationSource/v1:" + context.digest([snapshot_id, window])
+            extra.append(window)
+            total += size
+        members.sort(key=lambda e: (e["line"], e["review_id"]))
+        result.append({"group_id": context.digest([snapshot_id, path, start, end, sorted(ids)]),
+                       "basis": "native_callable_range", "path": path,
+                       "start_line": first, "end_line": last,
+                       "review_ids": [e["review_id"] for e in members],
+                       "source_ref": window["artifact_id"], "verified": False})
+    return {"groups": result, "windows": extra, "limits": limits}
+
+
 def dependency_leads(root, card, lookup, cache, trace, *, chains=None):
     """Navigate explicit imports and literal Passport registration candidates.
 

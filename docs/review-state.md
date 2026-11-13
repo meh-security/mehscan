@@ -7,6 +7,14 @@ ephemeral runners do not share a store; see [Action coordination](github-action.
 
 ## Claim a generation
 
+Source-bound work-goal reviews also retain `source-review/case-state.sqlite`.
+It records factual assertion revisions, original result references and the checks
+that explicitly use those assertions. A disputed or replaced assertion reopens
+its dependent checks without rewriting native decision history. The JSON work
+ledger projects this state, while existing budget receipts govern execution.
+See [work-goal evidence and completion](../skills/mehscan-security/references/work-goals.md#read-the-ledger)
+for dependencies, partial factual results and source validation.
+
 Create a current native inventory with an explicit stable repository namespace.
 For a fork PR, use the base product's repository ID and preserve the fork ID as
 source provenance. Keep inventory, bundles and state outside the source root.
@@ -231,3 +239,23 @@ The native CLI checks the actual trusted package outside source against the
 contract digest; the AI worker supplies this argument automatically. Changed
 engine or skill bytes require a new contract and plan. Historical state remains
 readable without the old package.
+
+
+## Source cases and correction history
+
+Work-plan reviews retain source cases in `source-review/case-state.sqlite`.
+The controller records exact assertion versions, source evidence, declared owner
+reliance and optional qualifications/rejections. Disputing a version reopens only
+its recorded consumers. A source citation validates provenance, not interpretation.
+
+A scoped correction names existing unresolved/reopened checks and is bound to
+its prior state. It preserves independent siblings and immutable result artifacts.
+Corrections and failed attempts retain their usage receipts under the original
+allowance. Saved responses can be finalized after interruption without another
+provider call. Native decisions remain under native admission authority.
+
+`work-ledger.json` is a projection, not another writable decision store. A native
+follow-up from a correction handoff can export a new projection combining the
+source checks with admitted native reconciliation. Older reports remain historical;
+missing or unsupported reconciliation cannot remove a pending native obligation.
+See [scoped correction](review-worker.md#resolve-named-source-checks) for execution.

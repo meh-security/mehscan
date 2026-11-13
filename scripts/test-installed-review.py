@@ -111,7 +111,8 @@ elif task["kind"] == "source_review":
         "summary":"Installed package smoke retains an unresolved caller question.",
         "reason":"The operation evaluates the supplied request code.",
         "evidence":[{"path":row["path"], "start_line":row["line"], "end_line":row["line"]}],
-        "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[]}
+        "checks":["Confirm whether an untrusted caller reaches this operation."], "blockers":[],
+        "followup":{"reason":"control_applicability", "question":"Does the registered caller constrain request code?"}}
         for row in packet["native_questions"]], "proposals":[], "coverage":[{
         **{key:window[key] for key in ("path","start_line","end_line")},
         "status":"examined", "summary":"Examined the assigned original source."} for window in windows]}}

@@ -5,6 +5,35 @@ costs, limits and on-demand category guides, use [the worker API](worker-api.md)
 `definition` and `guidance` are broker operations, not native CLI subcommands.
 For execution diagnosis, use [the trace guide](execution-trace.md).
 
+For a ranked backlog and a spending or completion target, use
+[work goals](work-goals.md): `--work-plan FILE --review-goal budget|coverage`.
+Coverage can select `--coverage-target ITEM,ITEM`; budget and coverage can use
+`--cost-budget USD --cost-rates FILE` as a configured-rate managed-work allowance.
+Remaining obligations, potential impact and unknown scope are retained in the
+controller-owned ledger. These goals are separate from the mixed allocation below.
+
+The existing mixed source-selection path below remains available when requested.
+The Python controller's bare Value `all` phase first prepares a zero-AI
+`selection_required` checkpoint under `source-review/`. Use bounded source
+orientation in the host agent to plan native review and choose a few additional
+AI-discovery operations, then invoke it with
+`--source-selection FILE`; [the worker guide](../../../docs/review-worker.md#bounded-value-selection)
+defines the bound JSON. The controller accepts 0–6 discovery assignments and
+validates their source bindings, owner ranges and cited signals. Optional
+`native_assignment_ids` ranks all native assignments without dropping any from
+the requested native/mixed queue. `--selection policy` supplies native admission
+hints; additional discovery does not filter the admitted native queue. Explicit native
+exact-ID work retains `--phase native` without this source-selection gate.
+`--native-share 80` starts a mixed review with 80% native / 20% additional discovery;
+1–99 configures other mixes and transfers unused allocation when a queue finishes.
+`0` explicitly requests AI-only discovery; `100` native-only work. These endpoints
+do not enable the other queue automatically. Value defaults to 40 managed provider calls, a 1.5M observed input-token target with
+100k reserved per in-flight call, a separate 250k observed-input per-call fence,
+and 20 minutes before new calls stop. Active
+work can drain. These targets do not meter host-agent orientation or guarantee
+exact token/currency or elapsed totals. Set `--max-calls`, `--input-token-budget`
+and `--admission-seconds` before starting to configure the shared allowance.
+
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate incompatible inventories with the supplied executable; its emitted
@@ -41,7 +70,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
-| Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions) |
+| Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions). Add `--include-supporting-source true` only when explicitly including seed/performance tooling and declaration-only C# contracts. |
 | Validate source proposals | `mehscan investigate source-review-check ROOT --inventory RUN/inventory --input ADMISSION.json` |
 | Admit source proposals | `mehscan investigate source-review-admit ROOT --inventory RUN/inventory --input ADMISSION.json --output NEXT/inventory` (new directory; exports inventory, overview and cache) |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
@@ -153,9 +182,13 @@ deferrals, with reasons/dependencies. Comprehensive applies conservative native
 eligibility: locally proven ordinary read-only selections can be excluded with
 reasons, while unknown modes, provenance and consequential relationships stay
 admitted. Its `excluded_review_ids` are inventory-bound scope, not deferred
-mandatory work or safe decisions. Comprehensive must finish every admitted ID;
-Value retains its existing selection. The profiles need not be nested.
-Without this option Value templates select all; Comprehensive eligibility still applies.
+mandatory work or safe decisions. Comprehensive must finish every admitted ID
+within its explicit scope, retaining completed Value work where the scope matches.
+The native profile hints can differ; source selection binds additional discovery
+and prioritization without removing admitted native Value members.
+Without this option native Value templates select all; Comprehensive eligibility
+still applies. This native template behavior does not bypass the default Value
+controller's source-selection checkpoint.
 Deferred work has no verdict; promote it when stronger evidence warrants review.
 The native runtime binds the same per-conversation allowance for Value and
 Comprehensive: five research rounds (six total calls), 24 query units, 512 KiB and
@@ -200,6 +233,12 @@ before interpreting totals as complete. Native-only admission does not complete
 a separately required change pass.
 
 ## Tiered controller
+
+The following is the native bundle workflow. Source work goals support a separate
+[question-delegation mode](work-goals.md#question-delegation): `--question-routing`
+uses declared factual checks for the routine profile and an expert owner for
+security decisions. Its owner-only native handoff is controller-generated; do not
+substitute it into the paired-verdict workflow described below.
 
 Opt in at `state runtime-template` or `state plan-template` with
 `--review-orchestration FILE`, alongside the normal primary `--provider-contract`.

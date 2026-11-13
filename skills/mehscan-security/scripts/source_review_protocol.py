@@ -48,6 +48,8 @@ def schema(task, base, api, guidance, bound_handles=True):
     entry = copy.deepcopy(native_draft["properties"]["results"]["items"])
     entry["properties"]["evidence"]["items"] = citation
     entry["properties"]["source_leads"]["items"]["properties"]["evidence"] = citation
+    if "claim_context" in entry["properties"]:
+        entry["properties"]["claim_context"]["anyOf"][0]["properties"]["root"] = citation
     assessment = copy.deepcopy(entry)
     assessment["properties"].pop("review_id")
     assessment["required"].remove("review_id")
@@ -156,6 +158,34 @@ def schema(task, base, api, guidance, bound_handles=True):
         coverage["items"]["required"] = ["window_ref", "status", "summary"]
         if bound_handles:
             coverage.update(minItems=len(windows), maxItems=len(windows))
+    if "required_checks" in task["research"]:
+        draft["properties"]["work_checks"] = {"type": "array", "items": obj({
+            "check_id": text, "status": {"type": "string", "enum": ["satisfied", "violated", "unresolved", "not_checked"]},
+            "summary": text, "evidence": {"type": "array", "maxItems": 8, "items": citation},
+            "next_deciding_fact": {"type": ["string", "null"]}})}
+        draft["required"].append("work_checks")
+        if "available_assertions" in task["research"]:
+            check = draft["properties"]["work_checks"]["items"]
+            check["properties"]["assertion_dependencies"] = {"type":"array", "maxItems":16,
+                "items":obj({"assertion_id":text, "version":{"type":"integer", "minimum":1}})}
+            check["required"].append("assertion_dependencies")
+    if "considered_assertions" in task["research"]:
+        check = draft["properties"]["work_checks"]["items"]
+        check["properties"].update({
+            "conditions":{"type":"array", "maxItems":16, "items":text},
+            "limitations":{"type":"array", "maxItems":16, "items":text},
+            "assertion_dispositions":{"type":"array", "maxItems":16, "items":obj({
+                "assertion_id":text, "version":integer,
+                "disposition":{"type":"string", "enum":["used", "qualified", "rejected"]},
+                "reason":text, "conditions":{"type":"array", "maxItems":16, "items":text}})}})
+        check["required"] += ["conditions", "limitations", "assertion_dispositions"]
+    if task["research"].get("scoped_resolution"):
+        draft["properties"]["results"]["maxItems"] = 0
+        draft["properties"]["proposals"]["maxItems"] = 0
+    if task["research"].get("question_only"):
+        draft["properties"]["results"]["maxItems"] = 0
+        draft["properties"]["proposals"]["maxItems"] = 0
+        draft["properties"]["coverage"]["items"]["properties"]["status"]["enum"] = ["deferred"]
     variants = []
     for tool in api["tools"]:
         props = {
@@ -236,6 +266,28 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             + json.dumps(guides, ensure_ascii=False)
         )
     research = task["research"]
+    if "required_checks" in research:
+        value += ("\nAnswer every required check exactly once in draft.work_checks. A closed satisfied/violated answer "
+            "requires deciding source citations and null next_deciding_fact. An unresolved/not_checked answer requires "
+            "the concrete missing fact; it does not count as target completion. Finding severity and potential scheduling "
+            "impact are separate. Required checks:\n" + json.dumps(research["required_checks"], ensure_ascii=False))
+    if research.get("question_only"):
+        value += ("\nEvidence-only question task. No findings, severity or native decisions; results/proposals must be empty. "
+            "Mark every coverage row deferred. Answer only the explicit proposition, preserving scope and conditions. "
+            "satisfied=proposition supported, violated=proposition contradicted, unresolved=deciding fact missing. "
+            "Do not turn your answer into a security verdict.")
+    if "available_assertions" in research:
+        value += ("\nFor each work_check, return assertion_dependencies with exact assertion_id/version pairs "
+            "for interpretations actually used. Use [] for an independent source proof or a rejected suggestion. "
+            "Inspect deciding original source and applicability; a cited assertion is not an established verdict. "
+            "Available assertion identities:\n" + json.dumps(research["available_assertions"], ensure_ascii=False))
+    if "considered_assertions" in research:
+        value += ("\nRecord assertion_dispositions for consequential interpretations used, qualified or rejected. "
+            "Used and qualified identities must be assertion_dependencies; rejected identities must not. "
+            "Give a concrete reason and conditions for each qualification. Disputed assertions can only be rejected; "
+            "independently prove a replacement from source. Do not restate every irrelevant supplied fact. "
+            "Preserve check conditions and limitations as bounded arrays, empty when none. "
+            "Considered identities: " + json.dumps(research["considered_assertions"]))
     if "citation_windows" in research:
         value += (
             "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
@@ -302,6 +354,46 @@ def envelope(response, task):
     ):
         raise ValueError("source reviewer combined incompatible actions")
     draft = copy.deepcopy(response["draft"])
+    if task["research"].get("question_only") and (draft.get("results") or draft.get("proposals")
+            or any(row["status"] != "deferred" for row in draft.get("coverage", []))):
+        raise ValueError("question worker cannot return verdicts or source audit coverage")
+    if "required_checks" in task["research"]:
+        expected = {check["id"] for check in task["research"]["required_checks"]}
+        actual = [check["check_id"] for check in draft.get("work_checks", [])]
+        if len(actual) != len(set(actual)) or set(actual) != expected:
+            raise ValueError("work checks must match controller-owned check identities exactly once")
+        if "available_assertions" in task["research"]:
+            offered = {(dep["assertion_id"], dep["version"]) for dep in task["research"]["available_assertions"]}
+            for row in draft["work_checks"]:
+                dependencies = row.get("assertion_dependencies")
+                if not isinstance(dependencies, list):
+                    raise ValueError("owner must declare assertion dependencies")
+                seen = set()
+                for dep in dependencies:
+                    if (not isinstance(dep, dict) or set(dep) != {"assertion_id", "version"}
+                            or not isinstance(dep["assertion_id"], str) or type(dep["version"]) is not int
+                            or (dep["assertion_id"], dep["version"]) not in offered
+                            or dep["assertion_id"] in seen):
+                        raise ValueError("foreign, duplicate or stale assertion dependency")
+                    seen.add(dep["assertion_id"])
+    if "considered_assertions" in task["research"]:
+        considered = {(d["assertion_id"], d["version"]) for d in task["research"]["considered_assertions"]}
+        for row in draft["work_checks"]:
+            values = row.get("assertion_dispositions")
+            if not isinstance(values, list) or len(values) > 16:
+                raise ValueError("owner must declare bounded assertion dispositions")
+            dependencies = {(d["assertion_id"], d["version"]) for d in row.get("assertion_dependencies", [])}
+            seen = set()
+            for value in values:
+                ref = (value.get("assertion_id"), value.get("version"))
+                disposition = value.get("disposition")
+                if (ref not in considered or ref in seen or disposition not in ("used", "qualified", "rejected")
+                        or (disposition != "rejected") != (ref in dependencies)
+                        or disposition == "qualified" and not value.get("conditions")):
+                    raise ValueError("assertion disposition differs from offered identity or reliance")
+                seen.add(ref)
+            if not dependencies <= seen:
+                raise ValueError("consumed assertion lacks disposition")
     if "citation_windows" in task["research"]:
         windows = task["research"]["citation_windows"]
 
@@ -325,6 +417,8 @@ def envelope(response, task):
 
         def assessment_citations(assessment):
             assessment["evidence"] = [expand(c) for c in assessment["evidence"]]
+            if assessment.get("claim_context") is not None:
+                assessment["claim_context"]["root"] = expand(assessment["claim_context"]["root"])
             for lead in assessment.get("source_leads", []):
                 lead["evidence"] = expand(lead["evidence"])
 
@@ -334,6 +428,8 @@ def envelope(response, task):
             proposal["anchor"] = expand(proposal["anchor"], anchor=True)
             proposal["evidence"] = [expand(c) for c in proposal["evidence"]]
             assessment_citations(proposal["assessment"])
+        for check in draft.get("work_checks", []):
+            check["evidence"] = [expand(c) for c in check["evidence"]]
     if "coverage_windows" in task["research"]:
         windows = task["research"]["coverage_windows"]
         refs = [row["window_ref"] for row in draft["coverage"]]
