@@ -148,13 +148,17 @@ fn conventional_generated_model(source: &str) -> bool {
         for prefix in line.split('(').take(line.matches('(').count()) {
             let mut words = prefix.split_whitespace().rev();
             let Some(name) = words.next() else { continue };
-            let Some(return_type) = words.next() else { continue };
+            let Some(return_type) = words.next() else {
+                continue;
+            };
             let identifier = |s: &str| {
                 !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
             };
-            if !identifier(name) || !return_type.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || b"_?.<>[],".contains(&b)
-            }) {
+            if !identifier(name)
+                || !return_type
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_?.<>[],".contains(&b))
+            {
                 continue;
             }
             if matches!(name, "BuildModel" | "BuildTargetModel") && return_type == "void" {

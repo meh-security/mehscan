@@ -190,7 +190,11 @@ fn schema_and_sql_are_lookup_only_but_executable_migrations_are_assigned() {
         .flat_map(|a| a["windows"].as_array().unwrap())
         .collect();
     assert!(windows.iter().any(|w| w["path"] == "Migrations/Custom.cs"));
-    assert!(windows.iter().any(|w| w["path"] == "Migrations/Custom.Designer.cs"));
+    assert!(
+        windows
+            .iter()
+            .any(|w| w["path"] == "Migrations/Custom.Designer.cs")
+    );
     assert!(!windows.iter().any(|w| w["path"] == "Migrations/Unique.cs"));
     let opted_in = run(&[
         "investigate",
