@@ -20,7 +20,8 @@ exact-ID work retains `--phase native` without this source-selection gate.
 1–99 configures other mixes and transfers unused allocation when a queue finishes.
 `0` explicitly requests AI-only discovery; `100` native-only work. These endpoints
 do not enable the other queue automatically. Value defaults to 40 managed provider calls, a 1.5M observed input-token target with
-100k reserved per in-flight call, and 20 minutes before new calls stop. Active
+100k reserved per in-flight call, a separate 250k observed-input per-call fence,
+and 20 minutes before new calls stop. Active
 work can drain. These targets do not meter host-agent orientation or guarantee
 exact token/currency or elapsed totals. Set `--max-calls`, `--input-token-budget`
 and `--admission-seconds` before starting to configure the shared allowance.

@@ -11,6 +11,7 @@ import uuid
 MAX_CALLS = 40
 MAX_INPUT = 1_500_000
 RESERVATION = 100_000
+MAX_CALL_INPUT = 250_000
 ADMISSION_SECONDS = 20 * 60
 
 
@@ -63,9 +64,10 @@ def _write(path, state):
 
 def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
                reservation_per_call=RESERVATION, admission_seconds=ADMISSION_SECONDS,
-               native_percent=None):
+               native_percent=None, max_call_input_tokens=MAX_CALL_INPUT):
     for name, value in (("max_calls", max_calls), ("input_limit", input_limit),
-                        ("reservation_per_call", reservation_per_call)):
+                        ("reservation_per_call", reservation_per_call),
+                        ("max_call_input_tokens", max_call_input_tokens)):
         if type(value) is not int or value < 1:
             raise ValueError(name + " must be a positive integer")
     if (type(admission_seconds) not in (int, float) or not math.isfinite(admission_seconds)
@@ -80,6 +82,7 @@ def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
         state = {"schema_version": 1, "deadline_epoch": time.time() + admission_seconds,
                       "max_calls": max_calls, "input_limit": input_limit,
                       "reservation_per_call": reservation_per_call, "reserved_calls": 0,
+                      "max_call_input_tokens": max_call_input_tokens,
                       "observed_input_tokens": 0, "leases": {}, "fenced": False,
                       "limitations": "Observed input limit with in-flight reservation headroom; a provider call can exceed its reservation."}
         if native_percent is not None:
@@ -180,7 +183,10 @@ def finish(path, lease, receipt):
         if known:
             entry["input_tokens"] = tokens
             state["observed_input_tokens"] += tokens
-        if (not known or tokens > state["reservation_per_call"]
+        # Reservation estimates concurrent headroom; it is not the per-call fence.
+        # Existing ledgers retain the threshold with which they were initialized.
+        call_limit = state.get("max_call_input_tokens", state["reservation_per_call"])
+        if (not known or tokens > call_limit
                 or state["observed_input_tokens"] > state["input_limit"]):
             state["fenced"] = True
         _write(path, state)

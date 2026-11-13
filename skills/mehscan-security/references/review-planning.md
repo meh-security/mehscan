@@ -109,7 +109,8 @@ for their independent evidence check. Keep the originating ID's verdict intact.
 
 The default Value controller allowance is shared across its managed provider
 calls: 40 calls, an observed 1.5 million input-token target with 100,000 tokens
-reserved per in-flight call, and 20 minutes before new calls stop. Active calls
+reserved per in-flight call, a separate 250,000 observed-input per-call fence,
+and 20 minutes before new calls stop. Active calls
 may drain and completed decisions are finalized. These are dispatch/usage targets,
 not performance, exact token or currency guarantees. Missing provider usage stays
 unknown. Discovery performed through this controller consumes the same allowance;

@@ -112,9 +112,25 @@ class Budget(unittest.TestCase):
             budget.initialize(self.path)
         other = self.path.with_name("oversized.json")
         budget.initialize(other)
-        budget.finish(other, budget.reserve(other, "source_review"), {"usage": {"input_tokens": 100001}})
+        budget.finish(other, budget.reserve(other, "source_review"), {"usage": {"input_tokens": 250001}})
         with self.assertRaises(budget.BudgetExhausted):
             budget.reserve(other, "native_bundle")
+
+    def test_per_call_fence_is_separate_from_inflight_reservation(self):
+        for tokens in (100001, 250000):
+            self.finish(budget.reserve(self.path, "source_review"), tokens)
+            self.assertFalse(self.state()["fenced"])
+        state = self.state()
+        self.assertEqual(state["reservation_per_call"], 100000)
+        self.assertEqual(state["max_call_input_tokens"], 250000)
+        self.assertIsNone(budget.capacity(self.path))
+
+    def test_legacy_ledger_keeps_its_original_call_fence(self):
+        state = self.state()
+        del state["max_call_input_tokens"]
+        self.path.write_text(json.dumps(state), encoding="utf8")
+        self.finish(budget.reserve(self.path, "source_review"), 100001)
+        self.assertTrue(self.state()["fenced"])
 
     def test_native_handoff_uses_source_ledger_and_no_provider_retry(self):
         frame = {"kind": "native_bundle", "conversation_id": "conversation", "research": {"round": 0}}

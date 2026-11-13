@@ -232,7 +232,10 @@ that preparation work.
 Value defaults to 40 controller-managed provider calls across the planned review and
 its phases, including any provider discovery. It targets 1.5 million observed
 input tokens and reserves 100,000 input tokens for each in-flight call before
-dispatch. After 20 minutes it stops starting calls, drains active work and
+dispatch. A separate per-call fence stops future dispatch after an observed call
+exceeds 250,000 input tokens; exceeding the reservation alone does not fence work.
+Existing ledgers retain their original per-call threshold.
+After 20 minutes it stops starting calls, drains active work and
 finalizes completed decisions. Unknown provider counters remain unknown; these
 are admission and observed-usage targets, not strict token/currency caps or
 performance guarantees. Host-agent orientation is outside the worker ledger and

@@ -129,6 +129,7 @@ class Scheduler(unittest.TestCase):
         for options in ({"native_percent": -1}, {"native_percent": 101},
                         {"native_percent": float("nan")}, {"native_percent": True},
                         {"max_calls": 0}, {"input_limit": -1}, {"reservation_per_call": 0},
+                        {"max_call_input_tokens": 0}, {"max_call_input_tokens": True},
                         {"admission_seconds": 0}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 budget.initialize(self.path, **options)
