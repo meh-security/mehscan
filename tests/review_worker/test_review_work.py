@@ -15,6 +15,32 @@ import test_review_domains as domain_fixtures
 
 
 class WorkPlan(unittest.TestCase):
+    def test_unnamed_intervals_survive_an_owner_elsewhere_in_same_file(self):
+        for item in self.manifest["items"]:
+            item["end_line"] = 1
+        regions = self.validate()["source_scope"]["windows_without_named_owner"]
+        self.assertIn(dict(path="first.py", start_line=2, end_line=3), regions)
+
+    def test_security_case_cannot_be_replaced_by_factual_checks(self):
+        item = self.manifest["items"][1]
+        item["case_kind"] = "security"
+        item["checks"][0].update(route="source_fact", scope="selector", acceptance="cite operand",
+            task_kind="extraction", usefulness="Prepare the owner.")
+        with self.assertRaisesRegex(ValueError, "owner security check"):
+            self.validate()
+
+    def test_factual_completion_has_separate_totals(self):
+        item = self.manifest["items"][1]
+        item["case_kind"] = "factual"
+        item["checks"][0].update(route="source_fact", scope="selector", acceptance="cite operand",
+            task_kind="extraction", usefulness="Prepare the owner.")
+        report = work.ledger(self.validate(), [self.result("higher")])
+        self.assertEqual(report["summary"]["by_case_kind"]["factual"], dict(items=1, closed=1))
+        self.assertEqual(report["summary"]["by_case_kind"]["security"], dict(items=1, closed=0))
+        item["review_roles"] = dict(verify=["marker"])
+        with self.assertRaisesRegex(ValueError, "no Verify IDs"):
+            self.validate()
+
     def test_native_audits_do_not_add_marker_or_discovered_claims_to_fixed_target(self):
         gaps = work.audit_case_gaps(self.validate(), [
             {"review_id":"failure", "outcome":"corrected"},

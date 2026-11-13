@@ -250,6 +250,20 @@ class CaseState(AtomicState):
                 self._fresh(state, case["evidence"])
                 row["reconsideration"] = copy.deepcopy(case["reconsideration"])
                 row["native_reconsideration"] = copy.deepcopy(case.get("native_reconsideration", {}))
+                partial = []
+                for question in case["questions"].values():
+                    answer = self._read_result(question["result"])
+                    if answer.get("status") != "complete":
+                        continue
+                    for check in answer.get("draft", {}).get("work_checks", []):
+                        check = copy.deepcopy(check)
+                        for dep in question.get("assertions", []):
+                            assertion = state["assertions"][dep["assertion_id"]][-1]
+                            self._fresh(state, assertion["evidence"])
+                            if assertion["version"] != dep["version"] or assertion["status"] != "available":
+                                check.update(status="not_checked", next_deciding_fact="Factual assertion requires reconsideration.")
+                        partial.append(check)
+                row["partial_fact_checks"] = partial
                 row["provisional_fact_answers"] = copy.deepcopy(case["questions"])
                 row["factual_audits"] = copy.deepcopy(list(case.get("factual_audits", {}).values()))
                 results.append(row)

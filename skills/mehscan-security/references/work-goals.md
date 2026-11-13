@@ -515,3 +515,28 @@ Do not claim that a USD allowance establishes security coverage or a hard bill c
 With `--cost-rates` alone, monetary counters are informational: missing cost
 counters remain unknown and do not stop otherwise admissible work. Existing
 input/call/time and unknown-input protections still apply.
+
+
+### Completion kinds and source regions
+
+New plans should set each item's `case_kind` to `security` or `factual`.
+Security items require an explicit security-decision check. Factual items require
+eligible source-fact checks and cannot own Verify IDs. Older plans retain their
+inferred behavior, recorded as `case_kind_basis: legacy_inference` in the normalized
+plan. The ledger reports settled security and factual items separately; factual
+completion establishes no security conclusion. A factual target can settle only
+its declared factual obligations.
+
+Execution finished means dispatch has stopped. Target settled means every
+required conclusion has closed. Investigated but missing a deciding fact remains
+unresolved. Completed factual siblings remain visible in `partial_fact_checks`
+when the parent fails; they do not close the parent security case.
+
+Source regions without named checks are calculated by subtracting declared owner
+intervals from original windows. Neither ownership nor source delivery establishes
+line-level review coverage.
+
+Ordinary owners challenge consequential supplied interpretations during their
+existing investigation. Keep separate factual audits optional for suspected
+recurring errors, consequential reuse or reproducible quality samples. An audit
+challenge is provisional disagreement, not an owner-confirmed error count.

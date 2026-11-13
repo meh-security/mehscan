@@ -82,7 +82,7 @@ def route_check(check):
 
 
 def fact_only(case):
-    return not case["verify_review_ids"] and all(route_check(check)["effective_route"] == "prepare" for check in case["checks"])
+    return case.get("case_kind") != "security" and not case["verify_review_ids"] and all(route_check(check)["effective_route"] == "prepare" for check in case["checks"])
 
 
 def prepare_check(check, resolve, definition=None):

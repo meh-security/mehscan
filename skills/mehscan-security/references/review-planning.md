@@ -524,9 +524,10 @@ An output sink may expose stored lower-trust data without a direct request
 marker; do not defer all output sinks on that basis. A user can stop after any chunk
 without losing completed work.
 
-Value scope is complete when all admitted native candidates and selected discovery
-operations have settled results or named deciding gaps, with examined conditions
-and deferred coverage recorded. In explicitly AI-only/native-only work, assess
+Value execution finishes when admitted work has settled results or named deciding
+gaps, or an allowance stops dispatch. A fixed coverage target is settled only when
+its required conclusions are closed; named gaps remain unresolved. Record examined
+conditions and deferred coverage separately. In explicitly AI-only/native-only work, assess
 completion against that requested queue. If a budget stops work early, report a partial Value review and its
 resume point. Neither completion nor a few safe results establishes that the
 repository is free of issues. Report selected, examined and unselected coverage.

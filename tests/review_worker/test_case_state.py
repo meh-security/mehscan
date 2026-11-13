@@ -59,6 +59,7 @@ class Cases(unittest.TestCase):
         restored = CaseState(self.store.path, self.binding)
         row = restored.results()[0]
         self.assertEqual(row["status"], "incomplete")
+        self.assertEqual(row["partial_fact_checks"][0]["status"], "satisfied")
         self.assertEqual(row["provisional_fact_answers"]["fact"]["assertions"], refs)
         assertion = restored.snapshot()["assertions"][refs[0]["assertion_id"]][-1]
         self.assertEqual(assertion["provider"]["model"], "fact-model")

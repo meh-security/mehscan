@@ -123,7 +123,7 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
                         "reason": "Not classified by the work plan; importance remains unknown."} for rid in native_ids}
     for ordinal, raw in enumerate(supplied):
         allowed = set(FOCUS_FIELDS) | {"id", "priority", "actor", "conditions", "checks", "review_roles",
-                                      "readiness", "blocked_reason", "estimate", "shared_facts"}
+                                      "readiness", "blocked_reason", "estimate", "shared_facts", "case_kind"}
         if not isinstance(raw, dict) or set(raw) - allowed:
             raise ValueError("work item has unsupported fields")
         item_id = domains._name(raw.get("id"), "work item")
@@ -161,6 +161,11 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
             check_ids.add(check_id)
             text(check["question"], "check question")
             review_questions.validate_check(check)
+        kind = raw.get("case_kind")
+        if kind is not None and kind not in ("security", "factual"):
+            raise ValueError("case_kind must be security or factual")
+        if kind == "security" and not any(review_questions.validate_check(c) == "security_decision" for c in checks):
+            raise ValueError("security cases require an explicit owner security check")
         estimate = raw.get("estimate", {})
         if not isinstance(estimate, dict) or set(estimate) - {"calls", "owner_calls", "input_tokens", "output_tokens"}:
             raise ValueError("unknown effort estimate")
@@ -185,6 +190,11 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
                 accounting[rid] = {"role": role, "status": "planned", "reviewed": False,
                     "assessment_required": role == "verify", "item_id": item_id,
                     "case_id": item_id, "domain_id": item_id, "reason": raw["reason"]}
+        if kind == "factual" and (normalized_roles["verify"] or not all(
+                review_questions.route_check(c)["effective_route"] == "prepare" for c in checks)):
+            raise ValueError("factual cases require eligible factual checks and no Verify IDs")
+        kind = kind or ("factual" if not normalized_roles["verify"] and all(
+            review_questions.route_check(c)["effective_route"] == "prepare" for c in checks) else "security")
         facts = raw.get("shared_facts", [])
         if not isinstance(facts, list) or len(facts) > domains.MAX_SHARED_FACTS:
             raise ValueError("shared evidence exceeds the citation allowance")
@@ -202,7 +212,7 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
         compact_focus = focus[raw["assignment_id"]]
         for cite in compact_focus["signal"]["evidence"]:
             cite.pop("quote", None)
-        items.append(dict(id=item_id, assignment_id=raw["assignment_id"], focus=compact_focus,
+        items.append(dict(id=item_id, case_kind=kind, case_kind_basis="explicit" if "case_kind" in raw else "legacy_inference", assignment_id=raw["assignment_id"], focus=compact_focus,
             priority=copy.deepcopy(risk), actor=actor, conditions=conditions, checks=copy.deepcopy(checks),
             review_roles=normalized_roles, verify_review_ids=normalized_roles["verify"],
             readiness=readiness, blocked_reason=blocked, estimate=copy.deepcopy(estimate), ordinal=ordinal,
@@ -227,14 +237,24 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
         if row["item_id"] is not None and row["item_id"] not in funded_set:
             item = item_map[row["item_id"]]
             row["status"] = "outside_target" if goal == "coverage" and item["id"] not in target_set else item["readiness"]
-    owner_paths = {item["focus"]["owner_path"] for item in items}
+    unnamed = []
+    for assignment in plan["assignments"]:
+        for window in assignment["windows"]:
+            intervals = [(window["start_line"], window["end_line"])]
+            for item in items:
+                focus = item["focus"]
+                if focus["owner_path"] != window["path"]:
+                    continue
+                start, end = focus["start_line"], focus["end_line"]
+                intervals = [(a, b) for left, right in intervals for a, b in
+                    ((left, min(right, start - 1)), (max(left, end + 1), right)) if a <= b]
+            unnamed.extend(dict(path=window["path"], start_line=a, end_line=b) for a, b in intervals)
     source_scope = {"original_assignments": len(plan["assignments"]),
         "excluded_sources": [{key: row[key] for key in ("path", "reason", "review_ids", "source_sha256", "line_count") if key in row}
                              for row in plan.get("excluded_sources", [])],
         "owner_ranges": [{"item_id": item["id"], **{key: item["focus"][key] for key in
             ("owner_path", "start_line", "end_line")}} for item in items],
-        "windows_without_named_owner": [{key: window[key] for key in ("path", "start_line", "end_line")}
-            for assignment in plan["assignments"] for window in assignment["windows"] if window["path"] not in owner_paths],
+        "windows_without_named_owner": unnamed,
         "basis": "Owner ranges locate declared checks, not line coverage. Neighboring source and queried helpers do not acquire reviewed status."}
     return dict(schema_version=VERSION, source_plan_id=plan["plan_id"], source_fingerprint=plan["source_fingerprint"],
         goal=goal, target_ids=target_ids if goal == "coverage" else [], items=items, domains=groups, cases=cases,
@@ -317,10 +337,12 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         rows.append({key: item[key] for key in ("id", "assignment_id", "priority", "actor", "conditions", "estimate")}
             | {"owner_path": item["focus"]["owner_path"], "question": item["focus"]["question"],
                "protected_effect": item["focus"]["protected_effect"], "review_roles": item["review_roles"],
+               "case_kind": item.get("case_kind", "factual" if review_questions.fact_only(item) else "security"),
                "required": item["id"] in targets, "status": state, "reason": reason,
                "required_checks": item["checks"], "check_results": check_rows,
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
+               "partial_fact_checks": copy.deepcopy(result.get("partial_fact_checks", [])) if result else [],
                "question_work": copy.deepcopy(result.get("question_work", [])) if result else [],
                "factual_audits":review_fact_audit.with_usage(result.get("factual_audits", []), usage_rows, budget) if result else [],
                "routing": copy.deepcopy(result.get("routing", [])) if result else [],
@@ -372,7 +394,9 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         source_fingerprint=registry["source_fingerprint"], goal=registry["goal"], target_ids=registry["target_ids"],
         target_complete=complete if registry["goal"] == "coverage" else None,
         target_status=("complete" if complete else "incomplete") if registry["goal"] == "coverage" else "budgeted_review",
-        summary=dict(items=len(rows), closed=sum(row["status"] == "closed" for row in rows),
+        summary=dict(by_case_kind={kind: dict(items=sum(r["case_kind"] == kind for r in rows),
+                closed=sum(r["case_kind"] == kind and r["status"] == "closed" for r in rows))
+                for kind in ("security", "factual")}, items=len(rows), closed=sum(row["status"] == "closed" for row in rows),
             remaining=len(remaining), by_status=dict(Counter(row["status"] for row in rows)),
             checks_total=sum(len(row["required_checks"]) for row in rows),
             checks_closed=sum(check["status"] in ("satisfied", "violated") for row in rows for check in row["check_results"]),
@@ -408,10 +432,12 @@ def markdown(report):
     for row in report["items"]:
         lines.append("| " + " | ".join(clean(value) for value in (row["id"], row["priority"]["impact"], row["status"],
             "; ".join(row["next_deciding_facts"]))) + " |")
+    for kind, totals in report["summary"].get("by_case_kind", {}).items():
+        lines += ["", kind.capitalize() + " items: " + str(totals["closed"]) + " settled / " + str(totals["items"]) + " declared."]
     unknown = len(report["summary"]["unclassified_native_ids"])
     lines += ["", str(unknown) + " native IDs remain unclassified; their importance is unknown.", ""]
     lines += [str(len(report["source_scope"]["windows_without_named_owner"]))
-              + " original source windows have no named owner in this plan. " + report["source_scope"]["basis"], ""]
+              + " source regions have no named checks in this plan. " + report["source_scope"]["basis"], ""]
     lines += [str(len(report["source_scope"]["excluded_sources"]))
               + " source entries have policy exclusions recorded separately; exclusions are not safety verdicts.", ""]
     lines += ["Remaining planned work by potential impact: " + json.dumps(report["summary"]["remaining_by_potential_impact"]), ""]
