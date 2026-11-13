@@ -239,6 +239,50 @@ print(json.dumps(value))
         self.assertEqual(audit["accounting"]["second_pass"]["calls"], 2)
         self.assertEqual(audit["checked"], 2)
 
+    def test_native_fast_reconciles_scoped_correction_under_original_allowance(self):
+        f, command, _, _ = self.prepare(unresolved=True)
+        reviewer = f.base/'reviewer.py'
+        source = reviewer.read_text().replace("'status':'unresolved'", "'status':('satisfied' if task['research'].get('scoped_resolution') else 'unresolved')")
+        source = source.replace("'next_deciding_fact':'Provider binding is unavailable.'", "'next_deciding_fact':(None if task['research'].get('scoped_resolution') else 'Provider binding is unavailable.')")
+        source = source.replace("'check_id':q['id']", "'assertion_dependencies':[], 'assertion_dispositions':[], 'conditions':[], 'limitations':[], 'check_id':q['id']")
+        reviewer.write_text(source)
+        self.audit_provider(f)
+        self.run_worker(f, command, 0)
+        initial = f.base/'worker'
+        request = f.base/'resolve.json'
+        request.write_text(json.dumps(dict(schema_version='mehscanWorkResolution/v1',
+            checks=[dict(case_id='higher', check_ids=['execution'])])))
+        correction = list(command)
+        correction[correction.index('--output')+1] = str(f.base/'corrected')
+        correction += ['--resolve-checks', str(request), '--resume-from', str(initial)]
+        result = subprocess.run(correction, capture_output=True, text=True, encoding='utf8', timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        corrected_ledger = (f.base/'corrected/source-review/work-ledger.json').read_bytes()
+        summary = json.loads((initial/'source-review/summary.json').read_text())
+        effective = summary['effective_args']
+        claim = json.loads(Path(effective['claim']).read_text())['result']
+        current = f.native('state','work','--store',f.base/'state','--stream','source',
+            '--inventory',effective['inventory'],'--source-root',f.root,'--generation',claim['generation'],
+            '--owner',claim['owner'],'--skill-root',Path(__file__).resolve().parents[2]/'skills/mehscan-security')
+        current_path = f.base/'followup-work.json';current_path.write_text(json.dumps(current))
+        followup = list(command)
+        index = followup.index('--work-plan'); del followup[index:index+2]
+        for flag, value in {'--inventory':effective['inventory'], '--claim':effective['claim'],
+                '--work-package':str(current_path), '--output':str(f.base/'followup')}.items():
+            followup[followup.index(flag)+1] = value
+        followup += ['--run',effective['run'],'--phase','native','--first-pass',str(f.base/'corrected'),
+            '--second-pass','fast','--supersede']
+        result = subprocess.run(followup, capture_output=True, text=True, encoding='utf8', timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr+(f.base/'followup/worker.json').read_text())
+        ledger = json.loads((f.base/'followup/work-ledger.json').read_text())
+        higher = next(r for r in ledger['items'] if r['id']=='higher')
+        self.assertEqual(higher['status'], 'closed')
+        self.assertEqual(higher['native_reconsideration'], {})
+        self.assertEqual(next(r for r in ledger['items'] if r['id']=='lower')['status'], 'investigated_unresolved')
+        self.assertEqual((f.base/'corrected/source-review/work-ledger.json').read_bytes(), corrected_ledger)
+        contexts = [json.loads(p.read_text()) for p in (f.base/'followup').glob('context-*.json')]
+        self.assertTrue(any(c.get('stage_context', {}).get('source_corrections') for c in contexts))
+
     def test_later_fast_inherits_work_allowance_without_repeating_first_pass(self):
         f, command, _, _ = self.prepare()
         self.audit_provider(f)

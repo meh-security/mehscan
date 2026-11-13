@@ -39,6 +39,21 @@ class WorkChecks(unittest.TestCase):
         task['profile']='routine'
         with self.assertRaisesRegex(ValueError,'explicit source facts'):fixture.invoke(0)
 
+    def test_owner_dispositions_bind_qualifications_and_rejections(self):
+        ref = dict(assertion_id="fact-one", version=2)
+        self.task["research"].update(available_assertions=[ref], considered_assertions=[ref])
+        row = self.reply["draft"]["work_checks"][0]
+        row.update(conditions=[], limitations=[], assertion_dependencies=[ref],
+            assertion_dispositions=[dict(**ref, disposition="qualified", reason="Only the shown route.", conditions=["This route."])])
+        Draft202012Validator(codex_protocol.build_schema(self.task)).validate(self.reply)
+        result = protocol.envelope(self.reply, self.task)
+        self.assertEqual(result["draft"]["work_checks"][0]["assertion_dispositions"], row["assertion_dispositions"])
+        row["assertion_dispositions"][0]["disposition"] = "rejected"
+        with self.assertRaisesRegex(ValueError, "reliance"):
+            protocol.envelope(self.reply, self.task)
+        row["assertion_dependencies"] = []
+        protocol.envelope(self.reply, self.task)
+
     def test_owner_dependencies_must_name_offered_assertion_versions(self):
         self.task["research"]["available_assertions"] = [{"assertion_id":"fact-one", "version":2}]
         check = self.reply["draft"]["work_checks"][0]

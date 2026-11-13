@@ -15,6 +15,21 @@ import test_review_domains as domain_fixtures
 
 
 class WorkPlan(unittest.TestCase):
+    def test_owner_qualification_preserves_conditions_and_reliance(self):
+        ref = dict(assertion_id="selector", version=1)
+        row = self.result("higher")["draft"]["work_checks"][0]
+        row.update(assertion_dependencies=[ref], assertion_dispositions=[dict(**ref,
+            disposition="qualified", reason="Only the registered implementation is shown.", conditions=["Registered handler only."])])
+        work.check_results(self.manifest["items"][1]["checks"], [row], [ref])
+        row["assertion_dispositions"][0]["conditions"] = []
+        with self.assertRaisesRegex(ValueError, "applicable conditions"):
+            work.check_results(self.manifest["items"][1]["checks"], [row], [ref])
+        row["assertion_dispositions"][0]["disposition"] = "rejected"
+        with self.assertRaisesRegex(ValueError, "declared reliance"):
+            work.check_results(self.manifest["items"][1]["checks"], [row], [ref])
+        row["assertion_dependencies"] = []
+        work.check_results(self.manifest["items"][1]["checks"], [row], [ref])
+
     def test_unnamed_intervals_survive_an_owner_elsewhere_in_same_file(self):
         for item in self.manifest["items"]:
             item["end_line"] = 1

@@ -641,7 +641,7 @@ def fast_research_rounds(phase, rounds_remaining, countercheck_started=False):
 
 def run(*, mode, requests, baselines, first_directory, output, task_base, execute_stage,
         finalize, write, workers, byte_limit, outside_scope=(), scope=("issue", "not_issue", "needs_review"),
-        selection=None, archive_baselines=True):
+        selection=None, archive_baselines=True, corrections=()):
     """Independent bundle failures preserve baseline results and exact unchecked coverage."""
     started = time.monotonic(); output = Path(output); rows = []; failures = []
     (output / "first-pass").mkdir(exist_ok=True)
@@ -672,6 +672,10 @@ def run(*, mode, requests, baselines, first_directory, output, task_base, execut
         task.update(review_role="second_pass_fast" if mode == "fast" else "second_pass_compare",
             assessment_cycle="second_pass_" + mode + "_check",
             stage_context=comparison_context(baseline, proposed if mode == "full" else None, trace))
+        relevant_corrections = [copy.deepcopy(row) for row in corrections if row["review_id"] in ids]
+        if relevant_corrections:
+            task["stage_context"]["source_corrections"] = relevant_corrections
+            task["stage_context"]["correction_authority"] = "Source-bound owner interpretations; inspect deciding source before changing a native verdict."
         if mode == "fast" and selection is not None:
             task["stage_context"]["selection_questions"] = [copy.deepcopy(r) for r in selection["selected"]
                 if r["review_id"] in ids]

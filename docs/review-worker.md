@@ -1236,3 +1236,50 @@ drafts need no repeated model call. Native admission and canonical reports remai
 authoritative. The automatic Action setup still configures a single profile;
 automatic tiered Action configuration and live quality/efficiency acceptance
 remain separate.
+
+
+## Resolve named source checks
+
+To continue a saved work-plan review, keep its original source, work manifest,
+provider commands and resource options. Use a new output directory and add
+`--resume-from PREVIOUS --resolve-checks REQUEST.json`. This operation is separate
+from crash recovery: it authorizes owner work on explicitly named reopened or
+unresolved checks. It starts no additional factual workers or whole-app pass.
+
+```json
+{
+  "schema_version": "mehscanWorkResolution/v1",
+  "checks": [{"case_id": "account-update", "check_ids": ["authority"]}]
+}
+```
+
+The controller reuses saved source and factual answers, preserves independent
+sibling checks, and records each correction against the exact prior state.
+`--workers` bounds parallel cases. Calls, input, configured cost, elapsed time and
+unknown-usage fences continue under the original allowance, including per-case
+limits when question routing is enabled. A new output directory does not renew
+that allowance. Unresolved answers and failed attempts remain visible.
+
+If interrupted, resume from the latest correction attempt with the same request.
+Saved final responses are finalized without another inference call. Unknown paid
+turns remain fenced. Once all requested attempts finish successfully, another
+request can select different unresolved checks. Parent reports remain historical.
+
+A source-check correction does not rewrite native verdicts. A case with Verify IDs
+retains a native reconciliation gap. When the first pass has an admitted native
+baseline, the correction exports `source-review/resolution-handoff.json`. Use the
+correction directory as `--first-pass` for an explicitly requested native Fast or
+Full follow-up, with the normal current native work/claim arguments and
+`--supersede`. The controller binds the original native baseline and allowance.
+Fast selects affected native IDs up to its configured cap; deferred IDs remain
+visible. Full preserves independent verification before comparing corrected checks.
+
+The native follow-up writes `work-ledger.json` and `remaining-work.md` combining
+saved source checks with admitted native reconciliation. A missing, unresolved,
+unsupported or unexecuted native check cannot clear the gap. This projection does
+not modify earlier source records. For a coverage goal, remaining required gaps
+keep the target incomplete even when native export succeeds.
+
+Work ledgers distinguish factual items from security cases. `partial_fact_checks`
+preserves independently answered questions when an owner fails. Neither factual
+completion, delivered source nor a named source region establishes security coverage.

@@ -25,7 +25,7 @@ def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
     modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py", "review_fact_audit.py",
         "review_questions.py", "review_case_state.py", "review_evidence.py", "review_budget.py",
         "review_orchestration.py", "review_context.py", "review_domains.py", "review_scheduler.py")
-    return {"package_id":package["package_id"], "plan_id":plan["plan_id"],
+    return {"package_id":package["package_id"], "package_digest":context.digest(package), "plan_id":plan["plan_id"],
         "store":str(Path(args.store).resolve()), "stream":args.stream,
         "manifest_sha256":worker.digest_file(args.work_plan), "commands":commands, "scanner_sha256":scanner_sha,
         "controller":{name:worker.digest_file(Path(__file__).with_name(name)) for name in modules},
@@ -289,6 +289,10 @@ def run(args, legacy, worker):
         raise ValueError("review workers must be 1 to 16")
     source_resume = None
     lineage_output = output
+    resolution_path = getattr(args, "resolve_checks", None)
+    if resolution_path:
+        source_resume = Path(args.resume_from)
+        args.resume_from = None
     if getattr(args, "resume_from", None):
         previous = Path(args.resume_from) / "source-review/summary.json"
         if not previous.is_file():
@@ -389,7 +393,7 @@ def run(args, legacy, worker):
         if args.provider_contract
         else []
     )
-    package = native(["state", "work", *common, *runtime_options])
+    package = worker.read(args.work_package) if resolution_path else native(["state", "work", *common, *runtime_options])
     if package != worker.read(args.work_package):
         raise ValueError("source assignment requires current unaltered native work")
     payload = package["payload"]
@@ -715,7 +719,7 @@ def run(args, legacy, worker):
                       if case["execution"] != "unstarted"} if source_resume else set()
     recovery_jobs = {path.parent.name for pattern in ("*/recovery.json", "*/result.json")
                      for path in (stage / "jobs").glob(pattern)} if source_resume else set()
-    if source_resume:
+    if source_resume and not resolution_path:
         source_recovery.claim_successor(source_resume, stage, worker)
 
     def completion_remaining(case_id):
@@ -776,10 +780,18 @@ def run(args, legacy, worker):
             "quote":window["text"]}
 
     def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True,
-                       prepared_question=(), fact_audit=None):
+                       prepared_question=(), fact_audit=None, resolution=None):
         profile = "expert" if fact_audit else "routine" if question is not None or not question_routing else "expert"
         role = "fact_auditor" if fact_audit else "question_answerer" if question is not None else "investigator"
         available_assertions = [dep for _, answer in question_results for dep in answer.get("assertions", [])]
+        considered_assertions = copy.deepcopy(available_assertions)
+        if question is None:
+            for _, answer in question_results:
+                audit = answer.get("factual_audit")
+                if audit:
+                    ref = {key:audit[key] for key in ("assertion_id", "version")}
+                    if ref not in considered_assertions:
+                        considered_assertions.append(ref)
         command = source_commands[profile]
         command_binding = command_bindings[profile]
         provider = runtime.get("provider") if profile == "routine" else runtime["orchestration"]["expert"]
@@ -827,6 +839,8 @@ def run(args, legacy, worker):
         domain_case = case_by_assignment.get(assignment.get("_work_item_id", job_id))
         if question is not None:
             domain_case = {**domain_case, "checks": [question]}
+        if resolution:
+            domain_case = {**domain_case, "checks":[c for c in domain_case["checks"] if c["id"] in resolution["ticket"]["check_ids"]]}
         domain_state = domain_states[domain_case["domain_id"]] if domain_case else None
         if question is not None:
             signals = [review_domains._shared_fact(cite, plan) for cite in domain_case["focus"]["signal"]["evidence"]]
@@ -938,9 +952,15 @@ def run(args, legacy, worker):
             packet["contract"] += ("\nQuestion answers are attributed model interpretations, not security verdicts. "
                 "Reuse the delivered original source; inspect the deciding relationship and remaining applicability/impact. "
                 "Do not repeat source searches simply to recreate the question worker's evidence. Conflicting or incomplete answers remain unresolved.")
+        if resolution:
+            packet["scoped_resolution"] = resolution
+            packet["contract"] += ("\nResolve only the named reopened checks using previous conclusions and counterevidence. "
+                "Inspect deciding original source. Preserve independent sibling conclusions. Return no native results or proposals; "
+                "native reconciliation is a separate admission obligation. State unresolved if deciding evidence is missing.")
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
             [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(lineage_output),
+             *([job_id] if resolution else []),
              *([["fact-audit" if fact_audit else "question", question["id"]]] if question is not None else [])]
         )
         facts = copy.deepcopy(domain_state["facts"]) if domain_state else []
@@ -1053,7 +1073,7 @@ def run(args, legacy, worker):
             else:
                 save_checkpoint("ready", 0)
             for turn in (() if offline else range(local_rounds + 1)):
-                if native(["state", "work", *common, *runtime_options]) != package:
+                if (worker.read(args.work_package) if resolution else native(["state", "work", *common, *runtime_options])) != package:
                     raise ValueError("source work was superseded")
                 if context.skill_bundle_id(skill) != runtime["skill_bundle_id"]:
                     raise ValueError("source skill changed")
@@ -1154,8 +1174,13 @@ def run(args, legacy, worker):
                             "case_id": domain_case["id"], "case_index": 0, "cases": [domain_state["cases"][case_index]]}
                 if work_registry:
                     frame["research"]["required_checks"] = domain_case["checks"]
-                    if available_assertions:
+                    if considered_assertions:
                         frame["research"]["available_assertions"] = available_assertions
+                        frame["research"]["considered_assertions"] = considered_assertions
+                if resolution:
+                    frame["research"]["scoped_resolution"] = resolution["ticket"]
+                    frame["research"]["available_assertions"] = available_assertions
+                    frame["research"]["considered_assertions"] = considered_assertions
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 if question_budget:
@@ -1404,7 +1429,8 @@ def run(args, legacy, worker):
             proofs = []
             if work_registry:
                 review_work.check_results(domain_case["checks"], last.get("work_checks"),
-                    available_assertions if available_assertions else None)
+                    available_assertions if considered_assertions or resolution else None,
+                    considered_assertions if considered_assertions or resolution else None)
                 for check in last["work_checks"]:
                     proofs.extend(citations(check))
             for assessment in last["results"]:
@@ -1490,6 +1516,8 @@ def run(args, legacy, worker):
             }
         if question is not None:
             result.update(question_provider=provider, question_conversation_id=conversation)
+        if resolution:
+            result["resolution_ticket"] = resolution["ticket"]
         if fact_audit:
             result.update(review_role=role, fact_audit={key:fact_audit[key] for key in ("assertion_id", "version")})
         worker.write(directory / "result.json", result)
@@ -1500,6 +1528,105 @@ def run(args, legacy, worker):
                 "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
                for a in plan["assignments"] if a["id"] not in selected_set]
     worker.write(stage / "progress.json", results)
+    if resolution_path:
+        request = worker.read(worker.outside(resolution_path, root))
+        if (not isinstance(request, dict) or set(request) != {"schema_version", "checks"}
+                or request["schema_version"] != "mehscanWorkResolution/v1"
+                or not isinstance(request["checks"], list) or not 1 <= len(request["checks"]) <= 2000):
+            raise ValueError("invalid scoped resolution request")
+        saved_plan = worker.read(stage / "resolution-plan.json") if (stage / "resolution-plan.json").is_file() else None
+        if saved_plan and saved_plan["request"] != request:
+            previous_results = Path(source_resume) / "source-review/resolution-results.json"
+            done = worker.read(previous_results) if previous_results.is_file() else []
+            if len(done) != len(saved_plan["cases"]) or any(r["status"] != "complete" for r in done):
+                raise ValueError("interrupted resolution requires its original exact request")
+            saved_plan = None
+        selections = {}
+        projected = {r["case_id"]:r for r in case_store.results()}
+        for spec in request["checks"]:
+            if (not isinstance(spec, dict) or set(spec) != {"case_id", "check_ids"}
+                    or not isinstance(spec["case_id"], str) or spec["case_id"] in selections
+                    or spec["case_id"] not in case_by_assignment):
+                raise ValueError("resolution requires distinct current case identities")
+            identity = spec["case_id"]
+            if saved_plan:
+                selections[identity] = saved_plan["cases"][identity]
+            else:
+                prior = projected[identity]
+                selections[identity] = {"ticket":case_store.resolution_ticket(identity, spec["check_ids"]),
+                    "previous_checks":prior.get("draft", {}).get("work_checks", []),
+                    "reconsideration":prior.get("reconsideration", {}),
+                    "native_reconsideration":prior.get("native_reconsideration", {})}
+        native_parent = (saved_plan or {}).get("native_parent")
+        if not native_parent:
+            inherited = Path(source_resume) / "source-review/resolution-plan.json"
+            native_parent = worker.read(inherited).get("native_parent") if inherited.is_file() else str(source_resume)
+        worker.write(stage / "resolution-plan.json", {"request":request, "cases":selections, "native_parent":native_parent})
+        source_recovery.seal(stage, source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker),
+            budget_path, lineage_output, worker)
+        source_recovery.claim_successor(source_resume, stage, worker)
+
+        def resolve_case(pair):
+            case_id, resolution = pair
+            ticket = resolution["ticket"]
+            case = case_by_assignment[case_id]
+            state = case_store.snapshot()
+            previous = next((r for r in state["cases"][case_id].get("resolution_attempts", []) if r["ticket"] == ticket), None)
+            if previous:
+                return case_id, ticket, case_store._read_result(previous["result"]), None
+            answers = []
+            for check in case["checks"]:
+                saved = state["cases"][case_id]["questions"].get(check["id"])
+                if saved:
+                    answer = case_store._read_result(saved["result"])
+                    answer["assertions"] = [ref for ref in saved["assertions"]
+                        if state["assertions"][ref["assertion_id"]][-1]["status"] == "available"]
+                    for audit in state["cases"][case_id].get("factual_audits", {}).values():
+                        if audit["assertion_id"] in {r["assertion_id"] for r in saved["assertions"]}:
+                            answer["factual_audit"] = fact_audits.note(audit)
+                    answers.append((check, answer))
+            job_id = context.digest(["resolve", ticket])
+            assignment = {**by_id[case["assignment_id"]], "_job_id":job_id, "_work_item_id":case_id, "review_ids":[]}
+            if question_budget:
+                question_budget.begin_case(case_id)
+            try:
+                result = assignment_job(assignment, question_results=answers, resolution=resolution)
+                if "resolution_ticket" not in result:
+                    result["resolution_ticket"] = ticket
+                    worker.write(stage / "jobs" / job_id / "result.json", result)
+                return case_id, ticket, result, stage / "jobs" / job_id / "result.json"
+            finally:
+                if question_budget:
+                    question_budget.end_case(case_id)
+
+        outcomes = []
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = [pool.submit(resolve_case, pair) for pair in selections.items()]
+            for future in as_completed(futures):
+                case_id, ticket, result, path = future.result()
+                if path:
+                    case_store.record_resolution(ticket, path)
+                outcomes.append({"case_id":case_id, "check_ids":ticket["check_ids"], "status":result["status"],
+                    "detail":result.get("detail"), "calls":result["calls"]})
+                worker.write(stage / "resolution-results.json", outcomes)
+        if question_budget:
+            question_budget.close()
+        report = review_work.ledger(work_registry, case_store.results(), budget=review_budget.snapshot(budget_path), metrics=source_metrics)
+        worker.write(stage / "work-ledger.json", report)
+        worker.write_text(stage / "remaining-work.md", review_work.markdown(report))
+        worker.write(stage / "resolution-results.json", outcomes)
+        worker.write_text(stage / "provider-metrics.jsonl", "".join(json.dumps(r) + "\n" for r in source_metrics))
+        review_work.freeze_resolution_handoff(stage, source_resume, worker, case_binding)
+        result = {"status":"source_validated" if all(r["status"] == "complete" for r in outcomes) else "incomplete",
+            "generation":claim["generation"],
+            "resolution_of":str(source_resume), "checks":outcomes, "work_goal":{"goal":report["goal"], "status":report["target_status"],
+                "target_complete":report["target_complete"], "ledger":str(stage / "work-ledger.json")},
+            "authority":"Scoped source-check correction; native verdict history is unchanged."}
+        if report["goal"] == "coverage" and not report["target_complete"]:
+            result["status"] = "incomplete"
+        worker.write(output / "worker.json", result)
+        return result
+
     if domain_registry:
         domain_progress = {}
         domain_timings = {}

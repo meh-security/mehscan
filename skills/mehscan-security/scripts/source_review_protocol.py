@@ -169,6 +169,19 @@ def schema(task, base, api, guidance, bound_handles=True):
             check["properties"]["assertion_dependencies"] = {"type":"array", "maxItems":16,
                 "items":obj({"assertion_id":text, "version":{"type":"integer", "minimum":1}})}
             check["required"].append("assertion_dependencies")
+    if "considered_assertions" in task["research"]:
+        check = draft["properties"]["work_checks"]["items"]
+        check["properties"].update({
+            "conditions":{"type":"array", "maxItems":16, "items":text},
+            "limitations":{"type":"array", "maxItems":16, "items":text},
+            "assertion_dispositions":{"type":"array", "maxItems":16, "items":obj({
+                "assertion_id":text, "version":integer,
+                "disposition":{"type":"string", "enum":["used", "qualified", "rejected"]},
+                "reason":text, "conditions":{"type":"array", "maxItems":16, "items":text}})}})
+        check["required"] += ["conditions", "limitations", "assertion_dispositions"]
+    if task["research"].get("scoped_resolution"):
+        draft["properties"]["results"]["maxItems"] = 0
+        draft["properties"]["proposals"]["maxItems"] = 0
     if task["research"].get("question_only"):
         draft["properties"]["results"]["maxItems"] = 0
         draft["properties"]["proposals"]["maxItems"] = 0
@@ -268,6 +281,13 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
             "for interpretations actually used. Use [] for an independent source proof or a rejected suggestion. "
             "Inspect deciding original source and applicability; a cited assertion is not an established verdict. "
             "Available assertion identities:\n" + json.dumps(research["available_assertions"], ensure_ascii=False))
+    if "considered_assertions" in research:
+        value += ("\nRecord assertion_dispositions for consequential interpretations used, qualified or rejected. "
+            "Used and qualified identities must be assertion_dependencies; rejected identities must not. "
+            "Give a concrete reason and conditions for each qualification. Disputed assertions can only be rejected; "
+            "independently prove a replacement from source. Do not restate every irrelevant supplied fact. "
+            "Preserve check conditions and limitations as bounded arrays, empty when none. "
+            "Considered identities: " + json.dumps(research["considered_assertions"]))
     if "citation_windows" in research:
         value += (
             "\nController-owned source citations: return source_ref and line, never paths or line ranges. "
@@ -356,6 +376,24 @@ def envelope(response, task):
                             or dep["assertion_id"] in seen):
                         raise ValueError("foreign, duplicate or stale assertion dependency")
                     seen.add(dep["assertion_id"])
+    if "considered_assertions" in task["research"]:
+        considered = {(d["assertion_id"], d["version"]) for d in task["research"]["considered_assertions"]}
+        for row in draft["work_checks"]:
+            values = row.get("assertion_dispositions")
+            if not isinstance(values, list) or len(values) > 16:
+                raise ValueError("owner must declare bounded assertion dispositions")
+            dependencies = {(d["assertion_id"], d["version"]) for d in row.get("assertion_dependencies", [])}
+            seen = set()
+            for value in values:
+                ref = (value.get("assertion_id"), value.get("version"))
+                disposition = value.get("disposition")
+                if (ref not in considered or ref in seen or disposition not in ("used", "qualified", "rejected")
+                        or (disposition != "rejected") != (ref in dependencies)
+                        or disposition == "qualified" and not value.get("conditions")):
+                    raise ValueError("assertion disposition differs from offered identity or reliance")
+                seen.add(ref)
+            if not dependencies <= seen:
+                raise ValueError("consumed assertion lacks disposition")
     if "citation_windows" in task["research"]:
         windows = task["research"]["citation_windows"]
 

@@ -82,6 +82,72 @@ FOCUS_FIELDS = ("assignment_id", "owner_path", "start_line", "end_line", "questi
                 "protected_effect", "area", "reason", "next_deciding_fact", "signal")
 
 
+def freeze_resolution_handoff(stage, parent, worker, case_binding):
+    stage, parent = Path(stage), Path(parent)
+    inherited = parent / "source-review/resolution-handoff.json"
+    native_parent = worker.read(stage / "resolution-plan.json").get("native_parent") or (worker.read(inherited)["native_parent"] if inherited.is_file() else str(parent))
+    if not (Path(native_parent) / "source-review/work-handoff.json").is_file():
+        return None  # Source interruption before native publication has no admitted baseline.
+    files = ("case-state.sqlite", "work-ledger.json", "work-plan.json", "resolution-plan.json", "resolution-results.json", "provider-metrics.jsonl")
+    record = {"schema_version":"mehscanResolutionHandoff/v1", "native_parent":native_parent, "case_binding":case_binding,
+        "files":{name:worker.digest_file(stage / name) for name in files},
+        "native_handoff_sha256":worker.digest_file(Path(native_parent) / "source-review/work-handoff.json")}
+    worker.write(stage / "resolution-handoff.json", record)
+    return record
+
+
+def read_resolution_handoff(attempt, root, worker):
+    attempt = worker.outside(attempt, root)
+    stage = attempt / "source-review"
+    record = worker.read(stage / "resolution-handoff.json")
+    expected = {"case-state.sqlite", "work-ledger.json", "work-plan.json", "resolution-plan.json", "resolution-results.json", "provider-metrics.jsonl"}
+    if record.get("schema_version") != "mehscanResolutionHandoff/v1" or set(record.get("files", {})) != expected:
+        raise ValueError("invalid scoped correction handoff")
+    for name, digest in record["files"].items():
+        path = stage / name
+        if path.is_symlink() or worker.digest_file(path) != digest:
+            raise ValueError("scoped correction artifact changed")
+    native_parent = worker.outside(record["native_parent"], root)
+    if worker.digest_file(native_parent / "source-review/work-handoff.json") != record["native_handoff_sha256"]:
+        raise ValueError("native correction baseline changed")
+    _, source, budget_path = read_handoff(native_parent, root, worker)
+    ledger = worker.read(stage / "work-ledger.json")
+    if ledger["source_fingerprint"] != source["source_fingerprint"]:
+        raise ValueError("correction source differs from native baseline")
+    if _handoff_budget_policy(worker.read(budget_path)) != _handoff_budget_policy(ledger["budget"]):
+        raise ValueError("correction allowance differs from native baseline")
+    current = worker.read(budget_path)
+    old = ledger["budget"]
+    if (current["reserved_calls"] < old["reserved_calls"] or current["observed_input_tokens"] < old["observed_input_tokens"]
+            or current.get("cost", {}).get("observed_micros", 0) < old.get("cost", {}).get("observed_micros", 0)
+            or old["fenced"] and not current["fenced"]):
+        raise ValueError("correction usage cannot be reset")
+    return record, ledger, native_parent
+
+
+def reconciled_resolution(attempt, handoff, audit, native_rows, budget, worker):
+    """Project admitted native reconciliation alongside immutable source checks."""
+    from review_case_state import CaseState
+    stage = Path(attempt) / "source-review"
+    state = CaseState(stage / "case-state.sqlite", handoff["case_binding"])
+    results = state.results()
+    admitted = {r["review_id"]:r for r in native_rows}
+    settled = {r["review_id"] for r in audit["results"] if r["outcome"] in ("confirmed", "corrected")
+        and r.get("proof_status") == "supported" and r.get("investigation_status") == "sufficient"
+        and r["review_id"] in admitted and admitted[r["review_id"]]["decision"] != "needs_review"}
+    for result in results:
+        for rid in list(result.get("native_reconsideration", {})):
+            if rid in settled:
+                result["native_reconsideration"].pop(rid)
+        if result.get("status") == "complete":
+            result["draft"]["results"] = [copy.deepcopy(admitted.get(r["review_id"], r)) for r in result["draft"]["results"]]
+    metrics = [json.loads(line) for line in (stage / "provider-metrics.jsonl").read_text(encoding="utf8").splitlines() if line.strip()]
+    report = ledger(worker.read(stage / "work-plan.json"), results, budget=budget, metrics=metrics)
+    report["native_reconciliation"] = {"settled_ids":sorted(settled), "outcomes":copy.deepcopy(audit["results"]),
+        "authority":"Projection of source checks and admitted native reconciliation; parent artifacts remain historical."}
+    return report
+
+
 def text(value, label, maximum=4000):
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(label + " must be bounded nonempty text")
@@ -262,7 +328,7 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
         coverage_plan={"goal": goal, "target_ids": target_ids if goal == "coverage" else []})
 
 
-def check_results(required, rows, available_assertions=None):
+def check_results(required, rows, available_assertions=None, considered_assertions=None):
     """Validate closure claims before source-proof validation; no semantic verdict inference."""
     expected = {check["id"] for check in required}
     if not isinstance(rows, list) or len(rows) != len(expected):
@@ -270,9 +336,14 @@ def check_results(required, rows, available_assertions=None):
     seen = set()
     for row in rows:
         fields = {"check_id", "status", "summary", "evidence", "next_deciding_fact"}
-        if (not isinstance(row, dict) or not fields <= set(row) or set(row) - fields - {"assertion_dependencies"}
+        if (not isinstance(row, dict) or not fields <= set(row) or set(row) - fields - {"assertion_dependencies", "assertion_dispositions", "conditions", "limitations"}
                 or row["check_id"] not in expected or row["check_id"] in seen or row["status"] not in CHECK_STATES):
             raise ValueError("work check identity, state or fields differ from the plan")
+        for name in ("conditions", "limitations"):
+            if name in row and (not isinstance(row[name], list) or len(row[name]) > 16):
+                raise ValueError("check conditions and limitations require bounded lists")
+            for value in row.get(name, []):
+                text(value, name, 1000)
         dependencies = row.get("assertion_dependencies", [])
         if (available_assertions is not None and "assertion_dependencies" not in row
                 or not isinstance(dependencies, list)):
@@ -286,6 +357,9 @@ def check_results(required, rows, available_assertions=None):
                     or dep["assertion_id"] in seen_dependencies):
                 raise ValueError("assertion dependency is foreign, duplicate or stale")
             seen_dependencies.add(dep["assertion_id"])
+        if considered_assertions is not None and "assertion_dispositions" not in row:
+            raise ValueError("owner must declare assertion dispositions")
+        validate_dispositions(row, considered_assertions if considered_assertions is not None else available_assertions)
         seen.add(row["check_id"])
         text(row["summary"], "check conclusion")
         evidence = row["evidence"]
@@ -296,6 +370,37 @@ def check_results(required, rows, available_assertions=None):
                 raise ValueError("closed check requires evidence and no unresolved fact")
         else:
             text(row["next_deciding_fact"], "unresolved deciding fact")
+
+
+def validate_dispositions(row, offered=None):
+    """Validate declared reliance without claiming to detect model influence."""
+    dispositions = row.get("assertion_dispositions", [])
+    if not isinstance(dispositions, list) or len(dispositions) > 16:
+        raise ValueError("assertion dispositions require a bounded list")
+    available = {(d["assertion_id"], d["version"]) for d in (offered or [])}
+    dependencies = {(d["assertion_id"], d["version"]) for d in row.get("assertion_dependencies", [])}
+    seen = set()
+    for value in dispositions:
+        if (not isinstance(value, dict) or set(value) != {"assertion_id", "version", "disposition", "reason", "conditions"}
+                or not isinstance(value["assertion_id"], str) or type(value["version"]) is not int
+                or value["version"] < 1 or value["disposition"] not in ("used", "qualified", "rejected")):
+            raise ValueError("invalid assertion disposition")
+        ref = (value["assertion_id"], value["version"])
+        if ref in seen or offered is not None and ref not in available:
+            raise ValueError("foreign or duplicate assertion disposition")
+        seen.add(ref)
+        text(value["reason"], "assertion disposition reason", 1000)
+        conditions = value["conditions"]
+        if not isinstance(conditions, list) or len(conditions) > 16:
+            raise ValueError("assertion disposition requires bounded conditions")
+        for condition in conditions:
+            text(condition, "assertion condition", 1000)
+        if value["disposition"] == "qualified" and not conditions:
+            raise ValueError("qualified assertion requires its applicable conditions")
+        if (value["disposition"] != "rejected") != (ref in dependencies):
+            raise ValueError("assertion disposition conflicts with declared reliance")
+    if "assertion_dispositions" in row and not dependencies <= seen:
+        raise ValueError("every consumed assertion requires a disposition")
 
 
 def ledger(registry, results=(), *, budget=None, metrics=()):

@@ -905,6 +905,9 @@ def run(args):
     if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
         raise ValueError("question routing requires all-phase work goals")
     work_path = getattr(args, "work_plan", None)
+    if getattr(args, "resolve_checks", None) and (not work_path or not getattr(args, "resume_from", None)
+            or args.phase != "all" or getattr(args, "second_pass", "off") != "off"):
+        raise ValueError("scoped correction requires --work-plan, --resume-from and --phase all without a second pass")
     if getattr(args, "fact_audit_policy", None) and (not work_path or not getattr(args, "question_routing", False) or args.phase != "all"):
         raise ValueError("factual audits require all-phase work goals with explicit question routing")
     if not work_path and any(getattr(args, key, None) is not None for key in ("review_goal", "coverage_target", "cost_budget", "cost_rates")):
@@ -986,6 +989,17 @@ def run_locked(args):
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
     first_directory = outside(first_path, root) if first_path else None
+    correction_handoff_digest = None
+    correction_handoff = None
+    correction_ledger = None
+    correction_directory = first_directory
+    if first_directory and (first_directory / "source-review/resolution-handoff.json").is_file():
+        if second_mode == "off":
+            raise ValueError("correction handoff requires explicit Fast or Full native reconciliation")
+        import review_work
+        correction_handoff_digest = digest_file(first_directory / "source-review/resolution-handoff.json")
+        correction_handoff, correction_ledger, first_directory = review_work.read_resolution_handoff(
+            first_directory, root, sys.modules[__name__])
     if first_directory:
         first_record = read(first_directory / "worker.json")
         partial_work = first_directory / "source-review/work-ledger.json"
@@ -2028,7 +2042,8 @@ def run_locked(args):
                 "fast_max_claims":fast_max_claims if second_mode == "fast" else None,
                 "implementation_sha256":digest_file(second_pass.__file__),
                 "first_report_sha256":digest_file(first_directory / "findings.json") if first_directory else None,
-                "rates_sha256":digest_file(rates_path) if rates_path else None}
+                "rates_sha256":digest_file(rates_path) if rates_path else None,
+                "correction_handoff_sha256":correction_handoff_digest}
         recovered_change_pass = False
         if recovery:
             prior = read(recovery / "recovery.json")
@@ -2426,6 +2441,24 @@ def run_locked(args):
                     selection = second_pass.select_followups(list(all_rows.values()),
                         second_pass.followup_notes(first_directory or output, all_rows), scope=second_scope,
                         max_claims=fast_max_claims, contexts=claim_contexts)
+                    correction_context = []
+                    if correction_ledger:
+                        for item in correction_ledger["items"]:
+                            for rid, reason in item.get("native_reconsideration", {}).items():
+                                if rid in all_rows and all_rows[rid]["decision"] in second_scope:
+                                    correction_context.append({"review_id":rid, "case_id":item["id"], "reason":reason,
+                                        "check_results":item["check_results"], "actor":item["actor"], "conditions":item["conditions"]})
+                        nominated = list(dict.fromkeys(r["review_id"] for r in correction_context))
+                        selected_ids = nominated[:fast_max_claims]
+                        selection["selected"] = [{"review_id":rid, "decision":all_rows[rid]["decision"],
+                            "selection_source":"scoped_correction", "reasons":[{"reason":"conflicting_evidence",
+                                "question":"Reconcile this native decision with the corrected owner checks and original source."}]}
+                            for rid in selected_ids]
+                        selection["policy"] = "scoped-correction/v1"
+                        selection["limits"] = {"max_claims":fast_max_claims, "effective_cap":len(selected_ids)}
+                        selection["deferred"] = [{"review_id":rid, "reason":"fast_cap"} for rid in nominated if rid not in selected_ids]
+                        selection["excluded"] = [{"review_id":rid, "reason":"outside_correction_selection"}
+                            for rid in all_rows if rid not in nominated]
                     second_pass.write_options(output, selection, list(all_rows.values()), write,
                         source_directory=first_directory or output, contexts=claim_contexts)
                     narrowed = second_mode == "fast" or second_scope != second_pass.review_scope("all")
@@ -2478,7 +2511,8 @@ def run_locked(args):
                         first_directory=first_directory or output, output=output, task_base=task_base,
                         execute_stage=second_stage, finalize=finalize_second, write=write,
                         workers=workers, byte_limit=args.research_bytes, outside_scope=outside_scope, scope=second_scope,
-                        selection=selection if second_mode == "fast" else None, archive_baselines=False)
+                        selection=selection if second_mode == "fast" else None, archive_baselines=False,
+                        corrections=correction_context)
                     if narrowed:
                         for filename,request,data in requests:
                             finalize_combined(second_pass.brief({"results":[scoped_responses.get(rid,all_rows[rid]) for rid in data["review_ids"]]}), filename, request)
@@ -2699,10 +2733,25 @@ def run_locked(args):
             record["second_pass_export_error"] = type(error).__name__
             record["status"] = "incomplete"
     if work_followup:
+        if correction_handoff:
+            work_followup["correction_attempt"] = str(correction_directory)
+            work_followup["correction_handoff_sha256"] = correction_handoff_digest
+            if digest_file(correction_directory / "source-review/resolution-handoff.json") != correction_handoff_digest:
+                raise ValueError("correction handoff changed during native reconciliation")
         if (output / "second-pass.json").is_file():
             audit = read(output / "second-pass.json")
             work_followup["case_reconsideration"] = review_work.audit_case_gaps(
                 read(first_directory / "source-review/work-plan.json"), audit["results"])
+        if correction_handoff and (output / "second-pass.json").is_file() and (output / "findings.json").is_file():
+            native_rows = [r["response"] for r in read(output / "findings.json").get("decision_records", [])]
+            reconciled = review_work.reconciled_resolution(correction_directory, correction_handoff,
+                read(output / "second-pass.json"), native_rows, review_budget.snapshot(budget_path), sys.modules[__name__])
+            write(output / "work-ledger.json", reconciled)
+            write_text(output / "remaining-work.md", review_work.markdown(reconciled))
+            record["work_goal"] = {"goal":reconciled["goal"], "status":reconciled["target_status"],
+                "target_complete":reconciled["target_complete"], "ledger":str(output / "work-ledger.json")}
+            if reconciled["goal"] == "coverage" and not reconciled["target_complete"]:
+                record["status"] = "incomplete"
         record["work_followup"] = work_followup
         write(output / "work-followup.json", work_followup)
     if record["status"] not in ("admitted", "source_validated") and "package" in locals():
@@ -2776,6 +2825,7 @@ def main():
     parser.add_argument("--question-routing", action="store_true", help="work goals only: routine profile answers explicit source_fact checks; expert owns security decisions")
     parser.add_argument("--fact-audit-policy", help="optional bounded factual audit selection; uses the bound owner and original remaining allowance")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
+    parser.add_argument("--resolve-checks", help="resolve named reopened/unresolved work checks from --resume-from under its original allowance")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
     parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")

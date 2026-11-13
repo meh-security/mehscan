@@ -16,6 +16,88 @@ class Questions(unittest.TestCase):
         path=f.base/'audit-policy.json';path.write_text(json.dumps(policy))
         return command+['--fact-audit-policy',str(path)]
 
+    def test_scoped_correction_does_not_renew_exhausted_allowance(self):
+        f, command = self.prepare()
+        command += ['--max-calls','1']
+        self.assertEqual(self.invoke(command, owner_unresolved=True)[0], 0)
+        parent = f.base/'worker'
+        original = json.loads((parent/'source-review/work-ledger.json').read_text())
+        request = f.base/'resolve.json'
+        request.write_text(json.dumps(dict(schema_version='mehscanWorkResolution/v1', checks=[
+            dict(case_id=original['items'][0]['id'], check_ids=['authority'])])))
+        corrected = list(command)
+        corrected[corrected.index('--output')+1] = str(f.base/'corrected')
+        corrected += ['--resume-from',str(parent),'--resolve-checks',str(request)]
+        code, calls, record = self.invoke(corrected)
+        self.assertEqual(code, 2, record)
+        self.assertEqual(calls, [])
+        ledger = json.loads((f.base/'corrected/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['items'][0]['status'], 'investigated_unresolved')
+        self.assertEqual(ledger['budget']['reserved_calls'], 1)
+
+    def test_scoped_correction_saved_response_recovers_without_inference_replay(self):
+        f, command = self.prepare()
+        self.assertEqual(self.invoke(command, owner_unresolved=True)[0], 0)
+        parent = f.base/'worker'
+        report = json.loads((parent/'source-review/work-ledger.json').read_text())
+        request = f.base/'resolve.json'
+        request.write_text(json.dumps(dict(schema_version='mehscanWorkResolution/v1', checks=[
+            dict(case_id=report['items'][0]['id'], check_ids=['authority'])])))
+        corrected = list(command)
+        corrected[corrected.index('--output')+1] = str(f.base/'corrected')
+        corrected += ['--resume-from',str(parent),'--resolve-checks',str(request)]
+        write = worker.write
+        interrupted = []
+        def stop(path, value):
+            write(path, value)
+            if Path(path).name == '0-response.json' and not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt()
+        with patch.object(worker, 'write', side_effect=stop):
+            with self.assertRaises(KeyboardInterrupt):
+                self.invoke(corrected)
+        resumed = list(corrected)
+        resumed[resumed.index('--output')+1] = str(f.base/'recovered')
+        resumed[resumed.index('--resume-from')+1] = str(f.base/'corrected')
+        code, calls, record = self.invoke(resumed)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [])
+        ledger = json.loads((f.base/'recovered/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['items'][0]['calls'], 4)
+        self.assertEqual(next(c for c in ledger['items'][0]['check_results'] if c['check_id']=='authority')['status'], 'satisfied')
+
+    def test_scoped_correction_reuses_facts_and_preserves_sibling_checks(self):
+        f, command = self.prepare()
+        code, calls, record = self.invoke(command, owner_unresolved=True)
+        self.assertEqual(code, 0, record)
+        parent = f.base/'worker'
+        old = json.loads((parent/'source-review/work-ledger.json').read_text())
+        identity = old['items'][0]['id']
+        request = f.base/'resolve.json'
+        request.write_text(json.dumps(dict(schema_version='mehscanWorkResolution/v1',
+            checks=[dict(case_id=identity, check_ids=['authority'])])))
+        corrected = list(command)
+        corrected[corrected.index('--output')+1] = str(f.base/'corrected')
+        corrected += ['--resume-from', str(parent), '--resolve-checks', str(request)]
+        code, calls, record = self.invoke(corrected)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [('expert','investigator')])
+        report = json.loads((f.base/'corrected/source-review/work-ledger.json').read_text())
+        checks = {r['check_id']:r for r in report['items'][0]['check_results']}
+        self.assertEqual(checks['authority']['status'], 'satisfied')
+        self.assertEqual(checks['execution']['status'], 'unresolved')
+        self.assertTrue(report['items'][0]['native_reconsideration'])
+        self.assertEqual(json.loads((parent/'source-review/work-ledger.json').read_text()), old)
+        import review_work
+        handoff, saved, native_parent = review_work.read_resolution_handoff(f.base/'corrected', f.root, worker)
+        self.assertEqual(native_parent, parent)
+        self.assertEqual(saved, report)
+        ledger_path = f.base/'corrected/source-review/work-ledger.json'
+        ledger_path.write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'artifact changed'):
+            review_work.read_resolution_handoff(f.base/'corrected', f.root, worker)
+
+
     def test_factual_audit_uses_expert_and_separate_usage_before_owner(self):
         f,command=self.prepare()
         rates=f.base/'rates.json';rates.write_text(json.dumps(dict(currency='USD',models={model:dict(
@@ -207,6 +289,10 @@ class Questions(unittest.TestCase):
             if 'available_assertions' in task['research']:
                 for check in checks:
                     check['assertion_dependencies'] = task['research']['available_assertions'] if check['check_id'] == 'authority' else []
+                    if 'considered_assertions' in task['research']:
+                        check.update(conditions=[], limitations=[], assertion_dispositions=[dict(**ref,
+                            disposition='used', reason='Deciding shown predicate.', conditions=[])
+                            for ref in check['assertion_dependencies']])
             rows=[dict(assessment,review_id=rid) for rid in task['review_ids']]
             if q and bad_question and (not isinstance(bad_question,str) or case_id==bad_question):
                 rows=[dict(assessment,review_id='forbidden')]
@@ -214,7 +300,7 @@ class Questions(unittest.TestCase):
         with patch.object(worker,'execute',side_effect=execute),patch.object(sys,'argv',[worker.__file__,*command[3:]]):
             code=worker.main()
         record=json.loads((Path(command[command.index('--output')+1])/'worker.json').read_text())
-        self.assertIn(record['status'],('admitted','incomplete'),record)
+        self.assertIn(record['status'],('admitted','incomplete','source_validated'),record)
         return code,calls,record
 
     def test_saved_factual_answers_survive_interruption_before_owner(self):
@@ -290,6 +376,7 @@ class Questions(unittest.TestCase):
             state = json.loads(db.execute('SELECT body FROM workspace').fetchone()[0])
         self.assertEqual(len(state['assertions']), 3)
         self.assertTrue(state['cases']['native']['dependencies']['authority'])
+        self.assertEqual(state['cases']['native']['owner_dispositions']['authority'][0]['disposition'], 'used')
         self.assertEqual(state['cases']['owner-only']['dependencies']['authority'], [])
         self.assertTrue(state['cases']['facts-only']['questions']['execution']['assertions'])
         self.assertTrue(next(row for row in ledger['items'] if row['id']=='native')['provisional_fact_answers'])

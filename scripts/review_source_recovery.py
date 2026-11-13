@@ -18,6 +18,8 @@ def seal(stage, binding, budget_path, lineage_output, worker):
         "lineage_output":str(lineage_output), "budget_policy":review_work._handoff_budget_policy(budget),
         "plans":{name:worker.digest_file(stage / name) for name in ("plan.json", "work-plan.json")},
         "usage_floor":usage_floor(budget)}
+    if (stage / "resolution-plan.json").is_file():
+        record["resolution_plan_sha256"] = worker.digest_file(stage / "resolution-plan.json")
     worker.write(stage / "source-recovery.json", record)
     return record
 
@@ -45,6 +47,11 @@ def restore(parent, stage, binding, root, worker):
         raise ValueError("source recovery source/work/provider/controller binding changed")
     if set(record.get("plans", {})) != {"plan.json", "work-plan.json"}:
         raise ValueError("source recovery requires both bound plans")
+    if record.get("resolution_plan_sha256"):
+        path = old / "resolution-plan.json"
+        if path.is_symlink() or worker.digest_file(path) != record["resolution_plan_sha256"]:
+            raise ValueError("scoped resolution plan changed")
+        shutil.copyfile(path, stage / "resolution-plan.json")
     for name, digest in record["plans"].items():
         if name not in ("plan.json", "work-plan.json") or worker.digest_file(old / name) != digest:
             raise ValueError("source recovery plan changed")

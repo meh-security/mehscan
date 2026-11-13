@@ -107,6 +107,42 @@ class CaseState(AtomicState):
 
     def _action(self, state, action, operation_key):
         kind = action["kind"]
+        if kind == "resolve":
+            case = state["cases"][action["case_id"]]
+            ticket = action["ticket"]
+            if ticket != self._resolution_ticket(state, action["case_id"], ticket["check_ids"]):
+                raise ValueError("scoped resolution became stale")
+            result = self._read_result(action["result"])
+            if result.get("resolution_ticket") != ticket:
+                raise ValueError("resolution requires a result bound to its ticket")
+            case.setdefault("resolution_attempts", []).append({"ticket":copy.deepcopy(ticket), "result":action["result"]})
+            if result.get("status") != "complete":
+                return {"case_id":action["case_id"], "check_ids":ticket["check_ids"], "status":"incomplete"}
+            draft = result["draft"]
+            if draft.get("results") or draft.get("proposals"):
+                raise ValueError("scoped check resolution cannot replace native verdicts")
+            from review_work import check_results
+            available = [{"assertion_id":aid, "version":history[-1]["version"]}
+                for aid, history in state["assertions"].items() if history[-1]["status"] == "available"]
+            considered = [{"assertion_id":aid, "version":entry["version"]}
+                for aid, history in state["assertions"].items() for entry in history]
+            check_results([{"id":value} for value in ticket["check_ids"]], draft.get("work_checks"), available, considered)
+            evidence = self._capture(state, result["proofs"])
+            offered = {(p["path"], p["start_line"], p["end_line"]) for p in result["proofs"]}
+            for row in draft["work_checks"]:
+                if any((p["path"], p["start_line"], p["end_line"]) not in offered for p in row["evidence"]):
+                    raise ValueError("resolution cites source outside validated proofs")
+                self.validate_dependencies(state, row["assertion_dependencies"])
+                check_id = row["check_id"]
+                case["dependencies"][check_id] = copy.deepcopy(row["assertion_dependencies"])
+                case.setdefault("owner_dispositions", {})[check_id] = copy.deepcopy(row["assertion_dispositions"])
+                case.setdefault("resolved_checks", {})[check_id] = {"result":action["result"], "answer":copy.deepcopy(row)}
+                case["reconsideration"].pop(check_id, None)
+            case["evidence"] = sorted(set(case["evidence"] + evidence))
+            for review_id in case.get("verify_review_ids", []):
+                case["native_reconsideration"][review_id] = "Owner check corrected; reconcile the native proof through normal admission."
+            case.setdefault("resolutions", []).append({"ticket":copy.deepcopy(ticket), "result":action["result"]})
+            return {"case_id":action["case_id"], "check_ids":ticket["check_ids"]}
         if kind == "fact_audit":
             aid, version = action["assertion_id"], action["version"]
             history = state["assertions"].get(aid, [])
@@ -203,7 +239,15 @@ class CaseState(AtomicState):
                     if result.get("authority", "").startswith("Factual propositions answered"):
                         deps = case["questions"].get(row["check_id"], {}).get("assertions", [])
                     self.validate_dependencies(state, deps)
+                    from review_work import validate_dispositions
+                    offered = [{"assertion_id":aid, "version":entry["version"]}
+                        for aid, history in state["assertions"].items() for entry in history]
+                    validate_dispositions({**row, "assertion_dependencies":deps}, offered)
+                    case.setdefault("owner_dispositions", {})[row["check_id"]] = copy.deepcopy(row.get("assertion_dispositions", []))
                     dependencies[row["check_id"]] = copy.deepcopy(deps)
+                if case.get("resolved_checks"):
+                    case.setdefault("resolution_history", []).extend(case.get("resolutions", []))
+                    case["resolved_checks"], case["resolutions"], case["resolution_attempts"] = {}, [], []
                 case["reconsideration"] = {}
                 case["native_reconsideration"] = {}
                 case["dependencies"] = dependencies
@@ -221,6 +265,33 @@ class CaseState(AtomicState):
             history[-1].update(status="disputed", dispute_reason=action["reason"])
             return self._invalidate(state, aid, action["reason"])
         raise ValueError("unknown case state action")
+
+    def _resolution_ticket(self, state, case_id, check_ids):
+        case = state["cases"][case_id]
+        if (not isinstance(check_ids, list) or not check_ids or any(not isinstance(v, str) for v in check_ids)
+                or len(set(check_ids)) != len(check_ids) or not set(check_ids) <= set(case["checks"])):
+            raise ValueError("resolution requires distinct existing check identities")
+        if not case["result"]:
+            raise ValueError("resolution requires an existing owner result")
+        self._fresh(state, case["evidence"])
+        prior = self._read_result(case["result"])
+        answers = {row["check_id"]:row for row in prior.get("draft", {}).get("work_checks", [])}
+        answers.update({key:value["answer"] for key, value in case.get("resolved_checks", {}).items()})
+        if any(identity not in case["reconsideration"] and answers.get(identity, {}).get("status")
+                not in ("unresolved", "not_checked") and (prior.get("status") == "complete" or identity in case.get("resolved_checks", {})) for identity in check_ids):
+            raise ValueError("resolution requires reopened or unresolved checks")
+        return {"case_id":case_id, "check_ids":sorted(check_ids), "binding":copy.deepcopy(state["binding"]),
+            "basis":context.digest({"result":case["result"], "resolved_checks":case.get("resolved_checks", {}),
+                "reconsideration":case["reconsideration"], "assertions":state["assertions"]})}
+
+    def resolution_ticket(self, case_id, check_ids):
+        with self.lock:
+            return self._resolution_ticket(self.snapshot(), case_id, check_ids)
+
+    def record_resolution(self, ticket, result_path):
+        ref = self.result_reference(result_path)
+        return self.submit(context.digest(["resolve", ticket, ref]),
+            {"kind":"resolve", "case_id":ticket["case_id"], "ticket":ticket, "result":ref})
 
     def record_question(self, case_id, check, result_path):
         ref = self.result_reference(result_path)
@@ -247,6 +318,36 @@ class CaseState(AtomicState):
                     continue
                 row = self._read_result(case["result"]) if case["result"] else {
                     "case_id":case_id, "status":case["execution"], "calls":0}
+                if case.get("resolved_checks") and row.get("status") != "complete":
+                    # Explicit owner correction can salvage an incomplete parent.
+                    # Only validated available facts survive; every other check stays open.
+                    answers = {}
+                    for saved in case["questions"].values():
+                        for ref in saved["assertions"]:
+                            assertion = state["assertions"][ref["assertion_id"]][-1]
+                            self._fresh(state, assertion["evidence"])
+                            if assertion["version"] == ref["version"] and assertion["status"] == "available":
+                                answers[assertion["answer"]["check_id"]] = copy.deepcopy(assertion["answer"])
+                    row["status"] = "complete"
+                    row["draft"] = {"results":[], "proposals":[], "coverage":[], "work_checks":[answers.get(check_id, {
+                        "check_id":check_id, "status":"not_checked", "summary":"No settled owner answer retained.",
+                        "evidence":[], "next_deciding_fact":"Resolve this required check from deciding source."}) for check_id in case["checks"]]}
+                    row.setdefault("proofs", [])
+                    row.setdefault("inspected", [])
+                    row.setdefault("proposals", [])
+                if case.get("resolution_attempts", case.get("resolved_checks")) and row.get("status") == "complete":
+                    for index, answer in enumerate(row["draft"]["work_checks"]):
+                        replacement = case.get("resolved_checks", {}).get(answer["check_id"])
+                        if replacement:
+                            self._read_result(replacement["result"])
+                            row["draft"]["work_checks"][index] = copy.deepcopy(replacement["answer"])
+                    row["resolutions"] = copy.deepcopy(case.get("resolutions", []))
+                    for resolution in case.get("resolution_attempts", case.get("resolutions", [])):
+                        update = self._read_result(resolution["result"])
+                        for counter in ("calls", "queries", "bytes", "unknown_provider_calls", "seconds"):
+                            row[counter] = row.get(counter, 0) + update.get(counter, 0)
+                        for field in ("proofs", "facts", "inspected"):
+                            row.setdefault(field, []).extend(copy.deepcopy(update.get(field, [])))
                 self._fresh(state, case["evidence"])
                 row["reconsideration"] = copy.deepcopy(case["reconsideration"])
                 row["native_reconsideration"] = copy.deepcopy(case.get("native_reconsideration", {}))
@@ -263,6 +364,7 @@ class CaseState(AtomicState):
                             if assertion["version"] != dep["version"] or assertion["status"] != "available":
                                 check.update(status="not_checked", next_deciding_fact="Factual assertion requires reconsideration.")
                         partial.append(check)
+                row["owner_dispositions"] = copy.deepcopy(case.get("owner_dispositions", {}))
                 row["partial_fact_checks"] = partial
                 row["provisional_fact_answers"] = copy.deepcopy(case["questions"])
                 row["factual_audits"] = copy.deepcopy(list(case.get("factual_audits", {}).values()))

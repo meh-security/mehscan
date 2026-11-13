@@ -13,7 +13,9 @@ Refuting one suspected writer, token branch or input path settles only that
 hypothesis; preserve other evidenced producers relevant to the selected effect.
 A helper named deny, a random secret or a sample-file label is not its effective
 security contract. For a negative that depends on those premises, inspect the
-deciding rejection behavior or relevant contents/consumer. Reuse supplied source
+deciding rejection behavior or relevant contents/consumer. When a conclusion relies on a supplied interpretation, challenge its consequential
+premise here and preserve any qualification or rejection in the owner response.
+Reuse supplied source
 facts, but recheck this caller's arguments, branch and authority separately.
 This check uses the current investigation, without a required additional turn.
 <!-- /runtime:final_proof -->

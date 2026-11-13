@@ -52,6 +52,63 @@ class Cases(unittest.TestCase):
         self.store.record_result(case_id, path)
         return path
 
+    def test_explicit_resolution_salvages_incomplete_parent_without_closing_missing_check(self):
+        self.store.record_result("ai-only", self.write("failed", dict(case_id="ai-only", status="incomplete", calls=1)))
+        ticket = self.store.resolution_ticket("ai-only", ["fact"])
+        answer = copy.deepcopy(self.answer["draft"]["work_checks"][0])
+        answer.update(assertion_dependencies=[], assertion_dispositions=[])
+        path = self.write("salvage", dict(status="complete", calls=1, proofs=[self.proof], resolution_ticket=ticket,
+            draft=dict(results=[], proposals=[], work_checks=[answer])))
+        self.store.record_resolution(ticket, path)
+        row = next(r for r in self.store.results() if r["case_id"] == "ai-only")
+        self.assertEqual(row["draft"]["work_checks"][0]["status"], "satisfied")
+        self.assertEqual(row["draft"]["work_checks"][1]["status"], "not_checked")
+        self.assertEqual(row["calls"], 2)
+
+    def test_failed_resolution_keeps_original_gap_and_accounts_usage_once(self):
+        refs = self.question()
+        self.finish("ai-only", refs)
+        self.store.submit("challenge", dict(kind="dispute", **refs[0], reason="Missing branch."))
+        ticket = self.store.resolution_ticket("ai-only", ["security"])
+        path = self.write("failed-resolution", dict(status="incomplete", calls=1, unknown_provider_calls=1,
+            resolution_ticket=ticket, facts=[], inspected=[]))
+        self.store.record_resolution(ticket, path)
+        self.store.record_resolution(ticket, path)
+        result = next(r for r in self.store.results() if r["case_id"] == "ai-only")
+        self.assertEqual(result["calls"], 2)
+        self.assertEqual(result["unknown_provider_calls"], 1)
+        self.assertIn("security", result["reconsideration"])
+        self.assertEqual(result["draft"]["work_checks"][1]["summary"], "Scoped source proof.")
+
+    def test_scoped_resolution_preserves_siblings_history_and_rejects_stale_ticket(self):
+        refs = self.question()
+        original = self.finish("ai-only", refs)
+        original_bytes = original.read_bytes()
+        with self.assertRaisesRegex(ValueError, "reopened or unresolved"):
+            self.store.resolution_ticket("ai-only", ["security"])
+        self.store.submit("challenge", dict(kind="dispute", **refs[0], reason="Missing branch."))
+        ticket = self.store.resolution_ticket("ai-only", ["security"])
+        row = dict(check_id="security", status="satisfied", summary="Independent deciding proof.",
+            evidence=[{k:self.proof[k] for k in ("path", "start_line", "end_line")}],
+            next_deciding_fact=None, assertion_dependencies=[], assertion_dispositions=[dict(**refs[0],
+                disposition="rejected", reason="The original claim was too broad.", conditions=[])])
+        result = dict(status="complete", calls=1, proofs=[self.proof], resolution_ticket=ticket,
+            draft=dict(work_checks=[row], results=[], proposals=[]))
+        path = self.write("resolution", result)
+        self.store.record_resolution(ticket, path)
+        self.store.record_resolution(ticket, path)
+        projected = next(r for r in self.store.results() if r["case_id"] == "ai-only")
+        self.assertEqual(projected["calls"], 2)
+        self.assertEqual(projected["reconsideration"], {})
+        self.assertEqual(projected["draft"]["work_checks"][0]["summary"], "Scoped source proof.")
+        self.assertEqual(projected["draft"]["work_checks"][1]["summary"], "Independent deciding proof.")
+        self.assertEqual(original.read_bytes(), original_bytes)
+        newer = self.write("other-resolution", {**result, "calls":2})
+        with self.assertRaises(ValueError):
+            self.store.record_resolution(ticket, newer)
+        self.store.submit("same-dispute", dict(kind="dispute", **refs[0], reason="Still disputed."))
+        self.assertEqual(next(r for r in self.store.results() if r["case_id"] == "ai-only")["reconsideration"], {})
+
     def test_assertions_survive_failed_owner_and_reopening_store(self):
         refs = self.question()
         failed = self.write("failed", dict(case_id="native", status="incomplete", calls=1))

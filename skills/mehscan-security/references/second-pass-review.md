@@ -195,3 +195,13 @@ uncertainty. Preserve supported adjacent mechanisms as source leads without
 changing the selected question. Byte-exact source and agreement do not make
 training labels ground truth. Return concise claims, not investigation narratives.
 <!-- /runtime:second_pass_compare -->
+
+
+A scoped source correction may export a bound resolution handoff. Native
+`--first-pass` can point to that correction directory: the controller uses its
+original native baseline and shared allowance. Corrected owner checks are
+interpretations to test against original source, not mandatory replacement verdicts.
+Fast selects pending correction IDs within its cap; Full keeps its independent
+stage before comparing them. The new work ledger retains source gaps and any native
+reconciliation that remains unresolved or unexecuted. See
+[scoped correction](work-goals.md#scoped-correction-of-saved-checks).

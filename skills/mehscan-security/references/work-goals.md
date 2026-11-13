@@ -447,6 +447,21 @@ source proof or rejected suggestion. Inspect the deciding original evidence and
 caller conditions. These declarations track recorded reliance; they cannot prove
 that an interpretation is correct or expose every influence on a model's answer.
 
+When the controller supplies `considered_assertions`, owner checks also return
+`conditions`, `limitations`, and `assertion_dispositions`. Each consequential
+interpretation records its exact assertion ID/version, `used`, `qualified`, or
+`rejected`, a short `reason`, and applicable `conditions`. A qualification requires
+nonempty conditions. Used/qualified assertions must also be dependencies; rejected
+assertions must not be dependencies. An empty disposition list is valid for an
+independent proof with no consequential supplied interpretation. Do not create
+an assessment of every irrelevant fact.
+
+Considered assertions can include a challenged version that is absent from the
+available dependency list. Reject that interpretation and establish any replacement
+conclusion from deciding original source. These records describe the owner's
+reasoning; rejection alone neither proves the auditor correct nor erases the
+original answer. Preserve conditions and limitations when exporting the check.
+
 A controller dispute or replacement retains assertion history and reopens only
 checks that recorded reliance on it. Reopened checks lose completed-coverage
 status and name the reason for reconsideration. Independent checks retain their
@@ -540,3 +555,35 @@ Ordinary owners challenge consequential supplied interpretations during their
 existing investigation. Keep separate factual audits optional for suspected
 recurring errors, consequential reuse or reproducible quality samples. An audit
 challenge is provisional disagreement, not an owner-confirmed error count.
+
+
+### Scoped correction of saved checks
+
+Use `--resolve-checks REQUEST.json` with the original work-plan invocation,
+`--resume-from PREVIOUS` and a new output directory to resolve named unresolved or
+reopened checks. The request has `schema_version: mehscanWorkResolution/v1` and a
+`checks` list of objects containing `case_id` and `check_ids`. Select the actual
+remaining question; do not turn the correction into another first pass.
+
+This authorizes only the named owner work, using saved factual answers and original
+source. Independent sibling conclusions remain intact. Qualified/rejected assertions
+remain attributed; changed source, stale correction tickets and unknown paid calls
+prevent silent reuse. Each attempt keeps the original allowance and per-case limits.
+A completed native first pass can supply source evidence without reactivating its
+retired native claim. Correction itself does not write native verdicts.
+
+Resume an interrupted correction from its latest output with the same request.
+The controller can finalize a saved response without new inference and reuses
+already committed corrections. Failed attempts retain their usage and unresolved
+scope; recovery does not buy replacement calls. Once requested attempts have
+completed, a new request may name different remaining checks.
+
+When corrected checks affect Verify IDs, native reconciliation remains pending.
+For an already requested native follow-up, use the correction directory as
+`--first-pass` with normal Fast/Full arguments. Its bound handoff supplies corrected
+checks and the original allowance. Fast selects affected IDs within its cap and
+lists deferred IDs. Full performs independent verification before comparison.
+Only supported admitted reconciliation settles the native gap in the new work
+ledger. Historical reports and the original native decisions remain preserved.
+See [worker instructions](../../../docs/review-worker.md#resolve-named-source-checks)
+for the request example and output details.
