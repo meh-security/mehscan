@@ -71,8 +71,12 @@ def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=No
     """Every controller-owned inference shares the same admission ledger."""
     if budget_path and lease is None:
         lease = review_budget.reserve(budget_path, frame["kind"])
+    failure = None
     try:
         return execute(command, cwd, env, timeout, json.dumps(frame))
+    except Exception as error:
+        failure = error
+        raise
     finally:
         if lease is not None:
             try:
@@ -81,7 +85,10 @@ def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=No
             except Exception:
                 receipt = None
             if not review_budget.finish(budget_path, lease, receipt):
-                raise ValueError("provider input usage is unknown; shared review budget fenced")
+                detail = "provider input usage is unknown; shared review budget fenced"
+                if failure is not None:
+                    detail += "; original failure: " + type(failure).__name__ + ": " + str(failure)[:1000]
+                raise ValueError(detail) from failure
 
 
 def reply_validation_feedback(error, task):

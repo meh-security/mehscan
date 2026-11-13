@@ -8,6 +8,10 @@ the session, token, tenant key or workflow state it trusts; follow a relevant
 writer or lifecycle transition when supplied bindings point to one. Preserve
 order, persistence and reaching conditions. A complete local SQL grammar,
 transformation or numeric control can settle its property without a caller audit.
+For a claimed write-before-rejection failure, establish that the proposed input
+passes the entry point's actual request validation and filters. A late check in
+the callee alone does not establish that path; distinguish attacker-reachable
+invalid input from an infrastructure failure after a valid request.
 Retrieve only a deciding missing fact; otherwise retain the precise uncertainty.
 Refuting one suspected writer, token branch or input path settles only that
 hypothesis; preserve other evidenced producers relevant to the selected effect.

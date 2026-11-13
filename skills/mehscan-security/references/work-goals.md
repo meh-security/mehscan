@@ -221,12 +221,20 @@ than buying a separate model call to classify each check. For each selected
 control or suspected failure:
 
 - Reuse deciding facts already available in cited source or native/compiler
-  context. Do not create a paid question just to repeat them.
+  context. Check the actual owner packet and shared facts, not only the named
+  focus range: a surrounding assignment may already contain the helper. Keep
+  straightforward extraction from an already visible short wrapper with the
+  owner; source preparation alone does not establish a benefit from another
+  model call.
 - Choose a remaining factual proposition only if its answer changes the owner's
   next decision. Name its actual producer, consumer or registration edge, bounded
   scope and deciding evidence. Prefer one useful preparation question per item;
   combine repeated caller questions when they share the deciding implementation,
   preserving different caller conditions and repair points.
+- Before naming a helper as a prerequisite, match the call's receiver or declaring
+  type and signature to that implementation. A unique name in a sampled index
+  is not a call binding. If that relationship is unknown, retain it as an owner
+  gap rather than describing an arbitrary same-named body as the callee.
 - Keep authorization policy, conflicting effective bindings, deployment assumptions,
   dependency guarantees, actor/victim impact and dismissal decisions with the
   owner. Split a factual prerequisite from that decision only when it saves

@@ -143,6 +143,19 @@ class Budget(unittest.TestCase):
         self.assertEqual(execute.call_count, 1)
         self.assertEqual(self.state()["reserved_calls"], 1)
 
+    def test_unknown_usage_preserves_timeout_cause_without_reopening_budget(self):
+        frame = {"kind": "source_review", "conversation_id": "conversation", "research": {"round": 0}}
+        failure = TimeoutError("review command timed out")
+        with patch.object(worker, "execute", side_effect=failure) as execute, \
+                patch.object(worker, "observed_turn", return_value=None):
+            with self.assertRaisesRegex(ValueError, "original failure: TimeoutError: review command timed out") as caught:
+                worker.execute_provider([], self.path.parent, {}, 10, frame, None, self.path)
+            self.assertIs(caught.exception.__cause__, failure)
+            with self.assertRaises(budget.BudgetExhausted):
+                worker.execute_provider([], self.path.parent, {}, 10, frame, None, self.path)
+        self.assertEqual(execute.call_count, 1)
+        self.assertTrue(self.state()["fenced"])
+
     def test_lock_selects_windows_and_posix_primitives(self):
         handle = Mock()
         handle.fileno.return_value = 7
