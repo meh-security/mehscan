@@ -14,8 +14,24 @@ import review_scheduler
 import review_domains
 import review_work
 import review_questions
+import review_source_recovery as source_recovery
 from review_case_state import CaseState
 import review_orchestration
+
+
+def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
+    """Resume only the same source, target, policy and trusted controller."""
+    modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py",
+        "review_questions.py", "review_case_state.py", "review_evidence.py", "review_budget.py",
+        "review_orchestration.py", "review_context.py", "review_domains.py", "review_scheduler.py")
+    return {"package_id":package["package_id"], "plan_id":plan["plan_id"],
+        "store":str(Path(args.store).resolve()), "stream":args.stream,
+        "manifest_sha256":worker.digest_file(args.work_plan), "commands":commands, "scanner_sha256":scanner_sha,
+        "controller":{name:worker.digest_file(Path(__file__).with_name(name)) for name in modules},
+        "options":{name:getattr(args, name, None) for name in (
+            "review_goal", "coverage_target", "max_calls", "input_token_budget", "admission_seconds", "cost_budget",
+            "include_supporting_source", "domain_session_mode", "question_routing")},
+        "rates_sha256":worker.digest_file(args.cost_rates) if getattr(args, "cost_rates", None) else None}
 
 
 def selection_options(plan):
@@ -269,14 +285,19 @@ def run(args, legacy, worker):
         )
     if not 1 <= args.workers <= 16:
         raise ValueError("review workers must be 1 to 16")
+    source_resume = None
+    lineage_output = output
     if getattr(args, "resume_from", None):
         previous = Path(args.resume_from) / "source-review/summary.json"
         if not previous.is_file():
             if (Path(args.resume_from) / "source-review").is_dir():
-                raise ValueError(
-                    "source review stopped before handoff; automatic continuation is unsupported, and no replacement model calls were made"
-                )
-            return legacy(args)
+                if not getattr(args, "work_plan", None) or not (previous.parent / "source-recovery.json").is_file():
+                    raise ValueError("source recovery requires the original work plan and a bound checkpoint")
+                source_resume = Path(args.resume_from)
+                args.resume_from = None
+            else:
+                return legacy(args)
+    if getattr(args, "resume_from", None):
         data = worker.read(previous)
         if data.get("work_review"):
             handoff, data, inherited_budget = review_work.read_handoff(Path(args.resume_from), root, worker)
@@ -524,12 +545,22 @@ def run(args, legacy, worker):
         managed_calls = getattr(args, "max_calls", 40)
         if question_routing:
             managed_calls = min(managed_calls, runtime["orchestration"]["run_limits"]["model_calls"])
-        review_budget.initialize(budget_path, max_calls=managed_calls,
-            input_limit=getattr(args, "input_token_budget", 1_500_000),
-            admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
-            started_at=started_epoch if work_registry else None)
+        if source_resume:
+            recovery_binding = source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker)
+            recovered = source_recovery.restore(source_resume, stage, recovery_binding, root, worker)
+            budget_path = Path(recovered["budget_path"])
+            lineage_output = Path(recovered["lineage_output"])
+            source_recovery.settle_interrupted(stage, budget_path, worker)
+        else:
+            review_budget.initialize(budget_path, max_calls=managed_calls,
+                input_limit=getattr(args, "input_token_budget", 1_500_000),
+                admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
+                started_at=started_epoch if work_registry else None)
         args._review_budget = str(budget_path)
         if work_registry:
+            source_recovery.seal(stage,
+                source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker),
+                budget_path, lineage_output, worker)
             report = review_work.ledger(work_registry, budget=review_budget.snapshot(budget_path))
             worker.write(stage / "work-ledger.json", report)
             worker.write_text(stage / "remaining-work.md", review_work.markdown(report))
@@ -592,9 +623,9 @@ def run(args, legacy, worker):
     guidance = context.guidance_catalog(skill)
     if domain_registry:
         for domain in domain_registry["domains"]:
-            session_id = context.digest([package["package_id"], "domain", domain["id"], str(output)])
+            session_id = context.digest([package["package_id"], "domain", domain["id"], str(lineage_output)])
             members = [{"id": case["id"], "assignment_id": case["assignment_id"],
-                "conversation_id": context.digest([package["package_id"], "source_review", case["id"] if work_registry else case["assignment_id"], str(output)]),
+                "conversation_id": context.digest([package["package_id"], "source_review", case["id"] if work_registry else case["assignment_id"], str(lineage_output)]),
                 "review_ids": case["verify_review_ids"]} for case in domain["cases"]]
             paths = [w["path"] for case in domain["cases"] for a in plan["assignments"]
                      if a["id"] == case["assignment_id"] for w in a["windows"]]
@@ -606,7 +637,8 @@ def run(args, legacy, worker):
             "cases": [c["id"] for c in d["cases"]]} for d in domain_registry["domains"]],
             "verification_ids": ids, "lead_count": len(domain_registry["lead_accounting"]),
             "authority": "Cases share source facts and a provider thread; verdicts remain case-specific. Cover/Context roles have no native verdict obligation."})
-    source_metrics = []
+    source_metrics = source_recovery.receipts(stage, worker) if source_resume else []
+    inherited_source_calls = len(source_metrics)
     reuse_jobs = {}
     partial_windows = []
     reuse_paths = getattr(args, "reuse_source_results", None) or []
@@ -659,12 +691,20 @@ def run(args, legacy, worker):
 
     preparation_broker = worker.EvidenceBroker()
     question_budget = (review_orchestration.SharedReviewBudget(stage / "question-budget.json",
-        runtime["orchestration"], worker.write) if question_routing else None)
-    case_store = (CaseState.create(stage / "case-state.sqlite", root, {
+        runtime["orchestration"], worker.write,
+        previous=stage / "question-budget.json" if source_resume else None) if question_routing else None)
+    case_binding = {
         "source_plan_id":work_registry["source_plan_id"],
         "source_fingerprint":work_registry["source_fingerprint"],
-        "work_package_id":package["package_id"], "work_plan_digest":context.digest(work_registry["items"])},
-        work_registry) if work_registry else None)
+        "work_package_id":package["package_id"], "work_plan_digest":context.digest(work_registry["items"])} if work_registry else None
+    case_store = ((CaseState(stage / "case-state.sqlite", case_binding) if source_resume else
+        CaseState.create(stage / "case-state.sqlite", root, case_binding, work_registry)) if work_registry else None)
+    recovery_cases = {identity for identity, case in case_store.snapshot()["cases"].items()
+                      if case["execution"] != "unstarted"} if source_resume else set()
+    recovery_jobs = {path.parent.name for pattern in ("*/recovery.json", "*/result.json")
+                     for path in (stage / "jobs").glob(pattern)} if source_resume else set()
+    if source_resume:
+        source_recovery.claim_successor(source_resume, stage, worker)
 
     def completion_remaining(case_id):
         return review_budget.snapshot(budget_path).get("completion_holds", {}).get(case_id, {}).get("remaining", 0)
@@ -697,9 +737,13 @@ def run(args, legacy, worker):
             # Cached lookups also consume the recipient's bounded research units.
             question_budget.reserve(case_id, "queries", units)
             usage["queries"] += units
+            preparation_usage_path = stage / "preparation" / (context.digest([case_id, "usage"]) + ".json")
+            preparation_usage_path.parent.mkdir(exist_ok=True)
+            worker.write(preparation_usage_path, usage)
             result, reused = preparation_broker.get(key, load, timeout)
             size = len(json.dumps(result, ensure_ascii=False).encode("utf8"))
             usage["bytes"] += size
+            worker.write(preparation_usage_path, usage)
             question_budget.reserve(case_id, "bytes", size)
         except (review_orchestration.BudgetExhausted, worker.CommandFailure, TimeoutError) as error:
             return {"status":"not_ready", "reason":str(error), "request":spec}, None
@@ -731,7 +775,10 @@ def run(args, legacy, worker):
             job_id = context.digest([job_id, "question", question["id"]])
             assignment = {**assignment, "review_ids": []}
         directory = stage / "jobs" / job_id
-        directory.mkdir(parents=True)
+        directory.mkdir(parents=True, exist_ok=bool(source_resume))
+        offline = bool(source_resume and job_id in recovery_jobs)
+        if offline and (directory / "result.json").is_file():
+            return worker.read(directory / "result.json")
         prior_job = reuse_jobs.get(assignment["id"])
         if prior_job and prior_job[0] != assignment:
             result = {"assignment_id": assignment["id"], "status": "incomplete", "review_ids": assignment["review_ids"],
@@ -877,7 +924,7 @@ def run(args, legacy, worker):
                 "Do not repeat source searches simply to recreate the question worker's evidence. Conflicting or incomplete answers remain unresolved.")
         worker.write(directory / "context.json", packet)
         conversation = context.digest(
-            [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(output),
+            [package["package_id"], "source_review", assignment.get("_work_item_id", job_id), str(lineage_output),
              *([["question", question["id"]]] if question is not None else [])]
         )
         facts = copy.deepcopy(domain_state["facts"]) if domain_state else []
@@ -958,8 +1005,38 @@ def run(args, legacy, worker):
                 facts.append(fact)
                 offer_source(prepared, "f" + str(len(facts) - 1))
 
+        checkpoint_binding = context.digest([packet, command_binding, provider, conversation])
+
+        def save_checkpoint(phase, turn, lease=None):
+            if work_registry:
+                source_recovery.save(directory / "recovery.json", checkpoint_binding, phase,
+                    {"turn":turn, "provider":provider, "lease":lease, "last":last,
+                     "facts":facts, "inspected":inspected, "citation_windows":citation_windows,
+                     "queries":queries, "bytes":received, "calls":calls, "unknown_provider_calls":unknown_calls,
+                     "seconds":time.monotonic() - started}, budget_path, worker)
+
         try:
-            for turn in range(local_rounds + 1):
+            if offline:
+                saved = source_recovery.checkpoint(directory / "recovery.json", checkpoint_binding, worker)
+                if saved:
+                    facts, inspected, citation_windows = saved["facts"], saved["inspected"], saved["citation_windows"]
+                    queries, received, calls, unknown_calls = (saved[k] for k in ("queries", "bytes", "calls", "unknown_provider_calls"))
+                    started -= saved["seconds"]
+                    last = saved["last"]
+                    # A crash after the raw response write can precede the draft checkpoint.
+                    response_path = directory / (str(saved["turn"]) + "-response.json")
+                    if saved["phase"] == "inflight":
+                        receipt = worker.observed_turn(directory, {"conversation_id":conversation, "round":saved["turn"]},
+                            provider, require_complete_usage=False)
+                        if receipt or not runtime.get("provider") and response_path.is_file():
+                            unknown_calls = max(0, unknown_calls - 1)
+                            if response_path.is_file():
+                                last = worker.read(response_path).get("draft")
+                if last is None:
+                    raise ValueError("Interrupted source research retained; no automatic replacement model call")
+            else:
+                save_checkpoint("ready", 0)
+            for turn in (() if offline else range(local_rounds + 1)):
                 if native(["state", "work", *common, *runtime_options]) != package:
                     raise ValueError("source work was superseded")
                 if context.skill_bundle_id(skill) != runtime["skill_bundle_id"]:
@@ -1091,6 +1168,7 @@ def run(args, legacy, worker):
                     worker.write(directory / (str(turn) + "-input.json"), frame)
                 calls += 1
                 unknown_calls += 1
+                save_checkpoint("inflight", turn, lease)
                 response = worker.execute_provider(command, directory, env, remaining(), frame,
                                                    provider, budget_path, lease=lease)
                 worker.write(directory / (str(turn) + "-response.json"), response)
@@ -1113,7 +1191,9 @@ def run(args, legacy, worker):
                     unknown_calls -= 1
                 if "draft" in response:
                     last = response["draft"]
+                    save_checkpoint("draft", turn, lease)
                     break
+                save_checkpoint("research", turn, lease)
                 if turn == local_rounds:
                     raise ValueError(
                         "source reviewer requested evidence after final consuming call"
@@ -1231,7 +1311,9 @@ def run(args, legacy, worker):
                     batch.append(item)
                     worker.write(directory / (str(turn) + "-lookups.json"), batch)
                     offer_source(result, "f" + str(len(facts) - 1))
+                    save_checkpoint("research", turn, lease)
                 worker.write(directory / (str(turn) + "-lookups.json"), batch)
+                save_checkpoint("ready", turn + 1)
             if last is None:
                 raise ValueError("source review did not finalize its assignment")
             if question is not None:
@@ -1467,8 +1549,14 @@ def run(args, legacy, worker):
                 if not question_budget:
                     for decision in routing.values():
                         decision.update(effective_route="owner", reason="Optional factual assistance is disabled.")
-                preparation_usage = {"queries":0, "bytes":0}
-                owner_prepared = []
+                saved_preparation_path = stage / "preparation" / (context.digest([case["id"], "case"]) + ".json")
+                saved_preparation = (worker.read(saved_preparation_path) if case["id"] in recovery_cases
+                    and saved_preparation_path.is_file() else {})
+                preparation.update(saved_preparation.get("readiness", {}))
+                preparation_usage_path = stage / "preparation" / (context.digest([case["id"], "usage"]) + ".json")
+                preparation_usage = (worker.read(preparation_usage_path) if case["id"] in recovery_cases
+                    and preparation_usage_path.is_file() else {"queries":0, "bytes":0})
+                owner_prepared = saved_preparation.get("source", [])
                 skipped_reason = "Question preparation did not start; owner reservation or source collection did not complete."
                 prepaid = None
                 fact_only = bool(question_budget and review_questions.fact_only(case))
@@ -1482,6 +1570,19 @@ def run(args, legacy, worker):
                             decision = routing[check["id"]]
                             if decision["effective_route"] != "prepare":
                                 continue
+                            if case["id"] in recovery_cases:
+                                # Offline finalization consumes original facts/answers only.
+                                if context.digest([job_directory, "question", check["id"]]) not in recovery_jobs:
+                                    decision.update(effective_route="blocked" if fact_only else "owner",
+                                        reason="Unstarted optional work skipped during recovery; owner retains the check.")
+                                    continue
+                                answer = assignment_job(assignment, question=check, supporting_cards=cards,
+                                    owner_required=not fact_only)
+                                answer["assertions"] = case_store.record_question(case["id"], check,
+                                    stage / "jobs" / context.digest([job_directory, "question", check["id"]]) / "result.json")
+                                answers.append((check, answer))
+                                decision.update(effective_route="fact_worker", reason="Saved source question; no replacement inference.")
+                                continue
                             if (question_budget.remaining(case["id"], "model_calls") <= completion_remaining(case["id"])
                                     or review_budget.capacity(budget_path)):
                                 skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
@@ -1492,6 +1593,8 @@ def run(args, legacy, worker):
                                 lambda spec: prepare_definition(case["id"], spec, preparation_usage))
                             owner_prepared.extend(prepared)
                             preparation[check["id"]] = readiness
+                            saved_preparation_path.parent.mkdir(exist_ok=True)
+                            worker.write(saved_preparation_path, {"readiness":preparation, "source":owner_prepared})
                             if readiness["status"] != "ready":
                                 decision.update(effective_route="blocked" if fact_only else "owner", reason=readiness["reason"])
                                 continue
@@ -1545,8 +1648,38 @@ def run(args, legacy, worker):
                 worker.write(stage / "jobs" / job_directory / "result.json", result)
                 return result
 
-            for job, result in review_scheduler.run({"ai": jobs}, execute_work, workers=args.workers, budget_path=budget_path,
-                    admit=admit_work):
+            def recover_then_schedule():
+                pending = []
+                saved_cases = case_store.snapshot()["cases"]
+                projected = {result["case_id"]:result for result in case_store.results()}
+                for job in jobs:
+                    case_id = job["id"]
+                    if source_resume and saved_cases[case_id]["result"]:
+                        # Keep the original immutable result reference and receipts.
+                        results.append(projected[case_id])
+                        review_budget.release_completion(budget_path, case_id)
+                    elif case_id in recovery_cases:
+                        job["completion"] = review_budget.snapshot(budget_path).get("completion_holds", {}).get(
+                            case_id, {"requested":0, "granted":0, "remaining":0})
+                        path = stage / "jobs" / context.digest(["work-item", case_id]) / "result.json"
+                        saved = worker.read(path) if path.is_file() else None
+                        if saved and saved.get("case_id") == case_id:
+                            review_budget.release_completion(budget_path, case_id)
+                            yield job, saved
+                        else:
+                            yield job, execute_work(job)
+                    else:
+                        # A hold may have been booked immediately before the start checkpoint.
+                        if source_resume and case_id in review_budget.snapshot(budget_path).get("completion_holds", {}):
+                            recovery_cases.add(case_id)
+                            job["completion"] = review_budget.snapshot(budget_path)["completion_holds"][case_id]
+                            yield job, execute_work(job)
+                        else:
+                            pending.append(job)
+                yield from review_scheduler.run({"ai":pending}, execute_work, workers=args.workers,
+                    budget_path=budget_path, admit=admit_work)
+
+            for job, result in recover_then_schedule():
                 result.update(case_id=job["id"], domain_id=job["id"])
                 with work_lock:
                     result_path = stage / "case-results" / (context.digest(job["id"]) + ".json")
@@ -1925,6 +2058,11 @@ def run(args, legacy, worker):
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
         summary["effective_args"].update(reviewer_command=args.reviewer_command, provider_contract=args.provider_contract)
+    if source_resume:
+        summary["recovery"] = {"parent":str(source_resume.resolve()), "lineage_origin":str(lineage_output),
+            "inherited_receipted_calls":inherited_source_calls,
+            "new_receipted_calls":len(source_metrics) - inherited_source_calls,
+            "elapsed_ms_scope":"Current recovery attempt; provider receipts retain prior turn durations."}
     if question_routing:
         summary["question_routing"] = {"routine":runtime["provider"], "owner":final_runtime["provider"],
             "budget":"question-budget.json", "authority":"Question answers are supporting evidence; expert owns security conclusions."}

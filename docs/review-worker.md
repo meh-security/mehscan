@@ -19,7 +19,7 @@ below describe the existing mixed source-selection path. Both paths retain nativ
 SQL/control facts and source-proof validation.
 
 Work plans support explicitly requested Fast/Full audits under their remaining
-allowance and recovery of native finalization from the saved source handoff.
+allowance and recovery of saved source answers or native finalization.
 Later native audits inherit the bound parent allowance; they do not repeat source
 discovery. The work-goal guide describes the supported continuation boundaries.
 
@@ -88,8 +88,15 @@ assignments and source-stage call counts. Canonical report scope includes a cove
 summary. Empty results do not certify a file safe. A failed assignment remains
 incomplete while successful siblings are retained; it does not trigger a replacement
 native model call. Source-stage usage contributes to total input, cache and output
-accounting. A source-stage interruption before handoff is retained for diagnosis;
-automatic continuation of those interrupted source conversations is not yet supported.
+accounting. For work plans, `--resume-from` with the unchanged original invocation
+and a new output directory retains completed factual/case results and finalizes
+saved final drafts without replaying inference. Unstarted cases or owners can use
+the original remaining allowance. Interrupted research stays incomplete with its
+saved facts; unknown dispatches fence new calls. Recovery retains the original
+budget ledger and deadlines, so the original attempt must remain available.
+Older attempts without a bound source checkpoint cannot recover before handoff.
+Resume from the latest attempt; recovery cannot fork from an already continued
+parent, and pre-handoff recovery requires the original native work to remain current.
 
 Use `--reuse-source-results PRIOR_OUTPUT` to reuse completed source assignments
 from a separate attempt after matching source, native selection, policy, provider

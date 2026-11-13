@@ -103,9 +103,52 @@ class Questions(unittest.TestCase):
             return {'draft':dict(results=rows,proposals=[],work_checks=checks,coverage=[{**{k:w[k] for k in ['path','start_line','end_line']},'status':'deferred' if q else 'examined','summary':'Only the named question.'} for w in windows])}
         with patch.object(worker,'execute',side_effect=execute),patch.object(sys,'argv',[worker.__file__,*command[3:]]):
             code=worker.main()
-        record=json.loads((self.f.base/'worker/worker.json').read_text())
+        record=json.loads((Path(command[command.index('--output')+1])/'worker.json').read_text())
         self.assertIn(record['status'],('admitted','incomplete'),record)
         return code,calls,record
+
+    def test_saved_factual_answers_survive_interruption_before_owner(self):
+        for boundary in ('owner_start', 'owner_draft', 'research'):
+            with self.subTest(boundary=boundary):
+                f,command=self.prepare()
+                original=worker.write
+                stopped=[]
+                def write(path,value):
+                    original(path,value)
+                    owner_start=(Path(path).name=='context.json' and value.get('job_binding',{}).get('profile')=='expert')
+                    owner_draft=(Path(path).name=='recovery.json' and value.get('phase')=='draft'
+                        and (value.get('provider') or {}).get('model')=='gpt-6-sol')
+                    research=(Path(path).name=='recovery.json' and value.get('phase')=='ready'
+                        and value.get('turn')==1 and (value.get('provider') or {}).get('model')=='gpt-6-luna')
+                    if not stopped and {'owner_start':owner_start, 'owner_draft':owner_draft, 'research':research}[boundary]:
+                        stopped.append(True)
+                        raise KeyboardInterrupt()
+                with patch.object(worker,'write',side_effect=write):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.invoke(command)
+                expected=2 if boundary=='research' else 3
+                self.assertEqual(len(self.call_cases),{'owner_start':2, 'owner_draft':3, 'research':1}[boundary])
+                parent=f.base/'worker/source-review'
+                with closing(sqlite3.connect(parent/'case-state.sqlite')) as db:
+                    old=json.loads(db.execute('SELECT body FROM workspace').fetchone()[0])
+                resumed=list(command)
+                resumed[resumed.index('--output')+1]=str(f.base/'recovered')
+                resumed+=['--resume-from',str(f.base/'worker')]
+                code,calls,record=self.invoke(resumed)
+                self.assertEqual(code,0,record)
+                self.assertEqual(calls,[] if boundary=='owner_draft' else [('expert','investigator')])
+                stage=f.base/'recovered/source-review'
+                with closing(sqlite3.connect(stage/'case-state.sqlite')) as db:
+                    new=json.loads(db.execute('SELECT body FROM workspace').fetchone()[0])
+                self.assertEqual(new['assertions'],old['assertions'])
+                self.assertEqual(bool(new['cases']['lower']['dependencies']['authority']),boundary!='research')
+                summary=json.loads((stage/'summary.json').read_text())
+                self.assertEqual(summary['calls'],expected)
+                self.assertEqual(summary['unknown_provider_calls'],0)
+                budget=json.loads((parent/'budget.json').read_text())
+                self.assertEqual(budget['reserved_calls'],expected)
+                self.assertEqual(len((stage/'provider-metrics.jsonl').read_text().splitlines()),expected)
+                self.assertEqual(summary['recovery']['new_receipted_calls'],len(calls))
 
     def test_native_ai_only_fact_only_and_owner_routes_share_one_bound_run(self):
         f,command=self.prepare()

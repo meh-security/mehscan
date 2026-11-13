@@ -53,11 +53,20 @@ profiles or native-share overrides. Work items use isolated provider sessions
 and a single ranked queue.
 
 Use `--resume-from OLD_ATTEMPT` with the original work-plan invocation and a new
-output directory to recover native finalization after the source handoff exists.
-The manifest must be unchanged. Completed source answers, the bound owner profile,
-existing allowance and recovery receipts are retained. This does not resume an
-interrupted source investigation before handoff, add checks or buy replacement
-inference for unanswered source cases.
+output directory to recover saved source results or native finalization. Keep the
+manifest, source, provider/controller configuration and allowance options unchanged.
+Before handoff, a bound `source-recovery.json` is required: completed case and
+factual results survive, and saved final drafts go through the ordinary proof
+checks without another model call, including when the allowance is exhausted.
+Unstarted cases or an unstarted owner can use the original remaining allowance;
+unstarted optional factual work in an interrupted case is skipped in favor of its
+owner. Interrupted research conversations stay incomplete with their collected
+facts; they are not automatically replayed or resumed. Unknown dispatches fence
+new calls. Recovery retains the original receipts, assertion versions, conversation
+identities and budget ledger; it does not add checks or reset time, usage or holds.
+Keep the original attempt available: recovered attempts can reference its allowance.
+Continue from the latest recovery attempt; an older parent cannot be forked again.
+Pre-handoff recovery also requires the original native work to remain current.
 
 For a later audit, use the ordinary native-phase `--first-pass OLD_ATTEMPT`,
 `--second-pass fast|full` and `--supersede` workflow with current native work.
@@ -361,6 +370,7 @@ updates them as work starts and completes:
 | `work-plan.json` | Normalized source-bound backlog and fixed target membership |
 | `case-state.sqlite` | Transactional case state, assertion revisions, source bindings and explicit check dependencies |
 | `work-handoff.json` | Bound source results, case state, owner work package and original allowance policy |
+| `source-recovery.json`, `jobs/*/recovery.json` | Bound pre-handoff recovery, saved answers/facts and original usage floors; no replay permission |
 | `work-ledger.json` | Required checks, cited answers, blockers, potential impact, observed usage and remaining estimates |
 | `remaining-work.md` | Human-readable residual work and cost/coverage limits |
 | `lead-accounting.json` | Native IDs mapped to roles, including unclassified IDs |

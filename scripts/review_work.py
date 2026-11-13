@@ -30,9 +30,11 @@ def freeze_handoff(stage, manifest_sha256, case_binding, worker):
     """Bind first-pass artifacts and immutable budget policy, never reset usage."""
     directory = Path(stage)
     files = ("summary.json", "work-plan.json", "case-state.sqlite", "work.json", "provider-metrics.jsonl")
-    budget = worker.read(directory / "budget.json")
+    budget_path = Path(worker.read(directory / "summary.json")["budget_path"])
+    budget = worker.read(budget_path)
     record = {"schema_version":HANDOFF_VERSION, "manifest_sha256":manifest_sha256,
-        "case_binding":case_binding, "files":{name:worker.digest_file(directory / name) for name in files},
+        "case_binding":case_binding, "budget_path":str(budget_path),
+        "files":{name:worker.digest_file(directory / name) for name in files},
         "budget_policy":_handoff_budget_policy(budget),
         "usage_floor":{"reserved_calls":budget["reserved_calls"], "observed_input_tokens":budget["observed_input_tokens"],
                       "cost_micros":budget.get("cost", {}).get("observed_micros", 0)},
@@ -53,9 +55,10 @@ def read_handoff(attempt, root, worker):
         path = stage / name
         if path.is_symlink() or worker.digest_file(path) != digest:
             raise ValueError("work-plan handoff artifact changed: " + name)
-    budget_path = stage / "budget.json"
+    budget_path = Path(record.get("budget_path", stage / "budget.json"))
     if budget_path.is_symlink():
         raise ValueError("work-plan allowance cannot be redirected")
+    budget_path = worker.outside(budget_path, root)
     budget = worker.read(budget_path)
     if _handoff_budget_policy(budget) != record["budget_policy"]:
         raise ValueError("work-plan continuation allowance changed")

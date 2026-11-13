@@ -12,6 +12,105 @@ import test_domain_review as domain_fixtures
 
 
 class WorkReview(unittest.TestCase):
+    def invoke(self, command):
+        worker = test_worker.worker
+        with patch.object(sys, "argv", [worker.__file__, *command[3:]]):
+            return worker.main()
+
+    def source_resume(self, f, command):
+        resumed = list(command)
+        resumed[resumed.index("--output") + 1] = str(f.base / "recovered")
+        return resumed + ["--resume-from", str(f.base / "worker")]
+
+    def test_saved_draft_finalizes_at_exhausted_budget_without_replay(self):
+        for boundary in ("draft", "raw_response"):
+            with self.subTest(boundary=boundary):
+                f, command, _, _ = self.prepare()
+                command += ["--max-calls", "1"]
+                worker = test_worker.worker
+                original_execute, original_write = worker.execute, worker.write
+                provider_calls, interrupted = [], []
+                def execute(argv, cwd, env, timeout, payload=None, **kwargs):
+                    if len(argv) == 2 and str(argv[1]).endswith("reviewer.py"):
+                        provider_calls.append(True)
+                    if boundary == "draft" and list(argv[1:3]) == ["investigate", "source-review-check"] and not interrupted:
+                        interrupted.append(True)
+                        raise KeyboardInterrupt()
+                    return original_execute(argv, cwd, env, timeout, payload, **kwargs)
+                def write(path, value):
+                    original_write(path, value)
+                    if boundary == "raw_response" and Path(path).name == "0-response.json" and not interrupted:
+                        interrupted.append(True)
+                        raise KeyboardInterrupt()
+                with patch.object(worker, "execute", side_effect=execute), patch.object(worker, "write", side_effect=write):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.invoke(command)
+                    parent = f.base / "worker/source-review"
+                    self.assertFalse((parent / "summary.json").exists())
+                    raw = next((parent / "jobs").glob("*/0-response.json")).read_bytes()
+                    self.assertEqual(self.invoke(self.source_resume(f, command)), 2)
+                self.assertEqual(len(provider_calls), 1)
+                stage = f.base / "recovered/source-review"
+                summary = json.loads((stage / "summary.json").read_text())
+                self.assertEqual(summary["calls"], 1)
+                self.assertEqual(summary["unknown_provider_calls"], 0)
+                ledger = json.loads((stage / "work-ledger.json").read_text())
+                self.assertEqual({row["id"]:row["status"] for row in ledger["items"]},
+                    {"higher":"closed", "lower":"deferred"})
+                self.assertEqual(next((parent / "jobs").glob("*/0-response.json")).read_bytes(), raw)
+                self.assertEqual(Path(summary["budget_path"]), parent / "budget.json")
+                import review_work
+                review_work.read_handoff(f.base / "recovered", f.root, worker)
+                metrics = (stage / "provider-metrics.jsonl").read_text().splitlines()
+                self.assertEqual(len(metrics), 1)
+                self.assertEqual(json.loads(metrics[0])["work_item_id"], "higher")
+
+    def test_completed_case_is_retained_and_unstarted_case_uses_original_allowance(self):
+        f, command, _, _ = self.prepare()
+        worker = test_worker.worker
+        original_write, original_execute = worker.write, worker.execute
+        interrupted, provider_calls = [], []
+        def write(path, value):
+            original_write(path, value)
+            if Path(path).name == "progress.json" and isinstance(value, list) and any(row.get("case_id") == "higher" for row in value) and not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt()
+        def execute(argv, cwd, env, timeout, payload=None, **kwargs):
+            if len(argv) == 2 and str(argv[1]).endswith("reviewer.py"):
+                provider_calls.append(True)
+            return original_execute(argv, cwd, env, timeout, payload, **kwargs)
+        with patch.object(worker, "write", side_effect=write), patch.object(worker, "execute", side_effect=execute):
+            with self.assertRaises(KeyboardInterrupt):
+                self.invoke(command)
+            self.assertEqual(len(provider_calls), 1)
+            parent = f.base / "worker/source-review"
+            database = (parent / "case-state.sqlite").read_bytes()
+            self.assertEqual(self.invoke(self.source_resume(f, command)), 0)
+        self.assertEqual(len(provider_calls), 2)
+        self.assertEqual((parent / "case-state.sqlite").read_bytes(), database)
+        budget = json.loads((parent / "budget.json").read_text())
+        self.assertEqual(budget["reserved_calls"], 2)
+        summary = json.loads((f.base / "recovered/source-review/summary.json").read_text())
+        self.assertEqual(summary["calls"], 2)
+        self.assertEqual(summary["work_review"]["completed_items"], 2)
+
+    def test_unknown_dispatch_is_not_repeated_and_fences_remaining_cases(self):
+        f, command, _, _ = self.prepare()
+        worker = test_worker.worker
+        with patch.object(worker, "execute_provider", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.invoke(command)
+        with patch.object(worker, "execute_provider", side_effect=AssertionError("No paid replay")):
+            self.assertEqual(self.invoke(self.source_resume(f, command)), 2)
+        summary = json.loads((f.base / "recovered/source-review/summary.json").read_text())
+        self.assertEqual(summary["calls"], 1)
+        self.assertEqual(summary["unknown_provider_calls"], 1)
+        budget = json.loads((f.base / "worker/source-review/budget.json").read_text())
+        self.assertEqual(budget["reserved_calls"], 1)
+        self.assertTrue(budget["fenced"])
+        ledger = json.loads((f.base / "recovered/source-review/work-ledger.json").read_text())
+        self.assertEqual(ledger["summary"]["closed"], 0)
+
     def test_native_handoff_recovery_does_not_repeat_source_calls(self):
         f, command, _, _ = self.prepare()
         worker = test_worker.worker

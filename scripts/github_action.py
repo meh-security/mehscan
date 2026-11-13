@@ -381,6 +381,7 @@ def prepare(get=None, execute=run_command):
                           "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
                           "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
                           "source_controller_sha256": file_digest(Path(__file__).with_name("review_source.py")),
+                          "source_recovery_sha256": file_digest(Path(__file__).with_name("review_source_recovery.py")),
                           "review_budget_sha256": file_digest(Path(__file__).with_name("review_budget.py")),
                           "review_scheduler_sha256": file_digest(Path(__file__).with_name("review_scheduler.py")),
                           "review_domains_sha256": file_digest(Path(__file__).with_name("review_domains.py")),
@@ -637,6 +638,7 @@ def review_tools(plan, execute):
     config = plan["review"]
     for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"),
                       ("review_source.py", "source_controller_sha256"),
+                      ("review_source_recovery.py", "source_recovery_sha256"),
                       ("review_budget.py", "review_budget_sha256"),
                       ("review_scheduler.py", "review_scheduler_sha256"),
                       ("review_domains.py", "review_domains_sha256"),
