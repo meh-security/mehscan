@@ -135,6 +135,10 @@ experimental. Manual skill use runs in the host agent and does not require this 
 See [Prepare review work](#prepare-review-work) for the ordinary setup.
 [Source preparation](#optional-source-preparation) is an optional experiment.
 
+For explicitly requested domain review, use the separate
+[domain-plan path](#opt-in-domain-review). Ordinary source selection and exact-ID
+triage retain their existing membership and verdict requirements.
+
 Use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. Group claims only when they share the actual operation and implementation;
@@ -248,6 +252,69 @@ admitted relationships, reusing established facts and avoiding repeated template
 model or helper discovery. It does not require a verdict for every ordinary API
 occurrence. Fast/Full second pass and scoped threat follow-up remain separate,
 explicit choices within the authorized scope and budget.
+
+## Opt-in domain review
+
+Use `--domain-plan FILE` for an application review organized into related cases.
+The plan binds the current native source plan and source fingerprint. It states
+the source-supported operation, protected effect and deciding question for each
+case, and assigns relevant native IDs to three roles:
+
+| Role | Use | Required result |
+| --- | --- | --- |
+| `verify` | A concrete possible failure supported by source evidence. Complete exploit proof is not required to investigate it. | An individual assessment for each selected verification ID, or an explicit unfinished status. |
+| `cover` | A consequential operation or security property without evidence of a specific failure. | Flow/property coverage and its limits; no automatic per-marker verdict. |
+| `context` | A supporting implementation, control or configuration fact. | Cited evidence available to the case; no standalone review job or verdict. |
+
+The initial domain path supports a fresh Value `all` phase. `--domain-plan` and
+`--source-selection` are mutually exclusive. It does not combine with source-result
+reuse, resume, `--first-pass`, a second pass, operation grouping or tiered review.
+The default native-share setting is not used as an allocation; a nondefault
+`--native-share` is rejected. Keep the ordinary source/native paths for those
+combinations. The domain manifest permits at most eight domains, eight cases per
+domain and 32 cases overall. One original source assignment belongs to one case.
+
+Unmentioned native IDs remain unclassified and unreviewed. Classification is a
+recorded planning decision, not a safety assessment. If a coverage investigation
+finds a concrete mismatch, the reviewer can propose a source-backed claim through
+ordinary validation and native finalization. A domain or shared fact never
+transfers a verdict between callers or configurations.
+
+Cases in a domain must share an actual implementation or control relationship;
+a filename, CWE or generic topic alone is insufficient. One case's result is
+sealed before the reviewer starts its next case. The domain session can retain
+its inspected evidence while case identities, source scope and citation handles
+remain independently bound. Independent domains can run in parallel under the
+existing worker limit. Exact-ID review, native SQL facts, compiler enrichment,
+source profiles and workspace-hybrid routing retain their existing paths.
+
+The controller preserves the common review contract and stable domain context,
+then appends the current case and newly obtained evidence. The Codex adapter
+resumes its bound thread; it does not expose direct Responses API cache-breakpoint
+controls. Prompt-cache reuse is measured from actual provider counters, not
+assumed from a shared topic or session. Cached input still consumes context and
+can incur provider charges. A higher cache fraction alone does not establish a
+cheaper or better review.
+
+All domain cases and finalization use the same whole-review budget. Case changes
+do not reset it. A budget stop leaves explicit unfinished cases and coverage gaps.
+The ordinary native/AI allocation is not automatically applied to the ordered
+domain plan. Fast/Full audits remain separately requested follow-ups; an
+independent audit does not inherit the original domain conversation as its proof.
+
+See the [domain-review guide](../skills/mehscan-security/references/domain-review.md)
+for planning and the manifest format. This path is opt-in; it does not change the
+default Value/Comprehensive or candidate-triage workflow.
+
+Domain artifacts are retained under `source-review/`:
+
+| Artifact | Meaning |
+| --- | --- |
+| `domain-plan.json` | Validated domain/case membership and source bindings. |
+| `domain-progress.json` | Completed, running and unfinished cases. |
+| `lead-accounting.json` | Verification, coverage, context and unclassified native membership, separately from safe/unsafe verdicts. |
+| `domain-metrics.json` | Initial/resumed case/session usage and measured cache counters. |
+| `schedule.json` | The explicit domain schedule and shared allowance context. |
 
 ## Optional second pass
 

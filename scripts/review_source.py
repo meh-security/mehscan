@@ -1,6 +1,7 @@
 """Default AI source assignments: discover, assess and native-finalize in shared context."""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import copy
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,7 @@ import time
 import review_context as context
 import review_budget
 import review_scheduler
+import review_domains
 
 
 def selection_options(plan):
@@ -247,6 +249,12 @@ def retain_training_turns(summary, output):
 def run(args, legacy, worker):
     root = Path(args.source_root).resolve(strict=True)
     output = worker.outside(args.output, root, False)
+    domain_path = getattr(args, "domain_plan", None)
+    if domain_path and (args.phase != "all" or getattr(args, "source_selection", None)
+            or getattr(args, "reuse_source_results", None) or getattr(args, "resume_from", None)
+            or getattr(args, "first_pass", None) or getattr(args, "second_pass", "off") != "off"
+            or getattr(args, "native_share", 80) != 80):
+        raise ValueError("domain review requires a fresh all-phase plan without source selection, reuse, follow-up or native-share overrides")
     if getattr(args, "reuse_source_results", None) and (getattr(args, "first_pass", None) or args.phase != "all" or getattr(args, "resume_from", None)):
         raise ValueError("source-result reuse requires a fresh all-phase source attempt")
     if getattr(args, "first_pass", None) or args.phase != "all":
@@ -340,6 +348,8 @@ def run(args, legacy, worker):
     if package != worker.read(args.work_package):
         raise ValueError("source assignment requires current unaltered native work")
     payload = package["payload"]
+    if domain_path and payload["policy"] != "value":
+        raise ValueError("opt-in domain review currently requires Value policy")
     runtime = payload.get("runtime")
     if not runtime or runtime["worker_protocol"] != 2:
         raise ValueError(
@@ -359,9 +369,11 @@ def run(args, legacy, worker):
     )
     if not output.is_relative_to(artifact_root):
         raise ValueError("worker output must stay inside its declared artifact root")
-    worker.validate_provider_command(
+    provider_config = worker.validate_provider_command(
         command, runtime.get("provider"), skill, root, artifact_root
     )
+    if domain_path and provider_config is not None and provider_config.get("schema_mode", "stable") != "stable":
+        raise ValueError("domain review requires the stable provider schema before call admission")
     command_binding = context.digest(
         [
             command,
@@ -396,7 +408,7 @@ def run(args, legacy, worker):
     options = selection_options(plan)
     worker.write(stage / "selection-options.json", options)
     selection_path = getattr(args, "source_selection", None)
-    if payload["policy"] == "value" and not selection_path:
+    if payload["policy"] == "value" and not selection_path and not domain_path:
         checkpoint = {"status": "selection_required", "generation": claim["generation"],
                       "calls": 0, "unknown_provider_calls": 0, "stage": "source_selection",
                       "source_plan_id": plan["plan_id"], "source_fingerprint": plan["source_fingerprint"],
@@ -408,8 +420,42 @@ def run(args, legacy, worker):
     focus = {}
     budget_path = None
     queues = None
+    domain_registry = None
+    case_by_assignment = {}
+    domain_states = {}
     native_share = getattr(args, "native_share", 80)
-    if selection_path:
+    if domain_path:
+        manifest = worker.read(worker.outside(domain_path, root))
+        original_ids = [rid for rid in ids if rid not in excluded_native_questions(plan)]
+        domain_registry = review_domains.validate(manifest, plan, original_ids, validate_selection=validate_selection)
+        worker.write(stage / "domain-plan.json", domain_registry)
+        worker.write(stage / "selection-plan.json", plan)
+        worker.write(stage / "lead-accounting.json", domain_registry["lead_accounting"])
+        selected = [case["assignment_id"] for case in domain_registry["cases"]]
+        focus = {case["assignment_id"]: case["focus"] for case in domain_registry["cases"]}
+        case_by_assignment = {case["assignment_id"]: case for case in domain_registry["cases"]}
+        ids = [rid for case in domain_registry["cases"] for rid in case["verify_review_ids"]]
+        plan = source_plan(ids)
+        validate_assignment_scope(plan)
+        # Native assignments keep their source identity while only Verify IDs
+        # enter native verdict membership. Other roles retain separate accounting.
+        for case in domain_registry["cases"]:
+            row = case["focus"] | {"assignment_id": case["assignment_id"]}
+            validate_selection({"source_plan_id": plan["plan_id"], "source_fingerprint": plan["source_fingerprint"],
+                "assignment_ids": [case["assignment_id"]], "assignments": [row]}, plan)
+            canonical_ids = next(a["review_ids"] for a in plan["assignments"] if a["id"] == case["assignment_id"])
+            if set(canonical_ids) != set(case["verify_review_ids"]):
+                raise ValueError("domain verification membership changed during native preparation")
+            case["verify_review_ids"] = list(canonical_ids)
+            case["review_roles"]["verify"] = list(canonical_ids)
+        worker.write(stage / "domain-plan.json", domain_registry)
+        worker.write(stage / "plan.json", plan)
+        budget_path = stage / "budget.json"
+        review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
+            input_limit=getattr(args, "input_token_budget", 1_500_000),
+            admission_seconds=getattr(args, "admission_seconds", 1200))
+        args._review_budget = str(budget_path)
+    elif selection_path:
         selection = worker.read(worker.outside(selection_path, root))
         selected, focus = validate_selection(selection, plan)
         worker.write(stage / "selection.json", selection)
@@ -461,6 +507,22 @@ def run(args, legacy, worker):
     # Source review has its own native-bound assignment, not an invented vulnerability.
     api = context.research_api(skill)
     guidance = context.guidance_catalog(skill)
+    if domain_registry:
+        for domain in domain_registry["domains"]:
+            session_id = context.digest([package["package_id"], "domain", domain["id"], str(output)])
+            members = [{"id": case["id"], "assignment_id": case["assignment_id"],
+                "conversation_id": context.digest([package["package_id"], "source_review", case["assignment_id"], str(output)]),
+                "review_ids": case["verify_review_ids"]} for case in domain["cases"]]
+            paths = [w["path"] for case in domain["cases"] for a in plan["assignments"]
+                     if a["id"] == case["assignment_id"] for w in a["windows"]]
+            domain_states[domain["id"]] = {"id": session_id,
+                "binding": context.digest([package["package_id"], domain, members]), "cases": members,
+                "contract": contract + "".join("\n" + g["text"] for g in context.language_contracts(skill, paths)),
+                "shared_facts": domain["shared_facts"], "facts": [], "inspected": [], "citation_windows": {}}
+        worker.write(stage / "schedule.json", {"mode": "domain", "domains": [{"id": d["id"],
+            "cases": [c["id"] for c in d["cases"]]} for d in domain_registry["domains"]],
+            "verification_ids": ids, "lead_count": len(domain_registry["lead_accounting"]),
+            "authority": "Cases share source facts and a provider thread; verdicts remain case-specific. Cover/Context roles have no native verdict obligation."})
     source_metrics = []
     reuse_jobs = {}
     partial_windows = []
@@ -547,11 +609,16 @@ def run(args, legacy, worker):
                       "prior_source_attempts": [str(path) for path in reuse_paths]}
             worker.write(directory / "result.json", result)
             return result
+        domain_case = case_by_assignment.get(assignment["id"])
+        domain_state = domain_states[domain_case["domain_id"]] if domain_case else None
+        case_index = next(i for i, c in enumerate(domain_state["cases"]) if c["id"] == domain_case["id"]) if domain_case else 0
+        source_offset = case_index * 1000
         # Keep the native exporter and sweep, including their SQL/control facts,
         # while avoiding bundle preparation for deferred or already settled jobs.
         try:
-            native_cards = load_native_cards(native, root, inventory, stage,
-                                              assignment["review_ids"], assignment["id"])
+            card_ids = ([rid for role in review_domains.ROLES for rid in domain_case["review_roles"][role]]
+                        if domain_case else assignment["review_ids"])
+            native_cards = load_native_cards(native, root, inventory, stage, card_ids, assignment["id"])
         except Exception as error:
             result = {"assignment_id": assignment["id"], "status": "incomplete",
                       "review_ids": assignment["review_ids"], "error": type(error).__name__,
@@ -608,10 +675,22 @@ def run(args, legacy, worker):
         ]
         if assignment["id"] in focus:
             packet["review_focus"] = focus[assignment["id"]]
-            packet["contract"] += ("\nInvestigate the named operation and question in review_focus. Assigned windows provide context; "
+            if not domain_case:
+                packet["contract"] += ("\nInvestigate the named operation and question in review_focus. Assigned windows provide context; "
                 "coverage applies only to that question, and unrelated functions were not audited. Treat the focus as a question, "
                 "not evidence or an expected answer. Inspect deciding relationships within the existing allowance.")
-        if assignment["review_ids"]:
+        if domain_case:
+            packet["contract"] = domain_state["contract"]
+            # Shared source text is delivered once as inspected f-evidence below;
+            # the stable prefix needs its bindings, not a second copy of code.
+            packet["domain_shared_facts"] = [{k: v for k, v in cite.items() if k != "quote"}
+                                             for cite in domain_state["shared_facts"]]
+            packet["domain_case"] = {"id": domain_case["id"], "domain_id": domain_case["domain_id"],
+                "review_roles": domain_case["review_roles"],
+                "coverage_markers": [{**entries[rid], **native_cards[rid]} for rid in domain_case["review_roles"]["cover"]],
+                "context_facts": [{"review_id": rid, "facts": native_cards[rid]["facts"]}
+                                  for rid in domain_case["review_roles"]["context"]]}
+        elif assignment["review_ids"]:
             packet["contract"] += ("\nAssess every assigned native question independently, preserving its actor, operands, guards and effect. "
                 "Any additional review_focus supplements these questions and cannot remove them. Shared source is not a shared verdict. "
                 "Do not audit unrelated functions merely because they occur in the supplied context windows.")
@@ -619,15 +698,17 @@ def run(args, legacy, worker):
         conversation = context.digest(
             [package["package_id"], "source_review", assignment["id"], str(output)]
         )
-        facts = []
-        inspected = []
+        facts = copy.deepcopy(domain_state["facts"]) if domain_state else []
+        inspected = copy.deepcopy(domain_state["inspected"]) if domain_state else []
         citation_windows = {
-            "s" + str(i): {
+            "s" + str(source_offset + i): {
                 **{k: w[k] for k in ("path", "start_line", "end_line")},
                 "anchor": True,
             }
             for i, w in enumerate(windows)
         }
+        if domain_state:
+            citation_windows.update(copy.deepcopy(domain_state["citation_windows"]))
         queries = 0
         received = 0
         calls = 0
@@ -652,6 +733,17 @@ def run(args, legacy, worker):
                     "anchor": False,
                 }
 
+        if domain_state and not facts:
+            for cite in domain_state["shared_facts"]:
+                prepared = {"operation": "prepared_source", "results": {
+                    **{k: cite[k] for k in ("path", "start_line", "end_line")}, "text": cite["quote"]}}
+                fact = {"result_id": context.digest([domain_state["id"], cite]),
+                        "query": {"tool": "source", "review_id": None, "purpose": "Controller-supplied shared domain source",
+                                  "arguments": {k: cite[k] for k in ("path", "start_line", "end_line")}},
+                        "result": prepared}
+                facts.append(fact)
+                offer_source(prepared, "f" + str(len(facts) - 1))
+
         try:
             for turn in range(limits["rounds"] + 1):
                 if native(["state", "work", *common, *runtime_options]) != package:
@@ -673,7 +765,7 @@ def run(args, legacy, worker):
                 ):
                     raise ValueError("source reviewer configuration changed")
                 aliases = {
-                    "s" + str(i): w["artifact_id"] for i, w in enumerate(windows)
+                    "s" + str(source_offset + i): w["artifact_id"] for i, w in enumerate(windows)
                 }
                 aliases.update(
                     {"f" + str(i): f["result_id"] for i, f in enumerate(facts)}
@@ -725,7 +817,7 @@ def run(args, legacy, worker):
                         "artifact_handles": aliases,
                         "source_artifact_handles": source_handles,
                         "coverage_windows": {
-                            "s" + str(i): {k: w[k] for k in ("path", "start_line", "end_line")}
+                            "s" + str(source_offset + i): {k: w[k] for k in ("path", "start_line", "end_line")}
                             for i, w in enumerate(windows)
                         },
                         "citation_windows": dict(citation_windows),
@@ -735,6 +827,9 @@ def run(args, legacy, worker):
                         "feedback": feedback,
                     },
                 }
+                if domain_case:
+                    frame["domain_session"] = {"id": domain_state["id"], "binding": domain_state["binding"],
+                        "case_id": domain_case["id"], "case_index": case_index, "cases": domain_state["cases"]}
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 lease = review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None
@@ -990,6 +1085,10 @@ def run(args, legacy, worker):
                 "unknown_provider_calls": unknown_calls,
                 "seconds": time.monotonic() - started,
             }
+            if domain_state:
+                domain_state["facts"] = copy.deepcopy(facts)
+                domain_state["inspected"] = copy.deepcopy(inspected)
+                domain_state["citation_windows"] = {k: copy.deepcopy(v) for k, v in citation_windows.items() if k.startswith("f")}
         except Exception as error:
             if unknown_calls and "frame" in locals():
                 receipt = worker.observed_turn(
@@ -1021,7 +1120,94 @@ def run(args, legacy, worker):
                 "queries": 0, "bytes": 0, "calls": 0, "unknown_provider_calls": 0, "seconds": 0}
                for a in plan["assignments"] if a["id"] not in selected_set]
     worker.write(stage / "progress.json", results)
-    if queues is not None:
+    if domain_registry:
+        domain_progress = {}
+        domain_timings = {}
+        domain_lock = worker.threading.Lock()
+
+        def domain_job(domain):
+            domain_started = time.monotonic()
+            completed = []
+            stopped = None
+            for case in domain["cases"]:
+                assignment = by_id[case["assignment_id"]]
+                reason = stopped or review_budget.capacity(budget_path)
+                if reason:
+                    result = review_scheduler.deferred(assignment, reason)
+                else:
+                    with domain_lock:
+                        domain_progress[case["id"]] = {"assignment_id": assignment["id"], "domain_id": domain["id"],
+                            "case_id": case["id"], "status": "running", "calls": 0}
+                        worker.write(stage / "domain-progress.json", list(domain_progress.values()))
+                    result = assignment_job(assignment)
+                result.update(domain_id=domain["id"], case_id=case["id"])
+                if (stage / "jobs" / assignment["id"]).is_dir():
+                    worker.write(stage / "jobs" / assignment["id"] / "result.json", result)
+                completed.append(result)
+                if result["status"] != "complete":
+                    # A failed case may leave an unsealed/unknown provider turn.
+                    # Do not skip to a later case or silently restart its thread.
+                    stopped = "Earlier domain case did not complete; no automatic conversation replay."
+                with domain_lock:
+                    domain_progress[case["id"]] = {k: result[k] for k in ("assignment_id", "domain_id", "case_id", "status", "calls")}
+                    worker.write(stage / "domain-progress.json", list(domain_progress.values()))
+            domain_timings[domain["id"]] = time.monotonic() - domain_started
+            return completed
+
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = [pool.submit(domain_job, domain) for domain in domain_registry["domains"]]
+            for future in as_completed(futures):
+                results.extend(future.result())
+                worker.write(stage / "progress.json", results)
+        by_case = {result["case_id"]: result for result in results if "case_id" in result}
+        for item in domain_registry["lead_accounting"].values():
+            case_result = by_case.get(item["case_id"])
+            if case_result is None:
+                continue
+            if case_result["status"] != "complete":
+                item.update(status="deferred", case_status=case_result["status"])
+            elif item["role"] == "verify":
+                item.update(status="assessed", reviewed=True, case_status="complete")
+            elif item["role"] == "cover":
+                item.update(status="incorporated", case_status="complete")
+            else:
+                item.update(status="available", case_status="complete")
+        worker.write(stage / "lead-accounting.json", domain_registry["lead_accounting"])
+        metrics = []
+        for path in (stage / "jobs").glob("*/provider-metrics-*.jsonl"):
+            metrics.extend(json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip())
+        domain_usage = []
+        for domain in domain_registry["domains"]:
+            conversations = {case["conversation_id"] for case in domain_states[domain["id"]]["cases"]}
+            rows = [row for row in metrics if row.get("conversation_id") in conversations]
+            domain_usage.append({"id": domain["id"], "wall_seconds": domain_timings[domain["id"]],
+                "calls": len(rows), "cold_turns": sum(not row.get("resumed", False) for row in rows),
+                "warm_case_starts": sum(bool(row.get("resumed") and row.get("domain_case_start")) for row in rows),
+                "input_tokens": sum(row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows),
+                "cached_input_tokens": sum(row.get("usage", {}).get("cached_input_tokens", 0) or 0 for row in rows),
+                "output_tokens": sum(row.get("usage", {}).get("output_tokens", 0) or 0 for row in rows),
+                "max_turn_input_tokens": max((row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows), default=0),
+                "provider_elapsed_ms": sum(row.get("elapsed_ms", 0) or 0 for row in rows)})
+        worker.write(stage / "domain-metrics.json", {
+            "domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
+            "completed_cases": sum(result["status"] == "complete" for result in by_case.values()),
+            "provider_calls": sum(result["calls"] for result in by_case.values()),
+            "unknown_provider_calls": sum(result["unknown_provider_calls"] for result in by_case.values()),
+            "usage_complete": (len(metrics) == sum(result["calls"] for result in by_case.values())
+                and not any(result["unknown_provider_calls"] for result in by_case.values())
+                and all(not set(row.get("unknown_delta_counters", [])).intersection(("input_tokens", "cached_input_tokens", "output_tokens"))
+                        and all(type(row.get("usage", {}).get(key)) is int for key in ("input_tokens", "cached_input_tokens", "output_tokens"))
+                        for row in metrics)),
+            "cold_turns": sum(not row.get("resumed", False) for row in metrics),
+            "warm_turns": sum(row.get("resumed", False) for row in metrics),
+            "input_tokens": sum(row.get("usage", {}).get("input_tokens", 0) or 0 for row in metrics),
+            "cached_input_tokens": sum(row.get("usage", {}).get("cached_input_tokens", 0) or 0 for row in metrics),
+            "cache_write_tokens": (sum(row["usage"]["cache_write_tokens"] for row in metrics)
+                if metrics and all(type(row.get("usage", {}).get("cache_write_tokens")) is int for row in metrics) else None),
+            "output_tokens": sum(row.get("usage", {}).get("output_tokens", 0) or 0 for row in metrics),
+            "per_domain": domain_usage,
+            "note": "Observed provider usage; shared context is not a shared verdict, and missing cache-write usage is unknown."})
+    elif queues is not None:
         jobs = {lane: [by_id[identity] for identity in members] for lane, members in queues.items()}
         for assignment, result in review_scheduler.run(jobs, assignment_job, workers=args.workers, budget_path=budget_path):
             results.append(result)
@@ -1247,10 +1433,17 @@ def run(args, legacy, worker):
         )
     if focus:
         manifest["scope"].append("Bounded source coverage applies to the selected operations and questions only; unrelated functions were not audited.")
+    if domain_registry:
+        role_counts = {role: sum(item["role"] == role for item in domain_registry["lead_accounting"].values())
+                       for role in (*review_domains.ROLES, "unclassified")}
+        manifest["scope"].append(f"Domain review: {len(successful)}/{len(domain_registry['cases'])} cases completed; "
+            f"{role_counts['verify']} verification targets, {role_counts['cover']} coverage markers, "
+            f"{role_counts['context']} context leads and {role_counts['unclassified']} unclassified/deferred leads. "
+            "Cover/Context roles are not negative verdicts. See source-review/lead-accounting.json.")
     worker.write(bundles / "manifest.json", manifest)
     summary = {
         "schema_version": "1",
-        "origin": "ai_source_only" if not ids else "hybrid",
+        "origin": "hybrid" if domain_registry and any(item["role"] != "unclassified" for item in domain_registry["lead_accounting"].values()) else "ai_source_only" if not ids else "hybrid",
         "native_selected_claims": len(ids),
         "excluded_sources": plan.get("excluded_sources", []),
         "plan_id": plan["plan_id"],
@@ -1262,7 +1455,10 @@ def run(args, legacy, worker):
         "reused_assignments": reused_count,
         "selected_assignment_ids": selected,
         "selected_assignments": len(selected),
-        "schedule": "schedule.json" if queues is not None else None,
+        "schedule": "schedule.json" if queues is not None or domain_registry else None,
+        "domain_review": {"domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
+            "completed_cases": len(successful), "role_counts": role_counts,
+            "lead_accounting": "lead-accounting.json", "metrics": "domain-metrics.json"} if domain_registry else None,
         "native_admitted_ids": ids,
         "native_unreviewed_ids": sorted(set(ids) - set(assessments)),
         "native_membership_changes": membership_changes,

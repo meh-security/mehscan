@@ -15,6 +15,13 @@ Use [review planning](references/review-planning.md) for compact application-awa
 planning and bounded source orientation before repository AI work. This orientation
 happens in the host agent's current context, not as another full provider review pass.
 
+For an explicitly requested domain review, use [domain review](references/domain-review.md)
+and a bound `--domain-plan`. It gives native material three roles: concrete claims
+to verify, operation markers guiding flow coverage, and supporting facts. Related
+cases can reuse one domain session while retaining separate evidence and decisions.
+This opt-in path uses its case plan rather than the ordinary 80/20 candidate queue;
+supplied exact-ID triage still requires a disposition for every selected ID.
+
 For a source assignment, use [source review](references/source-review.md): review
 the assigned original source, assess existing questions and investigate additional
 consequential relationships in the same assigned operations. The AI controller can

@@ -78,6 +78,8 @@ Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your cod
 
 The first pass supports scan-assisted and AI-only review. Bounded source orientation selects additional discovery operations; it never falls back to reviewing all source. The review reports native candidate completion, source coverage, unresolved questions, budget deferrals and follow-up options, then stops unless another pass was requested.
 
+An opt-in [domain review](docs/review-worker.md#opt-in-domain-review) groups related cases under a reviewer that can reuse their shared source context. A bound domain plan separates concrete claims requiring verification, operation markers guiding flow coverage, and supporting facts. Exact candidate triage retains individual verdicts; coverage markers do not become safe decisions merely because their domain was reviewed.
+
 Seed/performance tooling and declaration-only C# interfaces/enums are available for cross-file lookups but omitted from standalone assignments by default. Use `--include-supporting-source` to include them explicitly; scope exclusions are reported separately from reviewed coverage.
 
 Schema-only migrations, generated migration snapshots and SQL files also remain available for targeted lookups. Reviewers follow relevant SQL definitions from their callers; file bodies are not preloaded as precautionary context. Executable migration logic remains eligible.

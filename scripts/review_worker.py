@@ -371,6 +371,7 @@ def validate_provider_command(argv, expected, skill_root, root, artifact_root):
         **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
     if actual != expected:
         raise ValueError("actual provider configuration differs from the native work binding")
+    return config
 
 
 @contextmanager
@@ -889,6 +890,9 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    if getattr(args, "domain_plan", None) and (args.phase != "all" or getattr(args, "group_operations", False)
+            or getattr(args, "source_profile", None) or getattr(args, "validate_only", False)):
+        raise ValueError("domain review requires fresh all-phase source work without grouping or native-only profiles")
     if getattr(args, "group_operations", False) and args.phase != "native":
         raise ValueError("operation grouping pilot requires --phase native")
     root = Path(args.source_root).resolve(strict=True)
@@ -2598,7 +2602,7 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes") if k in source})
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review") if k in source})
         if source["completed_assignments"] != source.get("selected_assignments", source["assignments"]):
             record["status"]="incomplete"
             record["detail"]="Native results retained; some assigned source ranges were not reviewed."
@@ -2674,6 +2678,7 @@ def main():
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
+    parser.add_argument("--domain-plan", help="opt-in source-bound domain cases with verify/cover/context evidence roles")
     parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
     parser.add_argument("--max-calls", type=int, default=40, help="shared Value provider-call ceiling")
     parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")

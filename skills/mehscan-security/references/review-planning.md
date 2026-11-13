@@ -9,6 +9,13 @@ assignments. Known native questions guide the investigation; they do not define
 all security relationships in a file. Reuse the current context to assess new
 source-backed questions, retaining separate verdicts and explicit coverage limits.
 
+The ordinary candidate-led path below retains native verdict obligations. For an
+explicitly requested domain review, use [domain review](domain-review.md) to build
+a bound case plan. Classify source-backed claims as verification work, consequential
+operation markers as coverage inputs, and supporting evidence as context. Keep
+unclassified and unselected material explicitly unreviewed. Domain coverage never
+substitutes a safe verdict for a supplied exact-ID triage request.
+
 For local changes, a PR or release delta, start with [Changed review](changed-review.md).
 Its scoped inventory replaces whole-repository preassessment; Value and
 Comprehensive still select review depth within that scope.
