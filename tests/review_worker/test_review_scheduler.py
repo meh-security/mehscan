@@ -13,6 +13,25 @@ import review_scheduler as scheduler
 
 
 class Scheduler(unittest.TestCase):
+    def test_ranked_admission_protects_active_owner_before_starting_more_cases(self):
+        budget.initialize(self.path, max_calls=2)
+        jobs = [{'id':'high'}, {'id':'lower'}]
+        admitted = []
+        def admit(job):
+            budget.hold_completion(self.path, job['id'], 2)
+            admitted.append(job['id'])
+        def execute(job):
+            try:
+                for _ in range(2):
+                    lease = budget.reserve(self.path, 'owner', completion_owner=job['id'])
+                    budget.finish(self.path, lease, {'usage':{'input_tokens':100}})
+                return {'status':'complete', 'calls':2}
+            finally:
+                budget.release_completion(self.path, job['id'])
+        results = list(scheduler.run({'ai':jobs}, execute, workers=3, budget_path=self.path, admit=admit))
+        self.assertEqual(admitted, ['high'])
+        self.assertEqual([row['status'] for _, row in results], ['complete', 'deferred'])
+        self.assertEqual(results[1][1]['calls'], 0)
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

@@ -1,6 +1,8 @@
 """Explicit question delegation; factual answers never establish security safety."""
 import copy
 
+ROUTING_POLICY = "mehscanQuestionRouting/v1"
+
 FACT_CONTRACT = """Answer only the named source proposition under its scope and acceptance criteria.
 You are an evidence worker. Locate deciding implementations when necessary; retain
 missing bindings and conditions. Do not audit neighboring flows, assign severity,
@@ -31,8 +33,13 @@ def validate_check(check):
     route = check.get("route", "security_decision")
     if route not in ("source_fact", "security_decision"):
         raise ValueError("question route must be source_fact or security_decision")
-    if set(check) - {"id", "question", "route", "scope", "acceptance", "source_ranges", "source_definitions"}:
+    if set(check) - {"id", "question", "route", "scope", "acceptance", "source_ranges", "source_definitions",
+                     "task_kind", "usefulness"}:
         raise ValueError("unsupported question fields")
+    if "task_kind" in check and check["task_kind"] not in ("extraction", "bounded_proposition", "security_decision"):
+        raise ValueError("unknown question task kind")
+    if "usefulness" in check and (not isinstance(check["usefulness"], str) or not 1 <= len(check["usefulness"].strip()) <= 1000):
+        raise ValueError("question usefulness requires bounded nonempty text")
     if "source_definitions" in check:
         definitions = check["source_definitions"]
         if route != "source_fact" or not isinstance(definitions, list) or not 1 <= len(definitions) <= 4:
@@ -60,6 +67,19 @@ def validate_check(check):
             if not isinstance(check.get(key), str) or not 1 <= len(check[key].strip()) <= 4000:
                 raise ValueError("source_fact questions require explicit scope and acceptance criteria")
     return route
+
+
+def route_check(check):
+    requested = validate_check(check)
+    eligible = requested == "source_fact" and check.get("task_kind") in ("extraction", "bounded_proposition") and bool(check.get("usefulness"))
+    return {"check_id":check["id"], "policy_version":ROUTING_POLICY, "requested_route":requested,
+        "task_kind":check.get("task_kind", "security_decision"), "effective_route":"prepare" if eligible else "owner",
+        "reason":"Bounded useful factual work; evidence readiness still required." if eligible else
+                 "Security judgment or unspecified factual eligibility remains with the owner."}
+
+
+def fact_only(case):
+    return not case["verify_review_ids"] and all(route_check(check)["effective_route"] == "prepare" for check in case["checks"])
 
 
 def prepare_check(check, resolve, definition=None):
@@ -105,7 +125,7 @@ def answer_note(check, result):
         "authority": "Model interpretation, not an established security fact or verdict. Original source is supplied separately."}
 
 
-def execution_notes(checks, answers, provider, directory_for, skipped_reason, preparation=None):
+def execution_notes(checks, answers, provider, directory_for, skipped_reason, preparation=None, routing=None):
     """Account for every requested fact check, including preparation never started."""
     by_id = {check["id"]: answer for check, answer in answers}
     notes = []
@@ -114,9 +134,11 @@ def execution_notes(checks, answers, provider, directory_for, skipped_reason, pr
             continue
         answer = by_id.get(check["id"])
         readiness = (preparation or {}).get(check["id"])
+        decision = (routing or {}).get(check["id"], {})
         notes.append({"check_id":check["id"], "status":answer["status"] if answer else "skipped",
             "provider":copy.deepcopy(provider), "calls":answer["calls"] if answer else 0,
-            "reason":answer.get("detail") if answer else readiness["reason"] if readiness and readiness["status"] != "ready" else skipped_reason,
+            "reason":answer.get("detail") if answer else readiness["reason"] if readiness and readiness["status"] != "ready"
+                else decision.get("reason", skipped_reason) if decision.get("effective_route") in ("owner", "blocked") else skipped_reason,
             "preparation": copy.deepcopy(readiness),
             "conversation_id":answer.get("question_conversation_id") if answer else None,
             "directory":directory_for(check["id"]) if answer else None,

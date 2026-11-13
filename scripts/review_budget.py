@@ -166,19 +166,28 @@ def snapshot(path):
         return json.loads(Path(path).read_text(encoding="utf8"))
 
 
-def _admission_reason(state, lane=None):
+def held_calls(state, owner=None):
+    holds = state.get("completion_holds", {})
+    total = sum(row["remaining"] for row in holds.values())
+    return total - (holds.get(owner, {}).get("remaining", 0) if owner is not None else 0)
+
+
+def _admission_reason(state, lane=None, completion_owner=None):
     if state["fenced"]:
         return state.get("fence_reason", "unknown usage or oversized prior call fenced the review")
     if time.time() >= state["deadline_epoch"]:
         return "review new-call admission deadline reached"
-    if state["reserved_calls"] >= state["max_calls"]:
+    holds = state.get("completion_holds", {})
+    consumes_hold = holds.get(completion_owner, {}).get("remaining", 0) > 0
+    protected = held_calls(state) - int(consumes_hold)
+    if state["reserved_calls"] + protected >= state["max_calls"]:
         return "review provider-call limit reached"
     active = sum(entry["status"] == "reserved" for entry in state["leases"].values())
     cost = state.get("cost")
-    if cost and cost["limit_micros"] is not None and cost["observed_micros"] + (active + 1) * cost["reservation_micros"] > cost["limit_micros"]:
+    if cost and cost["limit_micros"] is not None and cost["observed_micros"] + (active + protected + 1) * cost["reservation_micros"] > cost["limit_micros"]:
         return "review estimated cost allowance and in-flight reservation reached"
     reservation = state["reservation_per_call"]
-    if state["observed_input_tokens"] + (active + 1) * reservation > state["input_limit"]:
+    if state["observed_input_tokens"] + (active + protected + 1) * reservation > state["input_limit"]:
         return "review observed input limit and in-flight headroom reached"
     if lane is not None and state.get("lanes"):
         if lane not in state["lanes"]:
@@ -193,9 +202,45 @@ def _admission_reason(state, lane=None):
     return None
 
 
-def capacity(path, lane=None):
+def capacity(path, lane=None, completion_owner=None):
     """A scheduling hint; reserve still performs the atomic admission check."""
-    return _admission_reason(snapshot(path), lane)
+    return _admission_reason(snapshot(path), lane, completion_owner)
+
+
+def hold_completion(path, owner, calls):
+    """Protect future owner turns without recording imaginary provider calls."""
+    if not isinstance(owner, str) or not owner or type(calls) is not int or not 1 <= calls <= 6:
+        raise ValueError("completion hold requires an owner and one to six calls")
+    with locked(path):
+        state = json.loads(Path(path).read_text(encoding="utf8"))
+        if state.get("lanes"):
+            raise ValueError("completion holds require the ranked work queue")
+        holds = state.setdefault("completion_holds", {})
+        if owner in holds:
+            raise ValueError("completion hold already exists; never reset an active case")
+        row = {"requested":calls, "granted":0, "remaining":0, "consumed":0, "released":0}
+        holds[owner] = row
+        for _ in range(calls):
+            reason = _admission_reason(state)
+            if reason:
+                row["reduction_reason"] = reason
+                break
+            row["granted"] += 1
+            row["remaining"] += 1
+        if not row["granted"]:
+            raise BudgetExhausted(reason)
+        _write(path, state)
+        return dict(row)
+
+
+def release_completion(path, owner):
+    with locked(path):
+        state = json.loads(Path(path).read_text(encoding="utf8"))
+        row = state.get("completion_holds", {}).get(owner)
+        if row:
+            row["released"] += row["remaining"]
+            row["remaining"] = 0
+            _write(path, state)
 
 
 def complete_lane(path, lane):
@@ -217,15 +262,20 @@ def complete_lane(path, lane):
         _write(path, state)
 
 
-def reserve(path, kind, lane=None):
+def reserve(path, kind, lane=None, completion_owner=None):
     with locked(path):
         state = json.loads(Path(path).read_text(encoding="utf8"))
-        reason = _admission_reason(state, lane)
+        reason = _admission_reason(state, lane, completion_owner)
         if reason:
             raise BudgetExhausted(reason)
         lease = uuid.uuid4().hex
         state["reserved_calls"] += 1
         state["leases"][lease] = {"kind": kind, "status": "reserved", "reserved_at": time.time()}
+        hold = state.get("completion_holds", {}).get(completion_owner)
+        if hold and hold["remaining"]:
+            hold["remaining"] -= 1
+            hold["consumed"] += 1
+            state["leases"][lease]["completion_owner"] = completion_owner
         if lane is not None:
             state["leases"][lease]["lane"] = lane
             if state.get("lanes"):

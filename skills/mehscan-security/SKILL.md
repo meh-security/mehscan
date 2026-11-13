@@ -38,6 +38,7 @@ decisions default to the review owner. Do not assign a general first pass,
 threat model or safety dismissal to the cheaper worker as factual research.
 When delegation is enabled, select useful factual questions during ordinary work
 planning; follow the selection criteria in that reference without an extra planning pass.
+Name the factual task kind and how its answer prepares the owner's decision.
 Declare their deciding source ranges or named implementations in known files.
 The controller delegates only when declared evidence is available or collected
 completely; otherwise the owner retains the check. Source readiness does not

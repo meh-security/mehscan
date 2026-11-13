@@ -21,6 +21,7 @@ class Questions(unittest.TestCase):
         item=manifest['items'][0]
         if facts:
             item['checks'][0].update(route='source_fact',scope='The supplied operation only.',
+                task_kind='bounded_proposition', usefulness='Prepares the owner input-binding decision.',
                 acceptance='Cite the actual input operand and evaluation call.',
                 source_ranges=[dict(path=item['owner_path'], start_line=item['start_line'], end_line=item['end_line'])])
         item['checks'].append(dict(id='authority',question='Does the actor cross the protected boundary?'))
@@ -30,7 +31,7 @@ class Questions(unittest.TestCase):
         expert={**primary,'model':'gpt-6-sol'}
         providers=f.base/'provider.json';providers.write_text(json.dumps(primary))
         bounds=dict(model_calls=5,queries=20,bytes=524288,timeout_seconds=300)
-        policy=dict(expert=expert,case_limits=bounds,run_limits={**bounds,'model_calls':12},max_reviews_per_job=5,audit_percent=0,audit_seed='questions')
+        policy=dict(expert=expert,case_limits=bounds,run_limits={**bounds,'model_calls':16},max_reviews_per_job=5,audit_percent=0,audit_seed='questions')
         policy_path=f.base/'routing.json';policy_path.write_text(json.dumps(policy))
         claim=json.loads((f.base/'claim.json').read_text())['result']
         skill=test_worker.ROOT/'skills/mehscan-security'
@@ -48,7 +49,7 @@ class Questions(unittest.TestCase):
         command += ['--question-routing','--provider-contract',str(providers),'--expert-command',str(f.base/'expert-command.json')]
         return f,command
 
-    def invoke(self,command, *, owner_unresolved=False, bad_question=False):
+    def invoke(self,command, *, owner_unresolved=False, bad_question=False, owner_lookup=False):
         calls=[];self.call_cases=[];original=worker.execute
         def execute(argv,cwd,env,timeout,payload=None,**kwargs):
             if len(argv)!=4 or not argv[1].endswith('codex_reviewer.py'):
@@ -87,6 +88,9 @@ class Questions(unittest.TestCase):
                     self.assertEqual(packet['question_answers'][0]['answers'][0]['status'],'satisfied')
                 else:
                     self.assertEqual(packet['question_answers'][0]['status'],'incomplete')
+            if not q and owner_lookup and task['research']['round'] == 0:
+                return {'research':[dict(tool='source',review_id=None,purpose='Read the remaining deciding expression.',
+                    arguments=dict(path='other/app.js',start_line=2,end_line=2))],'working_chain':'Need the effect expression.'}
             assessment=dict(decision='not_issue',confidence='medium',summary='Fixture decision.',reason='Scoped fixture transport.',checks=[],blockers=[],evidence=[cite])
             state='unresolved' if owner_unresolved and not q else 'satisfied'
             checks=[dict(check_id=c['id'],status=state,summary='Fixture property answer.',evidence=[cite],next_deciding_fact='Unresolved actor binding.' if state=='unresolved' else None) for c in task['research']['required_checks']]
@@ -150,6 +154,33 @@ class Questions(unittest.TestCase):
         note=ledger['items'][0]['question_work'][0]
         self.assertEqual(note['status'],'skipped')
         self.assertIsNone(note['conversation_id'])
+
+    def test_completion_reserves_two_owner_turns_after_optional_preparation(self):
+        f, command = self.prepare()
+        code, calls, record = self.invoke(command + ['--max-calls', '3'], owner_lookup=True)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [('routine','question_answerer'), ('expert','investigator'), ('expert','investigator')])
+        ledger=json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        row=ledger['items'][0]
+        self.assertEqual(row['status'], 'closed')
+        self.assertEqual(row['question_work'][0]['status'], 'incomplete')
+        self.assertEqual(row['completion_reservation']['granted'], 2)
+        self.assertEqual(row['completion_reservation']['consumed'], 2)
+        self.assertEqual(row['completion_reservation']['remaining'], 0)
+        self.assertEqual(ledger['budget']['reserved_calls'], 3)
+
+    def test_factual_kind_must_be_selected_before_delegation(self):
+        f, command = self.prepare()
+        path = Path(command[command.index('--work-plan')+1])
+        plan = json.loads(path.read_text())
+        del plan['items'][0]['checks'][0]['task_kind']
+        path.write_text(json.dumps(plan))
+        code, calls, record = self.invoke(command)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [('expert','investigator')])
+        ledger=json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        self.assertEqual(ledger['items'][0]['routing'][0]['effective_route'], 'owner')
+        self.assertEqual(ledger['items'][0]['routing'][0]['policy_version'], 'mehscanQuestionRouting/v1')
 
     def test_unprepared_fact_stays_with_owner_without_routine_call(self):
         f, command = self.prepare()

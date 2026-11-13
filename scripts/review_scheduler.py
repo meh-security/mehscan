@@ -13,7 +13,7 @@ def deferred(job, reason):
             "unknown_provider_calls": 0, "seconds": 0}
 
 
-def run(queues, execute, *, workers, budget_path):
+def run(queues, execute, *, workers, budget_path, admit=None):
     """Yield (job, result), retaining untouched jobs as explicit zero-call deferrals.
 
     Each job owns its investigation and reserves every turn in its assigned lane.
@@ -42,7 +42,13 @@ def run(queues, execute, *, workers, budget_path):
                     starting = sum(value[0] == lane for value in active.values())
                     return (allocation.get("reserved_calls", 0) + starting) / weight
                 lane = min(available, key=progress)
-                job = pending[lane].popleft()
+                job = pending[lane][0]
+                if admit is not None:
+                    try:
+                        admit(job)
+                    except review_budget.BudgetExhausted:
+                        break  # Active owners may release unused completion headroom.
+                pending[lane].popleft()
                 active[pool.submit(execute, job)] = (lane, job)
             if active:
                 completed, _ = wait(active, return_when=FIRST_COMPLETED)

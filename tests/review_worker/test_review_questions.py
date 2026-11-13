@@ -5,6 +5,19 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
 import review_questions as questions
 
 class Questions(unittest.TestCase):
+    def test_routing_requires_explicit_useful_factual_work(self):
+        check = dict(id='q', question='Which predicate?', route='source_fact',
+                     scope='This query.', acceptance='Cite the predicate.',
+                     source_ranges=[dict(path='a.js', start_line=1, end_line=2)])
+        self.assertEqual(questions.route_check(check)['effective_route'], 'owner')
+        check.update(task_kind='extraction', usefulness='Supplies the actual selector operands.')
+        route = questions.route_check(check)
+        self.assertEqual(route['effective_route'], 'prepare')
+        self.assertEqual(route['policy_version'], questions.ROUTING_POLICY)
+        check['task_kind'] = 'security_decision'
+        self.assertEqual(questions.route_check(check)['effective_route'], 'owner')
+        with self.assertRaises(ValueError):
+            questions.validate_check({**check, 'task_kind':'all-billing'})
     def test_named_prerequisites_preserve_partial_source_and_missing_bindings(self):
         check = dict(id='q', question='Which guard?', route='source_fact',
                      scope='Named implementations.', acceptance='Cite their complete bodies.',

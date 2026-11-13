@@ -504,7 +504,10 @@ def run(args, legacy, worker):
                 if not model or rates.get("model") != model or rates.get("currency") != "USD":
                     raise ValueError("cost rate model/currency differs from the provider binding")
                 cost = review_budget.cost_policy(getattr(args, "cost_budget", None), rates.get("rates"))
-        review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
+        managed_calls = getattr(args, "max_calls", 40)
+        if question_routing:
+            managed_calls = min(managed_calls, runtime["orchestration"]["run_limits"]["model_calls"])
+        review_budget.initialize(budget_path, max_calls=managed_calls,
             input_limit=getattr(args, "input_token_budget", 1_500_000),
             admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
             started_at=started_epoch if work_registry else None)
@@ -645,6 +648,9 @@ def run(args, legacy, worker):
         "source_fingerprint":work_registry["source_fingerprint"],
         "work_package_id":package["package_id"], "work_plan_digest":context.digest(work_registry["items"])},
         work_registry) if work_registry else None)
+
+    def completion_remaining(case_id):
+        return review_budget.snapshot(budget_path).get("completion_holds", {}).get(case_id, {}).get("remaining", 0)
 
     def prepare_definition(case_id, spec, usage):
         """One explicit declaration file, no inferred dispatch or caller expansion."""
@@ -1021,7 +1027,8 @@ def run(args, legacy, worker):
                 if question_routing:
                     frame["profile"] = profile
                     frame["research"]["rounds_remaining"] = min(frame["research"]["rounds_remaining"],
-                        max(0, question_budget.remaining(domain_case["id"], "model_calls") - (2 if question is not None and owner_required else 1)))
+                        max(0, question_budget.remaining(domain_case["id"], "model_calls") -
+                            (completion_remaining(domain_case["id"]) + 1 if question is not None and owner_required else 1)))
                     frame["research"]["queries_remaining"] = min(frame["research"]["queries_remaining"],
                         max(0, question_budget.remaining(domain_case["id"], "queries")))
                 if question is not None:
@@ -1040,16 +1047,24 @@ def run(args, legacy, worker):
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
                 if question_budget:
-                    if question is not None and question_budget.remaining(domain_case["id"], "model_calls") < (2 if owner_required else 1):
+                    if question is not None and question_budget.remaining(domain_case["id"], "model_calls") <= (completion_remaining(domain_case["id"]) if owner_required else 0):
                         raise review_orchestration.BudgetExhausted("Reserved final owner call; question work stopped")
-                    question_budget.reserve(domain_case["id"], "model_calls", 1)
                 if prepaid is not None and budget_path and review_budget.snapshot(budget_path).get("fenced"):
                     raise review_budget.BudgetExhausted("Observed usage fenced further calls")
                 lease = (prepaid if turn == 0 and prepaid is not None else
-                    review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"])) if budget_path else None)
+                    review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"]),
+                        completion_owner=domain_case["id"] if work_registry and question is None else None) if budget_path else None)
+                if question_budget:
+                    try:
+                        question_budget.reserve(domain_case["id"], "model_calls", 1)
+                    except review_orchestration.BudgetExhausted:
+                        if lease is not None:
+                            review_budget.abandon(budget_path, lease)
+                        raise
                 if budget_path:
                     budget_state = review_budget.snapshot(budget_path)
-                    remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"]
+                    remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"] - review_budget.held_calls(
+                        budget_state, domain_case["id"] if work_registry and question is None else None)
                     lane_state = budget_state.get("lanes", {}).get(lane_by_id.get(assignment["id"]))
                     if lane_state:
                         remaining_calls = min(remaining_calls, lane_state["allocation"] - lane_state["reserved_calls"])
@@ -1410,6 +1425,16 @@ def run(args, legacy, worker):
             jobs = [{"id": case["id"], "case": case, "review_ids": case["verify_review_ids"]}
                     for case in work_registry["cases"]]
 
+            def admit_work(job):
+                case = job["case"]
+                if question_budget and review_questions.fact_only(case):
+                    job["completion"] = {"requested":0, "granted":0, "remaining":0}
+                    return
+                desired = max(1, min(case["estimate"].get("owner_calls", [1, 2])[1], limits["rounds"] + 1, 6))
+                if question_budget:
+                    desired = min(desired, runtime["orchestration"]["case_limits"]["model_calls"])
+                job["completion"] = review_budget.hold_completion(budget_path, case["id"], desired)
+
             def execute_work(job):
                 case = job["case"]
                 case_started = time.monotonic()
@@ -1421,39 +1446,44 @@ def run(args, legacy, worker):
                               "review_ids": case["verify_review_ids"]}
                 answers = []
                 preparation = {}
+                routing = {check["id"]:review_questions.route_check(check) for check in case["checks"]}
+                if not question_budget:
+                    for decision in routing.values():
+                        decision.update(effective_route="owner", reason="Optional factual assistance is disabled.")
                 preparation_usage = {"queries":0, "bytes":0}
                 owner_prepared = []
                 skipped_reason = "Question preparation did not start; owner reservation or source collection did not complete."
                 prepaid = None
-                fact_only = bool(question_budget and not case["verify_review_ids"] and
-                    all(review_questions.validate_check(check) == "source_fact" for check in case["checks"]))
+                fact_only = bool(question_budget and review_questions.fact_only(case))
                 if question_budget:
                     question_budget.begin_case(case["id"])
                 try:
                     if question_budget:
-                        # Hold the owner's first turn before optional preparation.
-                        if not fact_only:
-                            prepaid = review_budget.reserve(budget_path, "source_review")
                         cards = load_native_cards(native, root, inventory, stage,
                             [rid for role in review_domains.ROLES for rid in case["review_roles"][role]], job_directory)
                         for check in case["checks"]:
-                            if review_questions.validate_check(check) != "source_fact":
+                            decision = routing[check["id"]]
+                            if decision["effective_route"] != "prepare":
                                 continue
-                            if (question_budget.remaining(case["id"], "model_calls") < (1 if fact_only else 2)
+                            if (question_budget.remaining(case["id"], "model_calls") <= completion_remaining(case["id"])
                                     or review_budget.capacity(budget_path)):
                                 skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
-                                break
+                                decision.update(effective_route="blocked" if fact_only else "owner", reason=skipped_reason)
+                                continue
                             readiness, prepared = review_questions.prepare_check(check,
                                 lambda cite: review_domains._shared_fact(cite, plan),
                                 lambda spec: prepare_definition(case["id"], spec, preparation_usage))
                             owner_prepared.extend(prepared)
                             preparation[check["id"]] = readiness
                             if readiness["status"] != "ready":
+                                decision.update(effective_route="blocked" if fact_only else "owner", reason=readiness["reason"])
                                 continue
-                            if (question_budget.remaining(case["id"], "model_calls") < (1 if fact_only else 2)
+                            if (question_budget.remaining(case["id"], "model_calls") <= completion_remaining(case["id"])
                                     or review_budget.capacity(budget_path)):
                                 skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
-                                break
+                                decision.update(effective_route="blocked" if fact_only else "owner", reason=skipped_reason)
+                                continue
+                            decision.update(effective_route="fact_worker", reason=readiness["reason"])
                             answer = assignment_job(assignment, question=check, supporting_cards=cards,
                                 owner_required=not fact_only, prepared_question=prepared)
                             answer["assertions"] = case_store.record_question(case["id"], check,
@@ -1473,23 +1503,33 @@ def run(args, legacy, worker):
                 finally:
                     if prepaid is not None:
                         review_budget.abandon(budget_path, prepaid)
+                    if not fact_only:
+                        review_budget.release_completion(budget_path, case["id"])
                     if question_budget:
                         question_budget.end_case(case["id"])
                 if question_budget:
                     result["question_work"] = review_questions.execution_notes(case["checks"], answers,
                         runtime["provider"], lambda check_id:"source-review/jobs/" + context.digest(
-                            [job_directory, "question", check_id]), skipped_reason, preparation)
+                            [job_directory, "question", check_id]), skipped_reason, preparation, routing)
                     for key in ("calls", "queries", "bytes", "unknown_provider_calls"):
                         result[key] += sum(answer[key] for _, answer in answers)
                     for key in ("queries", "bytes"):
                         result[key] += preparation_usage[key]
                     result["seconds"] = time.monotonic() - case_started
                 result.update(case_id=case["id"], domain_id=case["domain_id"], job_directory="source-review/jobs/" + job_directory)
+                for decision in routing.values():
+                    decision["provider"] = (runtime["provider"] if decision["effective_route"] == "fact_worker" else
+                        runtime["orchestration"]["expert"] if question_budget and decision["effective_route"] == "owner" else
+                        runtime.get("provider") if decision["effective_route"] == "owner" else None)
+                result["routing"] = list(routing.values())
+                result["completion_reservation"] = review_budget.snapshot(budget_path).get("completion_holds", {}).get(
+                    case["id"], copy.deepcopy(job["completion"]))
                 (stage / "jobs" / job_directory).mkdir(parents=True, exist_ok=True)
                 worker.write(stage / "jobs" / job_directory / "result.json", result)
                 return result
 
-            for job, result in review_scheduler.run({"ai": jobs}, execute_work, workers=args.workers, budget_path=budget_path):
+            for job, result in review_scheduler.run({"ai": jobs}, execute_work, workers=args.workers, budget_path=budget_path,
+                    admit=admit_work):
                 result.update(case_id=job["id"], domain_id=job["id"])
                 with work_lock:
                     result_path = stage / "case-results" / (context.digest(job["id"]) + ".json")

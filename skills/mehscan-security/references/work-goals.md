@@ -152,6 +152,12 @@ bound two-profile plan; never hand-edit its runtime.
 
 Checks default to `security_decision` and go to the owner. Only explicitly scoped
 `source_fact` checks are delegated.
+Select `task_kind: extraction` or `task_kind: bounded_proposition` and provide
+`usefulness`: the specific owner decision this factual answer prepares. Security
+judgment uses `task_kind: security_decision`. Missing kind/usefulness keeps the
+check with the owner, including older plans. These labels express the planner's
+selection; the controller enforces the fields and source readiness, not semantic
+difficulty. No extra classifier call or delegation quota is required.
 Each delegated check also declares `source_ranges` and/or `source_definitions`.
 `source_ranges` contains one to eight original-source
 ranges with `path`, `start_line` and `end_line`, each spanning at most 400 lines.
@@ -220,6 +226,8 @@ calls separately from planned checks. For example:
 {
   "id": "subject_binding",
   "route": "source_fact",
+  "task_kind": "bounded_proposition",
+  "usefulness": "Prepares the owner decision about which identity the resource selector trusts.",
   "question": "Before this handler executes, is UserId overwritten from token-backed identity?",
   "scope": "The declared route, its middleware order and this handler's selector.",
   "acceptance": "Cite the registered middleware, the identity-to-field assignment and the selector consuming that field.",
@@ -257,8 +265,23 @@ receives attributed answers and their validated original source, checks the
 remaining security inference, and avoids re-searching evidence already supplied.
 No model answer becomes an established security fact merely by being cited.
 
-The controller owns routing, budgets, state and byte-proof validation. It reserves
-an owner turn before optional question work and preserves time for the owner.
+The controller owns routing, budgets, state and byte-proof validation. Before
+starting each security case, it protects an owner completion allowance in ranked
+queue order. It uses the optional `estimate.owner_calls` upper bound, or two calls when
+unknown, bounded by the existing per-case research limit and available headroom.
+A one-call budget can still admit one owner turn. Optional question work and new
+cases cannot consume active owners' protected calls or their estimated input/cost
+headroom. The owner consumes its reservation as it runs; unused headroom returns
+to the queue. Reservations are not provider calls or spending. They do not
+guarantee completion or extend deadlines, usage fences or authorized scope.
+Owner turns beyond the protected allowance can use remaining shared capacity.
+Specify `owner_calls` as an ordered integer range like other effort estimates
+when useful. It is part of the total `calls` estimate and is not added to it;
+preparation and owner effort should not be counted twice.
+
+Question-mode admission uses the smaller of the configured managed-call ceiling
+and the bound orchestration run ceiling, preserving both existing limits.
+Per-case limits still apply. Preparation keeps its existing bounded time share.
 Only `--workers` controls this mode's total case concurrency. Native bundle
 audits, quality/revalidation, `--expert-review-ids`, `--expert-workers` overrides
 and native source-collector settings remain separate; they are not silently
@@ -324,6 +347,13 @@ updates them as work starts and completes:
 | `work-ledger.json` | Required checks, cited answers, blockers, potential impact, observed usage and remaining estimates |
 | `remaining-work.md` | Human-readable residual work and cost/coverage limits |
 | `lead-accounting.json` | Native IDs mapped to roles, including unclassified IDs |
+
+Each item records `routing` with the policy version, requested/effective route,
+task kind, reason and selected provider, plus `completion_reservation` with
+requested/granted, consumed and released slots. These describe dispatch and
+capacity, not semantic correctness. Routing summaries distinguish declared fact
+checks from actual worker calls and owner fallback. A fact worker that returns
+incomplete work remains an attempted factual route; it does not become a closure.
 
 The case store saves source-validated question answers before the owner runs.
 Their original result artifacts and provider attribution survive an owner failure.

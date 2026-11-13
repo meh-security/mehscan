@@ -96,7 +96,7 @@ def validate(manifest, plan, native_ids, *, validate_selection, goal="budget", t
             text(check["question"], "check question")
             review_questions.validate_check(check)
         estimate = raw.get("estimate", {})
-        if not isinstance(estimate, dict) or set(estimate) - {"calls", "input_tokens", "output_tokens"}:
+        if not isinstance(estimate, dict) or set(estimate) - {"calls", "owner_calls", "input_tokens", "output_tokens"}:
             raise ValueError("unknown effort estimate")
         for key, bounds in estimate.items():
             if (not isinstance(bounds, list) or len(bounds) != 2 or any(type(n) is not int for n in bounds)
@@ -253,6 +253,8 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
                "question_work": copy.deepcopy(result.get("question_work", [])) if result else [],
+               "routing": copy.deepcopy(result.get("routing", [])) if result else [],
+               "completion_reservation": copy.deepcopy(result.get("completion_reservation")) if result else None,
                "provisional_fact_answers": copy.deepcopy(result.get("provisional_fact_answers", {})) if result else {},
                "reconsideration": copy.deepcopy(result.get("reconsideration", {})) if result else {},
                "job_directory": result.get("job_directory") if result else None,
@@ -304,6 +306,7 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
             checks_total=sum(len(row["required_checks"]) for row in rows),
             checks_closed=sum(check["status"] in ("satisfied", "violated") for row in rows for check in row["check_results"]),
             routing=dict(declared_fact_checks=sum(check.get("route") == "source_fact" for row in rows for check in row["required_checks"]),
+                effective_routes=dict(Counter(decision["effective_route"] for row in rows for decision in row["routing"])),
                 declared_owner_checks=sum(check.get("route", "security_decision") == "security_decision" for row in rows for check in row["required_checks"]),
                 question_worker_calls=sum(q["calls"] for row in rows for q in row["question_work"]),
                 skipped_question_checks=sum(q["status"] == "skipped" for row in rows for q in row["question_work"]),

@@ -14,6 +14,14 @@ import test_review_domains as domain_fixtures
 
 
 class WorkPlan(unittest.TestCase):
+    def test_owner_effort_is_preserved_without_double_counting_total_calls(self):
+        self.manifest["items"][0]["estimate"]["owner_calls"] = [1, 3]
+        registry = self.validate()
+        item = next(row for row in registry["items"] if row["id"] == "lower")
+        self.assertEqual(item["estimate"]["owner_calls"], [1, 3])
+        report = work.ledger(registry)
+        self.assertEqual(report["remaining_estimate"]["calls"]["range"], [2, 6])
+
     def test_reconsideration_reopens_check_without_rewriting_historical_result(self):
         registry = self.validate(goal="coverage")
         result = self.result("higher")
@@ -159,6 +167,44 @@ class WorkPlan(unittest.TestCase):
 
 
 class CostBudget(unittest.TestCase):
+    def test_completion_holds_protect_multiple_turns_without_fake_calls(self):
+        budget.initialize(self.path, max_calls=3, input_limit=300000)
+        hold = budget.hold_completion(self.path, 'high', 2)
+        self.assertEqual(hold['granted'], 2)
+        self.assertEqual(budget.snapshot(self.path)['reserved_calls'], 0)
+        cheap = budget.reserve(self.path, 'fact')
+        with self.assertRaises(budget.BudgetExhausted):
+            budget.reserve(self.path, 'fact')
+        budget.finish(self.path, cheap, {'usage':dict(input_tokens=100, cached_input_tokens=0, output_tokens=1)})
+        for _ in range(2):
+            owner = budget.reserve(self.path, 'owner', completion_owner='high')
+            budget.finish(self.path, owner, {'usage':dict(input_tokens=100, cached_input_tokens=0, output_tokens=1)})
+        state = budget.snapshot(self.path)
+        self.assertEqual(state['reserved_calls'], 3)
+        self.assertEqual(state['completion_holds']['high']['consumed'], 2)
+
+    def test_unused_hold_returns_headroom_and_single_call_budget_still_admits_owner(self):
+        budget.initialize(self.path, max_calls=1)
+        hold = budget.hold_completion(self.path, 'one', 3)
+        self.assertEqual(hold['granted'], 1)
+        self.assertIsNotNone(budget.capacity(self.path))
+        self.assertIsNone(budget.capacity(self.path, completion_owner='one'))
+        budget.release_completion(self.path, 'one')
+        self.assertIsNone(budget.capacity(self.path))
+        self.assertEqual(budget.snapshot(self.path)['reserved_calls'], 0)
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            budget.hold_completion(self.path, 'one', 1)
+
+    def test_completion_holds_preserve_cost_and_unknown_usage_fences(self):
+        budget.initialize(self.path, cost=budget.cost_policy('0.7', self.rates))
+        hold = budget.hold_completion(self.path, 'case', 3)
+        self.assertEqual(hold['granted'], 2)
+        with self.assertRaises(budget.BudgetExhausted):
+            budget.reserve(self.path, 'preparation')
+        owner = budget.reserve(self.path, 'owner', completion_owner='case')
+        budget.finish(self.path, owner, {'usage':{}})
+        with self.assertRaises(budget.BudgetExhausted):
+            budget.reserve(self.path, 'owner', completion_owner='case')
     def test_provider_prices_are_separate_and_unused_owner_lease_is_not_unknown(self):
         cheap=dict(input_per_million=.1,cached_input_per_million=.01,output_per_million=.5)
         budget.initialize(self.path,cost=budget.provider_cost_policy(None,{'routine':cheap,'owner':self.rates}))
