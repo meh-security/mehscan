@@ -20,7 +20,8 @@ class Questions(unittest.TestCase):
         item=manifest['items'][0]
         if facts:
             item['checks'][0].update(route='source_fact',scope='The supplied operation only.',
-                acceptance='Cite the actual input operand and evaluation call.')
+                acceptance='Cite the actual input operand and evaluation call.',
+                source_ranges=[dict(path=item['owner_path'], start_line=item['start_line'], end_line=item['end_line'])])
         item['checks'].append(dict(id='authority',question='Does the actor cross the protected boundary?'))
         if ai_only:item['review_roles']=dict(verify=[],cover=[],context=[])
         path.write_text(json.dumps(manifest))
@@ -67,7 +68,14 @@ class Questions(unittest.TestCase):
                 handle.write(json.dumps(dict(conversation_id=task['conversation_id'],round=task['research']['round'],provider=provider,elapsed_ms=1,usage=dict(input_tokens=100,cached_input_tokens=0,output_tokens=10)))+'\n')
             windows=packet['primary']['windows'];w=windows[0]
             cite=dict(path=w['path'],start_line=w['start_line'],end_line=w['start_line'])
-            if q and task['research']['round']==0:
+            named = q and bool(task['research']['required_checks'][0].get('source_definitions'))
+            if named:
+                facts=json.loads(Path(task['shared_facts']).read_text())['facts']
+                helper=[f for f in facts if f['query'].get('arguments',{}).get('path')=='other/app.js']
+                self.assertTrue(helper)
+                self.assertIn('function run(request)', helper[-1]['result']['results']['text'])
+                cite=dict(path='other/app.js',start_line=1,end_line=4)
+            if q and not named and task['research']['round']==0:
                 return {'research':[dict(tool='source',review_id=None,purpose='Collect the deciding helper source.',arguments=dict(path='other/app.js',start_line=1,end_line=1))],'working_chain':'Need helper.'}
             if not q and packet.get('question_answers'):
                 facts=json.loads(Path(task['shared_facts']).read_text())['facts']
@@ -131,5 +139,53 @@ class Questions(unittest.TestCase):
         note=ledger['items'][0]['question_work'][0]
         self.assertEqual(note['status'],'skipped')
         self.assertIsNone(note['conversation_id'])
+
+    def test_unprepared_fact_stays_with_owner_without_routine_call(self):
+        f, command = self.prepare()
+        path = Path(command[command.index('--work-plan')+1])
+        plan = json.loads(path.read_text())
+        del plan['items'][0]['checks'][0]['source_ranges']
+        path.write_text(json.dumps(plan))
+        code, calls, record = self.invoke(command)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(calls, [('expert', 'investigator')])
+        ledger = json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        note = ledger['items'][0]['question_work'][0]
+        self.assertEqual(note['preparation']['status'], 'not_ready')
+        self.assertEqual(note['calls'], 0)
+        self.assertIsNone(note['conversation_id'])
+
+    def test_named_body_is_prepared_once_reused_and_missing_name_stays_with_owner(self):
+        f, command = self.prepare()
+        path = Path(command[command.index('--work-plan')+1])
+        plan = json.loads(path.read_text())
+        base = plan['items'][0]
+        items = []
+        for name, symbol in (('native', 'run'), ('reuse', 'run'), ('missing', 'doesNotExist')):
+            item = copy.deepcopy(base)
+            item['id'] = name
+            if name != 'native':
+                item['review_roles'] = dict(verify=[], cover=[], context=[])
+            check = item['checks'][0]
+            del check['source_ranges']
+            check['source_definitions'] = [dict(path='other/app.js', name=symbol)]
+            items.append(item)
+        plan['items'] = items
+        path.write_text(json.dumps(plan))
+        self.expected_native_by_case = {'native': True}
+        code, calls, record = self.invoke(command)
+        self.assertEqual(code, 0, record)
+        self.assertEqual(Counter(calls), Counter({('routine', 'question_answerer'):2, ('expert', 'investigator'):3}))
+        ledger = json.loads((f.base/'worker/source-review/work-ledger.json').read_text())
+        notes = {row['id']:row['question_work'][0] for row in ledger['items']}
+        self.assertFalse(notes['native']['preparation']['definitions'][0]['reused'])
+        self.assertTrue(notes['reuse']['preparation']['definitions'][0]['reused'])
+        self.assertEqual(notes['missing']['preparation']['status'], 'not_ready')
+        self.assertEqual(notes['missing']['calls'], 0)
+        self.assertIsNone(notes['missing']['conversation_id'])
+        for name in ('native', 'reuse'):
+            self.assertEqual(notes[name]['calls'], 1, 'No model turn to discover the implementation')
+            receipt = notes[name]['preparation']['definitions'][0]['receipt']
+            self.assertTrue((f.base/'worker/source-review'/receipt).is_file())
 
 if __name__=='__main__':unittest.main()

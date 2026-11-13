@@ -38,6 +38,10 @@ decisions default to the review owner. Do not assign a general first pass,
 threat model or safety dismissal to the cheaper worker as factual research.
 When delegation is enabled, select useful factual questions during ordinary work
 planning; follow the selection criteria in that reference without an extra planning pass.
+Declare their deciding source ranges or named implementations in known files.
+The controller delegates only when declared evidence is available or collected
+completely; otherwise the owner retains the check. Source readiness does not
+certify the proposition or establish which implementation executes.
 
 For an explicitly requested domain review, use [domain review](references/domain-review.md)
 and a bound `--domain-plan`. It gives native material three roles: concrete claims

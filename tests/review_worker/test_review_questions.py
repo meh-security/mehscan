@@ -5,6 +5,47 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
 import review_questions as questions
 
 class Questions(unittest.TestCase):
+    def test_named_prerequisites_preserve_partial_source_and_missing_bindings(self):
+        check = dict(id='q', question='Which guard?', route='source_fact',
+                     scope='Named implementations.', acceptance='Cite their complete bodies.',
+                     source_definitions=[dict(path='guard.js', name='guard'), dict(path='guard.js', name='missing')])
+        source = dict(path='guard.js', start_line=1, end_line=2, quote='function guard() {}')
+        def collect(spec):
+            if spec['name'] == 'guard':
+                return dict(status='ready', reason='Complete declaration.'), source
+            return dict(status='not_ready', reason='ambiguous_declaration'), None
+        note, prepared = questions.prepare_check(check, lambda _: self.fail('No fixed ranges'), collect)
+        self.assertEqual(note['status'], 'not_ready')
+        self.assertEqual(note['reason'], 'ambiguous_declaration')
+        self.assertEqual(prepared, [source])
+        self.assertEqual(len(note['definitions']), 2)
+        for spec in (dict(path='../guard.js', name='guard'), dict(path='/guard.js', name='guard'),
+                     dict(path='guard.js', name=''), dict(path='guard.js', name='guard', limit=100)):
+            with self.assertRaises(ValueError):
+                questions.validate_check({**check, 'source_definitions':[spec]})
+
+    def test_preparation_requires_declared_deliverable_evidence(self):
+        check = dict(id='q', question='Which operand?', route='source_fact',
+                     scope='This selector.', acceptance='Cite its operands.')
+        called = []
+        note, prepared = questions.prepare_check(check, lambda cite: called.append(cite))
+        self.assertEqual(note['status'], 'not_ready')
+        self.assertEqual((called, prepared), ([], []))
+        cite = dict(path='a.js', start_line=1, end_line=2)
+        check['source_ranges'] = [cite]
+        note, prepared = questions.prepare_check(check, lambda value: {**value, 'quote':'a\nb'})
+        self.assertEqual(note['status'], 'ready')
+        self.assertEqual(prepared[0]['quote'], 'a\nb')
+        def missing(value):
+            raise ValueError('Named body not in the bound snapshot.')
+        note, prepared = questions.prepare_check(check, missing)
+        self.assertEqual(note['status'], 'not_ready')
+        self.assertEqual(prepared, [])
+        self.assertIn('Named body', note['reason'])
+        for invalid in ([], [dict(cite, start_line=True)], [dict(cite, end_line=500)]):
+            with self.assertRaises(ValueError):
+                questions.validate_check({**check, 'source_ranges':invalid})
+
     def test_unspecified_questions_stay_with_owner_and_facts_require_scope(self):
         self.assertEqual(questions.validate_check({'id':'a','question':'Decide the boundary.'}),'security_decision')
         for check in [dict(id='a',question='Is it safe?',route='automatic'),

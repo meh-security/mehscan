@@ -636,10 +636,62 @@ def run(args, legacy, worker):
         return any(w["path"] == p["path"] and w["start_line"] <= p["end_line"] and p["start_line"] <= w["end_line"]
                    for w in assignment["windows"] for p in partial_windows)
 
+    preparation_broker = worker.EvidenceBroker()
     question_budget = (review_orchestration.SharedReviewBudget(stage / "question-budget.json",
         runtime["orchestration"], worker.write) if question_routing else None)
 
-    def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True):
+    def prepare_definition(case_id, spec, usage):
+        """One explicit declaration file, no inferred dispatch or caller expansion."""
+        source_file = context.source_file(root, spec["path"])
+        if not source_file.is_file():
+            return {"status":"not_ready", "reason":"Named declaration file unavailable.", "request":spec}, None
+        query = {"tool":"definition", "review_id":None, "arguments":spec,
+                 "purpose":"Prepare the explicitly named implementation for a factual check."}
+        arguments = worker.research_arguments(query, root, [], stage, api=api, guidance=guidance)
+        units = worker.research_cost([query], api=api)
+        key = context.digest([plan["source_fingerprint"], query])
+        timeout = max(0, question_budget.remaining(case_id, "timeout_seconds"))
+        if timeout <= 0:
+            return {"status":"not_ready", "reason":"Preparation deadline exhausted.", "request":spec}, None
+        def remaining_preparation():
+            left = question_budget.remaining(case_id, "timeout_seconds")
+            if left <= 0:
+                raise TimeoutError("Preparation deadline exhausted.")
+            return left
+        def load():
+            result = worker.definition_result(native(arguments, timeout),
+                lambda values: native(["investigate", "source", root, "--path", values["path"],
+                    "--start-line", values["start_line"], "--end-line", values["end_line"]],
+                    remaining_preparation()))
+            return result
+        try:
+            # Cached lookups also consume the recipient's bounded research units.
+            question_budget.reserve(case_id, "queries", units)
+            usage["queries"] += units
+            result, reused = preparation_broker.get(key, load, timeout)
+            size = len(json.dumps(result, ensure_ascii=False).encode("utf8"))
+            usage["bytes"] += size
+            question_budget.reserve(case_id, "bytes", size)
+        except (review_orchestration.BudgetExhausted, worker.CommandFailure, TimeoutError) as error:
+            return {"status":"not_ready", "reason":str(error), "request":spec}, None
+        receipt = {"request":query, "result":result, "reused":reused, "query_units":units}
+        receipt_path = stage / "preparation" / (context.digest([case_id, key]) + ".json")
+        receipt_path.parent.mkdir(exist_ok=True)
+        worker.write(receipt_path, receipt)
+        note = {"request":spec, "reused":reused, "query_units":units,
+                "receipt":str(receipt_path.relative_to(stage))}
+        if not result.get("source_complete"):
+            return {**note, "status":"not_ready", "reason":result.get("limit") or "Implementation incomplete."}, None
+        window = context.delivered_source_window(root, result)
+        extent = context.source_result_window(result)
+        if window is None or window["end_line"] != extent["end_line"]:
+            return {**note, "status":"not_ready", "reason":"Implementation source is byte-clipped."}, None
+        return {**note, "status":"ready", "reason":"One complete declaration supplied; dispatch remains unproven."}, {
+            **{key:window[key] for key in ("path", "start_line", "end_line", "source_sha256")},
+            "quote":window["text"]}
+
+    def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True,
+                       prepared_question=()):
         profile = "routine" if question is not None or not question_routing else "expert"
         command = source_commands[profile]
         command_binding = command_bindings[profile]
@@ -861,6 +913,20 @@ def run(args, legacy, worker):
                     continue
                 facts.append(copy.deepcopy(fact))
                 offer_source(fact["result"], "f" + str(len(facts) - 1))
+
+        for cite in prepared_question:
+            prepared = {"operation":"prepared_source", "results":{
+                **{key:cite[key] for key in ("path", "start_line", "end_line")}, "text":cite["quote"]}}
+            window = context.delivered_source_window(root, prepared)
+            if window is None or window["source_sha256"] != cite["source_sha256"]:
+                raise ValueError("Prepared implementation source binding changed")
+            fact = {"result_id":context.digest(["question-preparation", cite]),
+                "query":{"tool":"source", "review_id":None, "purpose":"Controller-prepared deciding source",
+                    "arguments":{key:cite[key] for key in ("path", "start_line", "end_line")}},
+                "result":prepared}
+            if not any(previous["result_id"] == fact["result_id"] for previous in facts):
+                facts.append(fact)
+                offer_source(prepared, "f" + str(len(facts) - 1))
 
         try:
             for turn in range(local_rounds + 1):
@@ -1345,6 +1411,9 @@ def run(args, legacy, worker):
                 assignment = {**by_id[case["assignment_id"]], "_job_id": job_directory, "_work_item_id": case["id"],
                               "review_ids": case["verify_review_ids"]}
                 answers = []
+                preparation = {}
+                preparation_usage = {"queries":0, "bytes":0}
+                owner_prepared = []
                 skipped_reason = "Question preparation did not start; owner reservation or source collection did not complete."
                 prepaid = None
                 fact_only = bool(question_budget and not case["verify_review_ids"] and
@@ -1365,10 +1434,22 @@ def run(args, legacy, worker):
                                     or review_budget.capacity(budget_path)):
                                 skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
                                 break
-                            answers.append((check, assignment_job(assignment, question=check, supporting_cards=cards, owner_required=not fact_only)))
+                            readiness, prepared = review_questions.prepare_check(check,
+                                lambda cite: review_domains._shared_fact(cite, plan),
+                                lambda spec: prepare_definition(case["id"], spec, preparation_usage))
+                            owner_prepared.extend(prepared)
+                            preparation[check["id"]] = readiness
+                            if readiness["status"] != "ready":
+                                continue
+                            if (question_budget.remaining(case["id"], "model_calls") < (1 if fact_only else 2)
+                                    or review_budget.capacity(budget_path)):
+                                skipped_reason = "Shared allowance preserves the owner turn or prevents further question calls."
+                                break
+                            answers.append((check, assignment_job(assignment, question=check, supporting_cards=cards,
+                                owner_required=not fact_only, prepared_question=prepared)))
                     result = (review_questions.fact_only_result(assignment, case["checks"], answers) if fact_only else
                         assignment_job(assignment, question_results=answers, prepaid=prepaid,
-                            supporting_cards=cards if question_budget else None))
+                            supporting_cards=cards if question_budget else None, prepared_question=owner_prepared))
                 except (review_budget.BudgetExhausted, review_orchestration.BudgetExhausted) as error:
                     result = {**review_scheduler.deferred(job, str(error)), "assignment_id":assignment["id"]}
                 except Exception as error:
@@ -1383,9 +1464,11 @@ def run(args, legacy, worker):
                 if question_budget:
                     result["question_work"] = review_questions.execution_notes(case["checks"], answers,
                         runtime["provider"], lambda check_id:"source-review/jobs/" + context.digest(
-                            [job_directory, "question", check_id]), skipped_reason)
+                            [job_directory, "question", check_id]), skipped_reason, preparation)
                     for key in ("calls", "queries", "bytes", "unknown_provider_calls"):
                         result[key] += sum(answer[key] for _, answer in answers)
+                    for key in ("queries", "bytes"):
+                        result[key] += preparation_usage[key]
                     result["seconds"] = time.monotonic() - case_started
                 result.update(case_id=case["id"], domain_id=case["domain_id"], job_directory="source-review/jobs/" + job_directory)
                 (stage / "jobs" / job_directory).mkdir(parents=True, exist_ok=True)

@@ -31,13 +31,67 @@ def validate_check(check):
     route = check.get("route", "security_decision")
     if route not in ("source_fact", "security_decision"):
         raise ValueError("question route must be source_fact or security_decision")
-    if set(check) - {"id", "question", "route", "scope", "acceptance"}:
+    if set(check) - {"id", "question", "route", "scope", "acceptance", "source_ranges", "source_definitions"}:
         raise ValueError("unsupported question fields")
+    if "source_definitions" in check:
+        definitions = check["source_definitions"]
+        if route != "source_fact" or not isinstance(definitions, list) or not 1 <= len(definitions) <= 4:
+            raise ValueError("source_definitions requires one to four named factual implementations")
+        for spec in definitions:
+            if (not isinstance(spec, dict) or set(spec) != {"path", "name"}
+                    or not isinstance(spec["name"], str) or not 1 <= len(spec["name"].strip()) <= 200
+                    or "\0" in spec["name"] or not isinstance(spec["path"], str)
+                    or not spec["path"] or "\\" in spec["path"] or ":" in spec["path"]
+                    or any(part in ("", ".", "..", ".git") for part in spec["path"].split("/"))):
+                raise ValueError("named preparation requires a bounded name and source-relative file path")
+    if "source_ranges" in check:
+        ranges = check["source_ranges"]
+        if route != "source_fact" or not isinstance(ranges, list) or not 1 <= len(ranges) <= 8:
+            raise ValueError("source_ranges requires one to eight factual evidence ranges")
+        for cite in ranges:
+            if (not isinstance(cite, dict) or set(cite) != {"path", "start_line", "end_line"}
+                    or not isinstance(cite["path"], str) or not cite["path"]
+                    or type(cite["start_line"]) is not int or type(cite["end_line"]) is not int
+                    or not 1 <= cite["start_line"] <= cite["end_line"]
+                    or cite["end_line"] - cite["start_line"] >= 400):
+                raise ValueError("factual evidence requires bounded original source ranges")
     if route == "source_fact":
         for key in ("scope", "acceptance"):
             if not isinstance(check.get(key), str) or not 1 <= len(check[key].strip()) <= 4000:
                 raise ValueError("source_fact questions require explicit scope and acceptance criteria")
     return route
+
+
+def prepare_check(check, resolve, definition=None):
+    """Resolve declared deciding ranges; missing prerequisites buy no model call.
+
+    resolve must validate snapshot membership and source bytes. Readiness says
+    only that declared evidence is deliverable, not that the proof is complete.
+    """
+    validate_check(check)
+    ranges = check.get("source_ranges", [])
+    definitions = check.get("source_definitions", [])
+    if not ranges and not definitions:
+        return {"status": "not_ready", "reason": "No deciding source ranges declared; retain with owner.",
+                "source_ranges": []}, []
+    prepared = []
+    notes = []
+    try:
+        for cite in ranges:
+            prepared.append(resolve(cite))
+        for spec in definitions:
+            if definition is None:
+                raise ValueError("Named implementation collector unavailable; retain with owner.")
+            note, source = definition(spec)
+            notes.append(note)
+            if source is None:
+                raise ValueError(note["reason"])
+            prepared.append(source)
+    except ValueError as error:
+        return {"status": "not_ready", "reason": str(error), "source_ranges": copy.deepcopy(ranges),
+                "definitions": notes}, prepared
+    return {"status": "ready", "reason": "Declared source ranges available; semantic completeness is not certified.",
+            "source_ranges": copy.deepcopy(ranges), "definitions": notes}, prepared
 
 
 def answer_note(check, result):
@@ -50,7 +104,7 @@ def answer_note(check, result):
         "authority": "Model interpretation, not an established security fact or verdict. Original source is supplied separately."}
 
 
-def execution_notes(checks, answers, provider, directory_for, skipped_reason):
+def execution_notes(checks, answers, provider, directory_for, skipped_reason, preparation=None):
     """Account for every requested fact check, including preparation never started."""
     by_id = {check["id"]: answer for check, answer in answers}
     notes = []
@@ -58,9 +112,11 @@ def execution_notes(checks, answers, provider, directory_for, skipped_reason):
         if validate_check(check) != "source_fact":
             continue
         answer = by_id.get(check["id"])
+        readiness = (preparation or {}).get(check["id"])
         notes.append({"check_id":check["id"], "status":answer["status"] if answer else "skipped",
             "provider":copy.deepcopy(provider), "calls":answer["calls"] if answer else 0,
-            "reason":answer.get("detail") if answer else skipped_reason,
+            "reason":answer.get("detail") if answer else readiness["reason"] if readiness and readiness["status"] != "ready" else skipped_reason,
+            "preparation": copy.deepcopy(readiness),
             "conversation_id":answer.get("question_conversation_id") if answer else None,
             "directory":directory_for(check["id"]) if answer else None,
             "answer_status":next((row["status"] for row in answer.get("draft", {}).get("work_checks", [])

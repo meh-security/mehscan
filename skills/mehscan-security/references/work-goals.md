@@ -152,6 +152,36 @@ bound two-profile plan; never hand-edit its runtime.
 
 Checks default to `security_decision` and go to the owner. Only explicitly scoped
 `source_fact` checks are delegated.
+Each delegated check also declares `source_ranges` and/or `source_definitions`.
+`source_ranges` contains one to eight original-source
+ranges with `path`, `start_line` and `end_line`, each spanning at most 400 lines.
+Use actual deciding ranges from the bound source plan, including a helper or type
+when needed. `source_definitions` contains one to four objects with `path` and
+`name`: the exact declaration file and reported symbol name. The controller uses
+the existing definition collector to read one unique declaration, up to 120 lines.
+Multiple declarations, parser gaps, missing files and clipped bodies keep the
+question unprepared; a symbol location alone is insufficient. A unique declaration
+does not establish effective dispatch, authorization or caller applicability.
+
+Preparation begins only for admitted work with remaining question capacity.
+Definition lookups consume two research units and their observed response bytes
+from the shared case/run allowance, including bounded units for reused lookups.
+The run-local broker shares identical lookups; source hashes are checked again
+before delivery. Original lookup results remain under `source-review/preparation/`,
+linked from each question's preparation record. Only explicitly named source is
+collected, including supporting/queryable-only implementations when needed.
+
+Prepared source is delivered as cited evidence. The controller records preparation
+readiness and skips the question worker
+if no source prerequisites are declared or a prerequisite is unavailable. Existing plans without these
+fields retain their checks with the owner; a factual-only item remains incomplete
+when its preparation cannot start. Readiness checks declared source availability,
+not whether the planner identified every premise or the interpretation is correct.
+Use a named definition when the body is absent from the plan but its declaration
+file is known. Other missing bindings remain with the owner for normal targeted
+research. This is bounded preparation, without an autonomous navigation pass.
+Useful prepared source is also given to the owner when another prerequisite
+remains unresolved; a failed preparation does not establish a negative verdict.
 
 When using delegation, the agent preparing the work plan selects questions
 automatically during its existing source orientation; the user need not author
@@ -192,9 +222,20 @@ calls separately from planned checks. For example:
   "route": "source_fact",
   "question": "Before this handler executes, is UserId overwritten from token-backed identity?",
   "scope": "The declared route, its middleware order and this handler's selector.",
-  "acceptance": "Cite the registered middleware, the identity-to-field assignment and the selector consuming that field."
+  "acceptance": "Cite the registered middleware, the identity-to-field assignment and the selector consuming that field.",
+  "source_ranges": [
+    {"path": "middleware/identity.ts", "start_line": 10, "end_line": 35},
+    {"path": "routes/account.ts", "start_line": 20, "end_line": 55}
+  ]
 }
 ```
+
+The paths/ranges above illustrate the shape; replace them with the actual
+registration, producer and consumer evidence in the current plan.
+For a known declaration file, a check can additionally or alternatively specify
+`"source_definitions": [{"path": "middleware/identity.ts", "name": "attachIdentity"}]`.
+Select the reported declaration name; do not invent a qualified name or assume
+that an import, method name or directory proves the runtime binding.
 
 Keep one proposition per delegated check. Suitable work includes locating an
 implementation, extracting an input or guard, and binding a specific producer
