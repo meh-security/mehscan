@@ -55,6 +55,10 @@ class WorkPlan(unittest.TestCase):
         self.assertEqual(report["summary"]["remaining_by_potential_impact"], {"critical": 1})
         self.assertEqual(report["items"][0]["status"], "outside_target")
         self.assertIn("unknown", report["summary"]["unclassified_native_ids"])
+        self.assertEqual(report["summary"]["closed"], 1)
+        self.assertEqual(report["summary"]["remaining"], 1)
+        self.assertEqual(report["summary"]["checks_closed"], 1)
+        self.assertIn("1 completed / 2 declared; 1 remaining", work.markdown(report))
 
     def test_completed_packet_with_unresolved_property_does_not_complete_target(self):
         value = self.validate(goal="coverage", targets=["lower"])
@@ -136,6 +140,13 @@ class WorkPlan(unittest.TestCase):
         report = work.ledger(self.validate(goal="coverage", targets=["lower"]), [result])
         self.assertIn("lower", report["target_remaining_estimate"]["calls"]["unknown_items"])
 
+    def test_incomplete_information_counters_do_not_look_like_complete_usage(self):
+        report = work.ledger(self.validate(), [self.result("lower")], metrics=[
+            dict(work_item_id="lower", usage={"input_tokens":100})])
+        lower = next(row for row in report["items"] if row["id"] == "lower")
+        self.assertEqual(lower["status"], "closed")
+        self.assertFalse(lower["usage_complete"])
+
 
 class CostBudget(unittest.TestCase):
     def setUp(self):
@@ -180,6 +191,34 @@ class CostBudget(unittest.TestCase):
                 budget.cost_policy(amount, self.rates)
         with self.assertRaises(ValueError):
             budget.cost_policy("5", {**self.rates, "input_per_million": "Infinity"})
+
+    def test_reporting_rates_without_monetary_cap_do_not_limit_spending(self):
+        budget.initialize(self.path, cost=budget.cost_policy(None, self.rates))
+        lease = budget.reserve(self.path, "source_review")
+        budget.finish(self.path, lease, {"usage":dict(input_tokens=200000, cached_input_tokens=0, output_tokens=100000)})
+        state = budget.snapshot(self.path)
+        self.assertIsNone(state["cost"]["limit_micros"])
+        self.assertEqual(state["cost"]["observed_micros"], 700000)
+        self.assertFalse(state["fenced"])
+        self.assertIsNone(budget.capacity(self.path))
+
+    def test_missing_cost_only_counters_remain_informational_without_a_cap(self):
+        budget.initialize(self.path, cost=budget.cost_policy(None, self.rates))
+        lease = budget.reserve(self.path, "source_review")
+        budget.finish(self.path, lease, {"usage":{"input_tokens":100}})
+        state = budget.snapshot(self.path)
+        self.assertFalse(state["cost"]["complete"])
+        self.assertFalse(state["fenced"])
+        self.assertIsNone(budget.capacity(self.path))
+
+    def test_reporting_only_cost_is_rendered_below_item_progress(self):
+        fixture = WorkPlan()
+        fixture.setUp()
+        registry = fixture.validate()
+        report = work.ledger(registry, budget={"cost":budget.cost_policy(None, self.rates)})
+        rendered = work.markdown(report)
+        self.assertIn("tracking only, no monetary cap", rendered)
+        self.assertLess(rendered.index("Items:"), rendered.index("Managed estimated spend:"))
 
 
 if __name__ == "__main__":

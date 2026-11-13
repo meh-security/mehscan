@@ -31,11 +31,11 @@ def cost_policy(limit, rates, output_reservation=16000):
     if not isinstance(rates, dict) or set(rates) != keys:
         raise ValueError("cost rates require ordinary input, cached input and output rates")
     normalized = {key: str(decimal(rates[key], key)) for key in keys}
-    amount = decimal(limit, "cost allowance")
-    if amount <= 0 or type(output_reservation) is not int or output_reservation < 1:
+    amount = decimal(limit, "cost allowance") if limit is not None else None
+    if (amount is not None and amount <= 0) or type(output_reservation) is not int or output_reservation < 1:
         raise ValueError("cost allowance and output reservation must be positive")
     micros = lambda value: int(value.to_integral_value(rounding=ROUND_CEILING))
-    return {"currency": "USD", "limit_micros": micros(amount * 1_000_000), "rates": normalized,
+    return {"currency": "USD", "limit_micros": micros(amount * 1_000_000) if amount is not None else None, "rates": normalized,
             "output_reservation": output_reservation,
             "reservation_micros": micros(Decimal(MAX_CALL_INPUT) * max(Decimal(normalized[key]) for key in
                 ("input_per_million", "cached_input_per_million")) + Decimal(output_reservation) * Decimal(normalized["output_per_million"])),
@@ -153,7 +153,7 @@ def _admission_reason(state, lane=None):
         return "review provider-call limit reached"
     active = sum(entry["status"] == "reserved" for entry in state["leases"].values())
     cost = state.get("cost")
-    if cost and cost["observed_micros"] + (active + 1) * cost["reservation_micros"] > cost["limit_micros"]:
+    if cost and cost["limit_micros"] is not None and cost["observed_micros"] + (active + 1) * cost["reservation_micros"] > cost["limit_micros"]:
         return "review estimated cost allowance and in-flight reservation reached"
     reservation = state["reservation_per_call"]
     if state["observed_input_tokens"] + (active + 1) * reservation > state["input_limit"]:
@@ -236,11 +236,12 @@ def finish(path, lease, receipt):
             entry["estimated_cost_micros"] = amount
             if amount is None:
                 cost["complete"] = False
-                state["fenced"] = True
-                state["fence_reason"] = "provider cost counters unknown; estimated allowance fenced"
+                if cost["limit_micros"] is not None:
+                    state["fenced"] = True
+                    state["fence_reason"] = "provider cost counters unknown; estimated allowance fenced"
             else:
                 cost["observed_micros"] += amount
-                if (cost["observed_micros"] > cost["limit_micros"]
+                if cost["limit_micros"] is not None and (cost["observed_micros"] > cost["limit_micros"]
                         or usage["output_tokens"] > cost["output_reservation"]):
                     state["fenced"] = True
                     state["fence_reason"] = ("observed estimated cost allowance exceeded" if cost["observed_micros"] > cost["limit_micros"]

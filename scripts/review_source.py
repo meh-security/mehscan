@@ -467,13 +467,13 @@ def run(args, legacy, worker):
         budget_path = stage / "budget.json"
         cost = None
         if getattr(args, "cost_budget", None) is not None or getattr(args, "cost_rates", None):
-            if not work_registry or getattr(args, "cost_budget", None) is None or not getattr(args, "cost_rates", None):
-                raise ValueError("cost allowance requires a work plan, allowance and model rate file")
+            if not work_registry or not getattr(args, "cost_rates", None):
+                raise ValueError("cost accounting requires a work plan and model rate file")
             rates = worker.read(worker.outside(args.cost_rates, root))
             model = (runtime.get("provider") or {}).get("model")
             if not model or rates.get("model") != model or rates.get("currency") != "USD":
                 raise ValueError("cost rate model/currency differs from the provider binding")
-            cost = review_budget.cost_policy(args.cost_budget, rates.get("rates"))
+            cost = review_budget.cost_policy(getattr(args, "cost_budget", None), rates.get("rates"))
         review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
             input_limit=getattr(args, "input_token_budget", 1_500_000),
             admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
@@ -1607,6 +1607,7 @@ def run(args, legacy, worker):
             if "case_id" in row) else "ready_work_finished")
         result["work_goal"] = {"goal": report["goal"], "status": report["target_status"],
             "target_complete": report["target_complete"], "stop_reason": report["stop_reason"],
+            "completed_items": report["summary"]["closed"], "remaining_items": report["summary"]["remaining"],
             "ledger": str(stage / "work-ledger.json")}
         if report["goal"] == "coverage" and not report["target_complete"]:
             result["status"] = "incomplete"

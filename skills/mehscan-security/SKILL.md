@@ -26,6 +26,9 @@ It keeps a ranked backlog, evidence-backed check answers and remaining-risk repo
 Use the budget goal by default; an explicit coverage goal keeps the declared
 target incomplete until its checks close. Unclassified material has unknown
 importance. A completed target is not whole-application security clearance.
+Lead reports with declared items/checks completed and remaining, including serious
+gaps and unknown scope. Track tokens, time and configured-rate cost as supporting
+information; do not impose a monetary cap unless the user requests one.
 Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 

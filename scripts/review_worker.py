@@ -2702,7 +2702,7 @@ def main():
     parser.add_argument("--review-goal", choices=("budget", "coverage"), help="work plan stopping goal (default: budget)")
     parser.add_argument("--coverage-target", help="comma-separated work item IDs to complete; coverage defaults to all declared items")
     parser.add_argument("--cost-budget", help="configured-rate USD admission allowance for managed work; not an invoice cap")
-    parser.add_argument("--cost-rates", help="trusted JSON token rates bound to the configured provider model")
+    parser.add_argument("--cost-rates", help="model-bound token rates for cost reporting; add --cost-budget only to enforce an estimated allowance")
     parser.add_argument("--domain-session-mode", choices=("shared", "isolated"), default="shared",
                         help="share a thread across domain cases, or isolate cases while retaining the same evidence plan")
     parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")

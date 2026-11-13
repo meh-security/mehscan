@@ -15,8 +15,19 @@ Add these flags to the usual fresh `review_worker.py --phase all` invocation:
 ```
 
 Budget mode ranks ready work by potential impact, actor exposure, evidence strength
-and estimated next work. It uses the shared call/input/deadline allowance and can
-optionally admit calls against a configured-rate USD estimate:
+and estimated next work. The default allowance is 40 managed calls, 1.5M observed
+input tokens and a 20-minute new-call admission window, with three reviewers.
+These are safety ceilings, not spending targets or a fixed number of items.
+There is no default monetary cap. Lead progress reports with items and checks
+completed versus remaining, followed by potential-impact gaps and unknown scope.
+
+Use configured rates to keep cost information without a financial stopping rule:
+
+```text
+--work-plan RUN/work-plan.json --review-goal budget --cost-rates TRUSTED/rates.json
+```
+
+Only add a monetary allowance when the user explicitly requests it:
 
 ```text
 --work-plan RUN/work-plan.json --review-goal budget --cost-budget 5 --cost-rates TRUSTED/rates.json
@@ -186,7 +197,8 @@ the admitted provider contract; no prices are assumed automatically:
 ```
 
 The numbers illustrate the file shape, not current provider prices. Choose rates
-appropriate to the model/context band. Admissions reserve estimated cost for a
+appropriate to the model/context band. When a monetary allowance is requested,
+admissions reserve estimated cost for a
 250k input turn at the higher input rate plus 16k output tokens per in-flight call,
 then settle observed input/cache/output counters. Missing cost counters or an
 observed overrun fence new work while active calls drain. The 100k token reservation
@@ -198,3 +210,6 @@ actual invoice charges, unreported cache-write categories and host-agent work ar
 not guaranteed by these counters. Remaining cost ranges use supplied effort
 estimates and configured input/output rates; missing estimates remain visible.
 Do not claim that a USD allowance establishes security coverage or a hard bill cap.
+With `--cost-rates` alone, monetary counters are informational: missing cost
+counters remain unknown and do not stop otherwise admissible work. Existing
+input/call/time and unknown-input protections still apply.

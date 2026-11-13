@@ -233,7 +233,11 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
                "next_deciding_facts": deciding or ([item["focus"]["next_deciding_fact"]] if state != "closed" else []),
                "calls": result.get("calls", 0) if result else 0, "usage": usage,
                "job_directory": result.get("job_directory") if result else None,
-               "usage_complete": bool(result and result["status"] == "complete" and len(usage_rows) == result.get("calls", 0))})
+               "usage_complete": bool(result and result["status"] == "complete" and len(usage_rows) == result.get("calls", 0)
+                   and all(not set(metric.get("unknown_delta_counters", [])).intersection(
+                       ("input_tokens", "cached_input_tokens", "output_tokens")) and all(
+                       type(metric.get("usage", {}).get(key)) is int for key in
+                       ("input_tokens", "cached_input_tokens", "output_tokens")) for metric in usage_rows))})
     required = [row for row in rows if row["required"]]
     complete = bool(required) and all(row["status"] == "closed" for row in required)
     residual = Counter(row["priority"]["impact"] for row in rows if row["status"] != "closed")
@@ -273,6 +277,9 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         target_complete=complete if registry["goal"] == "coverage" else None,
         target_status=("complete" if complete else "incomplete") if registry["goal"] == "coverage" else "budgeted_review",
         summary=dict(items=len(rows), closed=sum(row["status"] == "closed" for row in rows),
+            remaining=len(remaining), by_status=dict(Counter(row["status"] for row in rows)),
+            checks_total=sum(len(row["required_checks"]) for row in rows),
+            checks_closed=sum(check["status"] in ("satisfied", "violated") for row in rows for check in row["check_results"]),
             required=len(required), required_closed=sum(row["status"] == "closed" for row in required),
             remaining_by_potential_impact=dict(residual),
             unclassified_native_ids=[rid for rid, row in registry["lead_accounting"].items() if row["role"] == "unclassified"]),
@@ -284,6 +291,10 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
 
 def markdown(report):
     lines = ["# Review work and remaining obligations", "", report["authority"], "",
+             "Items: " + str(report["summary"]["closed"]) + " completed / " + str(report["summary"]["items"])
+             + " declared; " + str(report["summary"]["remaining"]) + " remaining.", "",
+             "Checks: " + str(report["summary"]["checks_closed"]) + " closed / "
+             + str(report["summary"]["checks_total"]) + " declared. Completion can include a finding.", "",
              "Goal: " + report["goal"] + "; target status: " + report["target_status"] + ".", "",
              "| Item | Potential impact | State | Remaining deciding fact |", "| --- | --- | --- | --- |"]
     clean = lambda value: str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
@@ -302,8 +313,12 @@ def markdown(report):
               + str(len(estimate["calls"]["unknown_items"])) + " items lack call estimates.", ""]
     cost = (report.get("budget") or {}).get("cost")
     if cost:
+        limit = ("; tracking only, no monetary cap" if cost["limit_micros"] is None else
+                 " of $" + format(cost["limit_micros"] / 1_000_000, ".6f"))
         lines += ["Managed estimated spend: $" + format(cost["observed_micros"] / 1_000_000, ".6f")
-                  + " of $" + format(cost["limit_micros"] / 1_000_000, ".6f") + ". " + cost["basis"], ""]
+                  + limit + ". " + cost["basis"], ""]
+        if not cost["complete"]:
+            lines += ["Cost counters are incomplete; the displayed estimate is a known subtotal.", ""]
     if "configured_rate_usd" in estimate:
         lines += ["Remaining configured-rate estimate: " + str(estimate["configured_rate_usd"]) + " USD; host estimates, not guaranteed charges.", ""]
     if report["additional_source_proposals"]:
