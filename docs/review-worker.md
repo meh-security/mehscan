@@ -558,8 +558,22 @@ The inventory fingerprint records the native assessment inputs for each capture.
 The skill uses these paths for deciding which source to inspect. Review outcomes
 and review coverage still come from the ordinary review worker.
 
-After ending a native attempt as finished or incomplete, retain its admitted,
-unambiguous assessments:
+To retain admitted, unambiguous assessments as part of ending a native attempt,
+use the effective inventory of the generation being closed:
+
+```text
+mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --memory-store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory
+```
+
+The result reports `memory.status=retained` for a finished or incomplete attempt.
+If the database or source validation fails, the native attempt stays closed and
+the result reports `memory.status=pending` with the reason. Correct the cause
+and retry with the same end operation key, effective inventory, and source
+snapshot. The controller retains the original terminal generation even if
+another attempt has since started. Cancelled attempts report skipped retention.
+
+For an attempt already ended without memory, retain its current terminal
+generation explicitly:
 
 ```text
 mehscan memory retain --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N

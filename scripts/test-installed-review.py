@@ -186,11 +186,18 @@ print(json.dumps(result))
     assert sarif["version"] == "2.1.0" and sarif["runs"][0]["results"] == []
     # This checks imports from the archive, without credentials or a client launch.
     call(sys.executable, "-B", skill / "scripts/codex_reviewer.py", "--help")
-    call(scanner, "state", "end", "--store", store, "--stream", "package-smoke", "--repository-key", "test:installed-package",
-         "--generation", str(claim["result"]["generation"]), "--owner", claim["result"]["owner"], "--status", "finished", "--operation-key", "end")
+    memory = base / "memory.turso"
+    capture = native("state", "end", *common, "--repository-key", "test:installed-package",
+                     "--status", "finished", "--operation-key", "end", "--memory-store", memory)
+    assert capture["memory"]["status"] == "retained", capture
+    saved = native("memory", "assessments", "--store", memory, "--source-root", source,
+                   "--inventory", inventory, "--stream", "package-smoke")
+    retained = saved["batches"][0]["assessments"]
+    assert retained and all(row["verdict"] == "needs_review" for row in retained), saved
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,
                       "installed_worker":True, "source_review":"passed", "second_pass":"passed", "scoped_pending":True,
-                      "training_labels":"not_auto_approved", "document_links":"passed", "inference":False}))
+                      "training_labels":"not_auto_approved", "document_links":"passed", "local_memory":"passed",
+                      "inference":False}))
 
 
 if __name__ == "__main__":

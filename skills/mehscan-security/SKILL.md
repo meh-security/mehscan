@@ -37,8 +37,10 @@ When the user requests local review memory, use the controller's
 after preparing the native inventory. Keep the database with durable review
 artifacts outside the source root. Save the returned snapshot ID for later
 comparison and treat the reported paths as source changes, with review coverage
-and verdicts tracked by the ordinary work plan. Once native state ends, use
-`mehscan memory retain` with the exact inventory and generation. Use
+and verdicts tracked by the ordinary work plan. Pass `--memory-store`,
+`--inventory` and `--source-root` to `mehscan state end` to retain the exact
+completed generation. If memory reports pending, retry the same end operation
+after addressing the reported reason. Use
 `mehscan memory assessments` to retrieve matching historical context for the
 next review. For a matching finished batch on unchanged full source, use
 `mehscan memory reuse` with the current native work package. Review the returned

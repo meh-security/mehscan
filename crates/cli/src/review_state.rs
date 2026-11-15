@@ -1175,7 +1175,7 @@ fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Resu
         "native_coverage_limits":plan.native_coverage_limits,"security_resolution":"not_established"}))
 }
 
-fn read_state(file: &mut File) -> Result<State, String> {
+fn read_state(file: &mut File, through: Option<u64>) -> Result<State, String> {
     if file.metadata().map_err(|error| error.to_string())?.len() > MAX_JOURNAL_BYTES {
         return Err("state journal exceeds local store size limit".into());
     }
@@ -1226,6 +1226,12 @@ fn read_state(file: &mut File) -> Result<State, String> {
         );
         state.sequence = tx.sequence;
         state.last_hash = tx.hash;
+        if through == Some(state.sequence) {
+            return Ok(state);
+        }
+    }
+    if through.is_some() {
+        return Err("native completion receipt sequence is missing from state journal".into());
     }
     Ok(state)
 }
@@ -1247,7 +1253,7 @@ fn transact(store: &Path, operation: &str, command: Command) -> Result<Value, St
         .open(path)
         .map_err(|error| error.to_string())?;
     fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
-    let mut state = read_state(&mut file)?;
+    let mut state = read_state(&mut file, None)?;
     let command_hash = hash("mehscanStateCommand/v1", &command)?;
     if let Some((saved_hash, sequence, result)) = state.receipts.get(operation) {
         if saved_hash != &command_hash {
@@ -1317,7 +1323,7 @@ fn sync_journal(file: &File, _store: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn read_store(store: &Path) -> Result<State, String> {
+fn read_store(store: &Path, through: Option<u64>) -> Result<State, String> {
     let path = store.join("transactions.jsonl");
     if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err("state journal must not be a symlink".into());
@@ -1327,7 +1333,7 @@ fn read_store(store: &Path) -> Result<State, String> {
         .open(path)
         .map_err(|error| error.to_string())?;
     fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
-    read_state(&mut file)
+    read_state(&mut file, through)
 }
 
 #[derive(Serialize)]
@@ -1384,8 +1390,9 @@ pub(super) fn memory_admission(
     repository: &mehscan_core::ReviewRepositoryIdentity,
     source: &str,
     inventory: &str,
+    through: Option<u64>,
 ) -> Result<MemoryAdmission, String> {
-    let state = read_store(store)?;
+    let state = read_store(store, through)?;
     let key = stream_key(
         repository
             .repository_key
@@ -1693,7 +1700,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             .open(journal_path)
             .map_err(|error| error.to_string())?;
         fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
-        let mut state = read_state(&mut file)?;
+        let mut state = read_state(&mut file, None)?;
         let stream = state.owned_stream(
             &stream_key(
                 binding.repository.repository_key.as_deref().unwrap(),
@@ -1726,7 +1733,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     if matches!(operation.as_str(), "status" | "history") {
         let repository_key = args.required("--repository-key")?;
         args.finish()?;
-        let state = read_store(&store)?;
+        let state = read_store(&store, None)?;
         return super::print_json(&state.view(
             &stream_key(&repository_key, &stream)?,
             operation == "history",
@@ -1983,13 +1990,49 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 "incomplete" => ReviewAttemptStatus::Incomplete,
                 _ => return Err("end status must be finished, cancelled or incomplete".into()),
             };
+            let memory = if let Some(memory_store) = args.optional("--memory-store") {
+                let source_root = PathBuf::from(args.required("--source-root")?);
+                let inventory = PathBuf::from(args.required("--inventory")?);
+                Some(super::review_memory::EndRetention {
+                    store: PathBuf::from(memory_store),
+                    source_root,
+                    inventory,
+                })
+            } else {
+                None
+            };
             args.finish()?;
-            Command::End {
-                key: stream_key(&repository_key, &stream)?,
-                generation,
-                owner,
-                status,
+            let mut receipt = transact(
+                &store,
+                &operation_key,
+                Command::End {
+                    key: stream_key(&repository_key, &stream)?,
+                    generation,
+                    owner,
+                    status,
+                },
+            )?;
+            if let Some(memory) = memory {
+                if status == ReviewAttemptStatus::Cancelled {
+                    receipt["memory"] = json!({"status":"skipped","reason":"attempt_cancelled"});
+                } else {
+                    let sequence = receipt["sequence"]
+                        .as_u64()
+                        .ok_or("missing native completion sequence")?;
+                    // The native close is already durable. Replay this exact terminal
+                    // journal prefix on retry, even if another generation has started.
+                    receipt["memory"] =
+                        match memory.retain(&store, &stream, &repository_key, generation, sequence)
+                        {
+                            Ok(mut retained) => {
+                                retained["status"] = json!("retained");
+                                retained
+                            }
+                            Err(reason) => json!({"status":"pending","reason":reason}),
+                        };
+                }
             }
+            return super::print_json(&receipt);
         }
         _ => return Err("unknown state operation".into()),
     };
@@ -2309,6 +2352,9 @@ fn help() {
     );
     println!(
         "\nOptional claim: --coordination-key KEY binds a trusted coordinator's opaque lifecycle/tool contract into the snapshot. It does not authenticate that assertion."
+    );
+    println!(
+        "\nOptional end: --memory-store FILE --inventory DIR --source-root ROOT retains finished or incomplete work in local review memory. If the result reports memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
         "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."

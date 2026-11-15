@@ -87,6 +87,47 @@ enum Operation {
     },
 }
 
+pub(super) struct EndRetention {
+    pub store: PathBuf,
+    pub source_root: PathBuf,
+    pub inventory: PathBuf,
+}
+
+impl EndRetention {
+    pub(super) fn retain(
+        &self,
+        state: &Path,
+        stream: &str,
+        repository_key: &str,
+        generation: u64,
+        sequence: u64,
+    ) -> Result<serde_json::Value, String> {
+        super::review_state::outside_source(state, &self.source_root)?;
+        let store = checked_store(&self.store, &self.source_root)?;
+        let snapshot = load_snapshot(&self.source_root, &self.inventory)?;
+        if snapshot.repository.repository_key.as_deref() != Some(repository_key) {
+            return Err("memory inventory belongs to a different repository".into());
+        }
+        let admission = super::review_state::memory_admission(
+            state,
+            stream,
+            generation,
+            &snapshot.repository,
+            &snapshot.source,
+            &snapshot.inventory,
+            Some(sequence),
+        )?;
+        operate(
+            &store,
+            &snapshot,
+            Operation::Retain {
+                stream: stream.into(),
+                admission,
+            },
+        )
+    }
+}
+
 pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let command = arguments.next();
     match command.as_deref() {
@@ -109,25 +150,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     if args.root != Path::new(".") {
         return Err("memory operations accept named options only".into());
     }
-    let store = std::path::absolute(args.required("--store")?).map_err(|e| e.to_string())?;
     let root = PathBuf::from(args.required("--source-root")?);
     let inventory = PathBuf::from(args.required("--inventory")?);
-    super::review_state::outside_source(&store, &root)?;
-    check_store_file(&store)?;
-    let (cache, inventory) = super::review_state::load_inventory(&inventory)?;
-    let catalog = cache
-        .identity_catalog
-        .as_ref()
-        .filter(|catalog| catalog.repository.repository_key.is_some())
-        .ok_or("memory requires --repository-key at inventory creation")?;
-    let snapshot = Snapshot {
-        files: super::engine(
-            mehscan_engine::investigation::review_inventory_source_hashes(&root, &cache),
-        )?,
-        repository: catalog.repository.clone(),
-        source: catalog.source_fingerprint.clone(),
-        inventory,
-    };
+    let store = checked_store(Path::new(&args.required("--store")?), &root)?;
+    let snapshot = load_snapshot(&root, &inventory)?;
     let operation = match command.as_deref() {
         Some("snapshot") => Operation::Snapshot {
             base: args.optional("--base"),
@@ -148,6 +174,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     &snapshot.repository,
                     &snapshot.source,
                     &snapshot.inventory,
+                    None,
                 )?,
                 stream,
             }
@@ -193,10 +220,42 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         _ => unreachable!(),
     };
     args.finish()?;
+    super::print_json(&operate(&store, &snapshot, operation)?)
+}
+
+fn load_snapshot(root: &Path, inventory: &Path) -> Result<Snapshot, String> {
+    let (cache, inventory) = super::review_state::load_inventory(inventory)?;
+    let catalog = cache
+        .identity_catalog
+        .as_ref()
+        .filter(|catalog| catalog.repository.repository_key.is_some())
+        .ok_or("memory requires --repository-key at inventory creation")?;
+    Ok(Snapshot {
+        files: super::engine(
+            mehscan_engine::investigation::review_inventory_source_hashes(root, &cache),
+        )?,
+        repository: catalog.repository.clone(),
+        source: catalog.source_fingerprint.clone(),
+        inventory,
+    })
+}
+
+fn checked_store(path: &Path, root: &Path) -> Result<PathBuf, String> {
+    let store = std::path::absolute(path).map_err(|e| e.to_string())?;
+    super::review_state::outside_source(&store, root)?;
+    check_store_file(&store)?;
+    Ok(store)
+}
+
+fn operate(
+    store: &Path,
+    snapshot: &Snapshot,
+    operation: Operation,
+) -> Result<serde_json::Value, String> {
     if let Operation::Assessments { .. } = operation
         && !store.is_file()
     {
-        return super::print_json(&assessments::empty(&snapshot)?);
+        return json(assessments::empty(snapshot)?);
     }
     if matches!(operation, Operation::Reuse { .. }) && !store.is_file() {
         return Err("memory reuse requires an existing local database".into());
@@ -223,7 +282,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(run_local(&store, &snapshot, operation))
+    runtime.block_on(run_local(store, snapshot, operation))
 }
 
 fn check_store_file(path: &Path) -> Result<(), String> {
@@ -253,6 +312,10 @@ fn fingerprint(value: &impl Serialize) -> Result<String, String> {
 
 fn db_error(error: turso::Error) -> String {
     format!("local review memory: {error}")
+}
+
+fn json(value: impl Serialize) -> Result<serde_json::Value, String> {
+    serde_json::to_value(value).map_err(|error| error.to_string())
 }
 
 async fn schema_version(conn: &Connection) -> Result<i64, String> {
@@ -362,7 +425,11 @@ impl Snapshot {
     }
 }
 
-async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Result<(), String> {
+async fn run_local(
+    path: &Path,
+    snapshot: &Snapshot,
+    operation: Operation,
+) -> Result<serde_json::Value, String> {
     let path = path.to_str().ok_or("memory store path must be UTF-8")?;
     let read_only = matches!(
         operation,
@@ -382,7 +449,7 @@ async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Re
         .await
         .map_err(db_error)?;
     if let Operation::Assessments { stream } = operation {
-        return super::print_json(&assessments::lookup(&connection, snapshot, &stream).await?);
+        return json(assessments::lookup(&connection, snapshot, &stream).await?);
     }
     if let Operation::Reuse {
         stream,
@@ -394,14 +461,14 @@ async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Re
     } = operation
     {
         let retained = assessments::reuse_batch(&connection, snapshot, &stream, batch).await?;
-        return super::print_json(&super::review_state::reuse_memory(
+        return super::review_state::reuse_memory(
             &state,
             &stream,
             owner,
             &operation_key,
             *work,
             retained,
-        )?);
+        );
     }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -423,14 +490,14 @@ async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Re
     if let Operation::Retain { admission, stream } = &operation {
         let result = assessments::retain(&tx, &id, &snapshot.inventory, stream, admission).await?;
         tx.commit().await.map_err(db_error)?;
-        return super::print_json(&result);
+        return json(result);
     }
     tx.commit().await.map_err(db_error)?;
     let changes = base.map(|_| match previous.as_ref() {
         Some(previous) => compare(previous, &snapshot.files),
         None => Changes::default(),
     });
-    super::print_json(&Capture {
+    json(Capture {
         snapshot: &id,
         source_fingerprint: &snapshot.source,
         inventory_fingerprint: &snapshot.inventory,

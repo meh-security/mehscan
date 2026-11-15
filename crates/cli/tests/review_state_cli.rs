@@ -368,6 +368,140 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     fs::remove_dir_all(&fixture.base).unwrap();
 }
 
+#[test]
+fn native_end_retries_memory_retention_at_the_original_terminal_receipt() {
+    let fixture = Fixture::new("memory-end");
+    let first = fixture.claim("original", "0", "end-memory-claim", false);
+    let owner = first["result"]["owner"].as_str().unwrap();
+    let decisions = fixture.answers("needs_review", "Keep the original outstanding check.");
+    ok(&fixture.record_args("1", owner, "end-memory-record"));
+    let db = fixture.base.join("memory.turso");
+    // A temporarily invalid backing path fails retention after the native end.
+    fs::create_dir(&db).unwrap();
+    let end = [
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--status",
+        "finished",
+        "--operation-key",
+        "end-with-memory",
+        "--memory-store",
+        db.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ];
+    let failed = ok(&end);
+    assert_eq!(failed["result"]["status"], "finished");
+    assert_eq!(failed["memory"]["status"], "pending");
+    assert_eq!(fixture.view(false)["attempt_status"], "finished");
+
+    let later = fixture.claim("later", "1", "later-claim", true);
+    let later_owner = later["result"]["owner"].as_str().unwrap();
+    fixture.answers(
+        "not_issue",
+        "A separate evaluation has a different outcome.",
+    );
+    ok(&fixture.record_args("2", later_owner, "later-record"));
+    fs::remove_dir(&db).unwrap();
+
+    let source = fixture.source.join("app.js");
+    let unchanged = fs::read(&source).unwrap();
+    let mut edited = unchanged.clone();
+    edited.extend(b"\n// Different checkout contents.\n");
+    fs::write(&source, edited).unwrap();
+    let stale = ok(&end);
+    assert_eq!(stale["memory"]["status"], "pending");
+    assert!(
+        stale["memory"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("source files changed")
+    );
+    assert!(!db.exists());
+    fs::write(&source, unchanged).unwrap();
+
+    let retained = ok(&end);
+    assert_eq!(retained["sequence"], failed["sequence"]);
+    assert_eq!(retained["replayed"], true);
+    assert_eq!(retained["memory"]["status"], "retained");
+    assert_eq!(retained["memory"]["assessments"], decisions.len());
+    assert_eq!(retained["memory"]["reused"], false);
+    let repeated = ok(&end);
+    assert_eq!(repeated["memory"]["batch"], retained["memory"]["batch"]);
+    assert_eq!(repeated["memory"]["reused"], true);
+
+    let lookup = ok(&[
+        "memory",
+        "assessments",
+        "--store",
+        db.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ]);
+    let batch = &lookup["batches"][0];
+    assert_eq!(batch["generation"], 1);
+    assert!(
+        batch["assessments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["verdict"] == "needs_review")
+    );
+    let current = fixture.view(false);
+    assert_eq!(current["generation"], 2);
+    assert_eq!(current["attempt_status"], "running");
+    let cancelled = ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "2",
+        "--owner",
+        later_owner,
+        "--status",
+        "cancelled",
+        "--operation-key",
+        "cancel-with-memory",
+        "--memory-store",
+        fixture.base.join("unused.turso").to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.base.join("missing-source").to_str().unwrap(),
+    ]);
+    assert_eq!(cancelled["memory"]["status"], "skipped");
+    assert!(!fixture.base.join("unused.turso").exists());
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
 impl Fixture {
     fn new(label: &str) -> Self {
         let nonce = SystemTime::now()
