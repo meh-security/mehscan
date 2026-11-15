@@ -541,11 +541,31 @@ the second-pass summary records its own wall time separately. See
 
 ## Capture local review memory
 
-To record a source snapshot, prepare a native inventory with a stable
-`--repository-key` and run the controller:
+Persistent repository reviews use a local Turso database by default. Prepare
+the native inventory with a stable `--repository-key`, then ask the controller
+for the journal and database locations:
 
 ```text
-mehscan memory snapshot --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory
+mehscan memory location --source-root ROOT --inventory RUN/inventory
+```
+
+Use the returned `state_store` for native `state` commands and `--state-store`
+for memory commands that read the journal. Use a stable stream for successive
+reviews of the same branch and scope. The locations are shared by worktrees
+with matching repository identity, source repository identity and scan prefix.
+
+The default state home is `%LOCALAPPDATA%/mehscan` on Windows,
+`~/Library/Application Support/mehscan` on macOS, and `$XDG_STATE_HOME/mehscan`
+or `~/.local/state/mehscan` on Linux. Set `MEHSCAN_STATE_HOME` to an absolute
+directory outside the source root to choose a different state home. The
+controller creates the repository directory on location lookup and initializes
+the Turso database on the first write. Use `--store FILE` for a specific database
+with `memory` commands and `--memory-store FILE` with `state end`.
+
+To capture or compare source snapshots directly, run:
+
+```text
+mehscan memory snapshot --source-root ROOT --inventory RUN/inventory
 ```
 
 Keep the Turso database outside the source root. Save the returned `snapshot`
@@ -562,22 +582,25 @@ To retain admitted, unambiguous assessments as part of ending a native attempt,
 use the effective inventory of the generation being closed:
 
 ```text
-mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --memory-store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory
+mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
 
 The result reports `memory.status=retained` for a finished or incomplete attempt.
 If the database or source validation fails, the native attempt stays closed and
 the result reports `memory.status=pending` with the reason. Correct the cause
-and retry with the same end operation key, effective inventory, and source
-snapshot. The controller retains the original terminal generation even if
+and retry with the same end operation key, effective inventory, source snapshot,
+and state home. The controller retains the original terminal generation even if
 another attempt has since started. Cancelled attempts report skipped retention.
+For a one-shot run, use a temporary journal and pass `--memory-mode temporary`
+to `state end` to skip Turso retention. Use `state work` or pass the same mode
+to `memory prepare` to skip Turso lookup.
 
 For an attempt already ended without memory, retain its current terminal
 generation explicitly:
 
 ```text
-mehscan memory retain --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
-mehscan memory assessments --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --stream STREAM
+mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
+mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
 
 Retention reads the native journal for the specified generation and inventory.
@@ -594,7 +617,7 @@ native generation and bind its plan and single-model runtime. For the
 native-only first pass, ask the controller to prepare the work:
 
 ```text
-mehscan memory prepare --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security
+mehscan memory prepare --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security
 ```
 
 Save the returned `work_package` as the worker input. The controller checks the
@@ -611,7 +634,7 @@ To select a specific retained batch, request the current `state work` package
 and pass its saved file to the explicit reuse command:
 
 ```text
-mehscan memory reuse --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --owner OWNER --work-package RUN/work.json --skill-root TRUSTED/mehscan-security --batch BATCH --operation-key reuse-BATCH
+mehscan memory reuse --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --owner OWNER --work-package RUN/work.json --skill-root TRUSTED/mehscan-security --batch BATCH --operation-key reuse-BATCH
 ```
 
 Include the current `--provider-contract` if the work package binds one. The

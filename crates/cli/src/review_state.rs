@@ -1404,7 +1404,7 @@ impl MemoryPreparation<'_> {
         source: &Path,
         skill: &str,
         provider: Option<&str>,
-        retained: Result<Option<RetainedBatch>, String>,
+        retained: Option<Result<Option<RetainedBatch>, String>>,
     ) -> Result<Value, String> {
         let key = stream_key(self.repository_key, self.stream)?;
         let mut state = read_store(self.store, None)?;
@@ -1413,7 +1413,7 @@ impl MemoryPreparation<'_> {
             validate_runtime_skill(runtime, Some(skill), provider, source)?;
         }
         let (mut memory, reuse) = match retained {
-            Ok(Some(batch)) => {
+            Some(Ok(Some(batch))) => {
                 let operation = hash(
                     "mehscanMemoryPrepare/v1",
                     &(&key, self.generation, &full.package_id, &batch.id),
@@ -1444,8 +1444,9 @@ impl MemoryPreparation<'_> {
                     }
                 }
             }
-            Ok(None) => (json!({"status":"no_batch"}), None),
-            Err(reason) => (json!({"status":"unavailable","reason":reason}), None),
+            Some(Ok(None)) => (json!({"status":"no_batch"}), None),
+            Some(Err(reason)) => (json!({"status":"unavailable","reason":reason}), None),
+            None => (json!({"status":"skipped","reason":"temporary_mode"}), None),
         };
         if let Some((operation, command)) = reuse {
             // Once the controller attempts the append, report write or race
@@ -2112,16 +2113,23 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 "incomplete" => ReviewAttemptStatus::Incomplete,
                 _ => return Err("end status must be finished, cancelled or incomplete".into()),
             };
-            let memory = if let Some(memory_store) = args.optional("--memory-store") {
-                let source_root = PathBuf::from(args.required("--source-root")?);
-                let inventory = PathBuf::from(args.required("--inventory")?);
-                Some(super::review_memory::EndRetention {
-                    store: PathBuf::from(memory_store),
-                    source_root,
-                    inventory,
-                })
-            } else {
-                None
+            let memory_store = args.optional("--memory-store").map(PathBuf::from);
+            let mode = args.optional("--memory-mode");
+            let temporary =
+                super::review_memory::temporary_mode(mode.as_deref(), memory_store.is_some())?;
+            let source_root = args.optional("--source-root").map(PathBuf::from);
+            let inventory = args.optional("--inventory").map(PathBuf::from);
+            let memory = match (source_root, inventory) {
+                (Some(source_root), Some(inventory)) if !temporary => {
+                    Some(super::review_memory::EndRetention {
+                        store: memory_store,
+                        source_root,
+                        inventory,
+                    })
+                }
+                (Some(_), Some(_)) => None,
+                (None, None) if temporary || (mode.is_none() && memory_store.is_none()) => None,
+                _ => return Err("memory retention requires --source-root and --inventory".into()),
             };
             args.finish()?;
             let mut receipt = transact(
@@ -2134,7 +2142,9 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     status,
                 },
             )?;
-            if let Some(memory) = memory {
+            if temporary {
+                receipt["memory"] = json!({"status":"skipped","reason":"temporary_mode"});
+            } else if let Some(memory) = memory {
                 if status == ReviewAttemptStatus::Cancelled {
                     receipt["memory"] = json!({"status":"skipped","reason":"attempt_cancelled"});
                 } else {
@@ -2476,7 +2486,7 @@ fn help() {
         "\nOptional claim: --coordination-key KEY binds a trusted coordinator's opaque lifecycle/tool contract into the snapshot. It does not authenticate that assertion."
     );
     println!(
-        "\nOptional end: --memory-store FILE --inventory DIR --source-root ROOT retains finished or incomplete work in local review memory. If the result reports memory.status=pending, retry with the same operation key after correcting its reason."
+        "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
         "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."

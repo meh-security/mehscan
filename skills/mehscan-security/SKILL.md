@@ -32,20 +32,16 @@ information; do not impose a monetary cap unless the user requests one.
 Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 
-When the user requests local review memory, use the controller's
-[`mehscan memory snapshot`](../../docs/review-worker.md#capture-local-review-memory)
-after preparing the native inventory. Keep the database with durable review
-artifacts outside the source root. Save the returned snapshot ID for later
-comparison and treat the reported paths as source changes, with review coverage
-and verdicts tracked by the ordinary work plan. Pass `--memory-store`,
-`--inventory` and `--source-root` to `mehscan state end` to retain the exact
-completed generation. If memory reports pending, retry the same end operation
-after addressing the reported reason. Use
-`mehscan memory assessments` to retrieve matching historical context for the
-next review. For unchanged full-source native-only work after planning, use
-`mehscan memory prepare` and save the returned `work_package` for the remaining
-IDs. Keep the ordinary full work package for source-first work plans and their
-declared coverage obligations.
+Use [local review memory](../../docs/review-worker.md#capture-local-review-memory)
+by default for persistent repository reviews. After preparing the inventory with
+a stable `--repository-key`, use `mehscan memory location` to get the journal
+path and keep the same stream for successive reviews of the same branch and
+scope. For native-only work, use `mehscan memory prepare` after binding the plan
+and pass its returned `work_package` to the worker. Skip model dispatch when the
+native selection is already accounted for. Use `state work` for source-first
+plans so all source coverage checks reach the worker. End the generation with
+its effective `--inventory` and `--source-root` to retain native decisions. For
+one-shot work, use a temporary journal and `--memory-mode temporary` at close.
 
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security

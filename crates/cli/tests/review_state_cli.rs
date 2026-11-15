@@ -19,7 +19,9 @@ fn invoke(args: &[&str]) -> Output {
         .unwrap()
 }
 fn ok(args: &[&str]) -> Value {
-    let output = invoke(args);
+    successful_json(invoke(args), args)
+}
+fn successful_json(output: Output, args: &[&str]) -> Value {
     assert!(
         output.status.success(),
         "{args:?}: {}",
@@ -186,7 +188,39 @@ fn turso_retains_native_pending_decisions_only_for_exact_current_inputs() {
 
 #[test]
 fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
-    let fixture = Fixture::new("memory-replay");
+    let mut fixture = Fixture::new("memory-replay");
+    let state_home = fixture.base.join("controller-state");
+    let controller = |args: &[&str]| {
+        successful_json(
+            Command::new(env!("CARGO_BIN_EXE_mehscan"))
+                .env("MEHSCAN_STATE_HOME", &state_home)
+                .args(args)
+                .output()
+                .unwrap(),
+            args,
+        )
+    };
+    let location_args = [
+        "memory",
+        "location",
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+    ];
+    let locations = controller(&location_args);
+    let db = PathBuf::from(locations["memory_store"].as_str().unwrap());
+    fixture.store = PathBuf::from(locations["state_store"].as_str().unwrap());
+    assert!(db.starts_with(&state_home));
+    assert_eq!(db.parent(), fixture.store.parent());
+    assert_eq!(controller(&location_args), locations);
+    let invalid_state_home = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .env("MEHSCAN_STATE_HOME", fixture.source.join("state"))
+        .args(location_args)
+        .output()
+        .unwrap();
+    assert!(!invalid_state_home.status.success());
+    assert!(!fixture.source.join("state").exists());
     let skill = fixture.base.join("skill");
     fs::create_dir(&skill).unwrap();
     fs::write(skill.join("SKILL.md"), "Trusted local review policy.").unwrap();
@@ -196,13 +230,10 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let plan_file = fixture.base.join("plan.json");
     let work_file = fixture.base.join("work.json");
     let work = work_file.to_str().unwrap();
-    let db = fixture.base.join("review-memory.turso");
-    let startup = |generation: &str, owner: &str, memory: &Path| {
-        ok(&[
+    let startup = |generation: &str, owner: &str, extra: &[&str]| {
+        let mut args = vec![
             "memory",
             "prepare",
-            "--store",
-            memory.to_str().unwrap(),
             "--state-store",
             fixture.store.to_str().unwrap(),
             "--stream",
@@ -217,10 +248,12 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
             owner,
             "--skill-root",
             skill,
-        ])
+        ];
+        args.extend_from_slice(extra);
+        controller(&args)
     };
-    let end = |generation: &str, owner: &str, status: &str, key: &str| {
-        ok(&[
+    let end = |generation: &str, owner: &str, status: &str, key: &str, mode: Option<&str>| {
+        let mut args = vec![
             "state",
             "end",
             "--store",
@@ -237,7 +270,15 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
             status,
             "--operation-key",
             key,
-        ]);
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+        ];
+        if let Some(mode) = mode {
+            args.extend(["--memory-mode", mode]);
+        }
+        controller(&args)
     };
     let prepare = |generation: &str, owner: &str, draft: &Value, key: &str| {
         fs::write(&plan_file, draft.to_string()).unwrap();
@@ -264,7 +305,10 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let first = fixture.claim("initial", "0", "reuse-claim-1", false);
     let owner = first["result"]["owner"].as_str().unwrap();
     let first_work = prepare("1", owner, &plan, "reuse-plan-1");
-    let cold = startup("1", owner, &db);
+    let skipped = startup("1", owner, &["--memory-mode", "temporary"]);
+    assert_eq!(skipped["memory"]["reason"], "temporary_mode");
+    assert_eq!(skipped["work_package"], first_work);
+    let cold = startup("1", owner, &[]);
     assert_eq!(cold["memory"]["status"], "no_batch");
     assert_eq!(cold["work_package"], first_work);
     assert!(!db.exists());
@@ -273,7 +317,9 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let mut record = fixture.record_args("1", owner, "original-record");
     record.extend(["--skill-root", skill, "--work-package", work]);
     ok(&record);
-    end("1", owner, "finished", "reuse-end-1");
+    let retained = end("1", owner, "finished", "reuse-end-1", None);
+    assert_eq!(retained["memory"]["status"], "retained");
+    assert!(db.is_file());
     let common = [
         "--store",
         db.to_str().unwrap(),
@@ -290,6 +336,8 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     retain.extend(common);
     let saved = ok(&retain);
     assert_eq!(saved["assessments"], decisions.len());
+    assert_eq!(saved["reused"], true);
+    assert_eq!(saved["batch"], retained["memory"]["batch"]);
     let batch = saved["batch"].as_str().unwrap();
     let reuse = |owner, operation| {
         let mut args = vec![
@@ -319,7 +367,7 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
         &reuse(owner, "reuse-admission"),
         "same native plan and review runtime",
     );
-    let fallback = startup("2", owner, &db);
+    let fallback = startup("2", owner, &[]);
     assert_eq!(fallback["memory"]["status"], "incompatible");
     assert_eq!(fallback["work_package"], different_work);
     assert!(
@@ -329,24 +377,25 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
             .iter()
             .any(|row| row["state"] == "recorded")
     );
-    end("2", owner, "incomplete", "reuse-end-2");
+    let skipped = end("2", owner, "incomplete", "reuse-end-2", Some("temporary"));
+    assert_eq!(skipped["memory"]["reason"], "temporary_mode");
 
     let third = fixture.claim("matching-runtime", "2", "reuse-claim-3", true);
     let owner = third["result"]["owner"].as_str().unwrap();
     let package = prepare("3", owner, &plan, "reuse-plan-3");
-    let receipt = startup("3", owner, &db);
+    let receipt = startup("3", owner, &[]);
     assert_eq!(receipt["memory"]["model_calls"], 0);
     assert_eq!(
         receipt["memory"]["reused_review_ids"],
         package["payload"]["review_ids"]
     );
     assert_eq!(receipt["work_package"]["payload"]["review_ids"], json!([]));
-    let repeat = startup("3", owner, &db);
+    let repeat = startup("3", owner, &[]);
     assert_eq!(repeat["memory"]["replayed"], true);
     assert_eq!(repeat["work_package"], receipt["work_package"]);
     let no_access = fixture.base.join("not-a-database");
     fs::create_dir(&no_access).unwrap();
-    let fallback = startup("3", owner, &no_access);
+    let fallback = startup("3", owner, &["--store", no_access.to_str().unwrap()]);
     assert_eq!(fallback["memory"]["status"], "unavailable");
     assert_eq!(fallback["work_package"], receipt["work_package"]);
     let history = fixture.view(true);
@@ -382,7 +431,7 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
         links.to_str().unwrap(),
     ]);
     ok(&record);
-    end("3", owner, "finished", "reuse-end-3");
+    end("3", owner, "finished", "reuse-end-3", Some("temporary"));
 
     let fourth = fixture.claim("pending-parent", "3", "reuse-claim-4", true);
     let owner = fourth["result"]["owner"].as_str().unwrap();
@@ -393,7 +442,7 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
         skipped["result"]["remaining_review_ids"],
         package["payload"]["review_ids"]
     );
-    let pending_work = startup("4", owner, &db);
+    let pending_work = startup("4", owner, &[]);
     assert_eq!(pending_work["memory"]["status"], "no_eligible_decisions");
     assert_eq!(pending_work["work_package"], package);
     assert!(

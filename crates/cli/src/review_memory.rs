@@ -89,7 +89,7 @@ enum Operation {
 }
 
 pub(super) struct EndRetention {
-    pub store: PathBuf,
+    pub store: Option<PathBuf>,
     pub source_root: PathBuf,
     pub inventory: PathBuf,
 }
@@ -104,11 +104,15 @@ impl EndRetention {
         sequence: u64,
     ) -> Result<serde_json::Value, String> {
         super::review_state::outside_source(state, &self.source_root)?;
-        let store = checked_store(&self.store, &self.source_root)?;
         let snapshot = load_snapshot(&self.source_root, &self.inventory)?;
         if snapshot.repository.repository_key.as_deref() != Some(repository_key) {
             return Err("memory inventory belongs to a different repository".into());
         }
+        let store = resolve_store(
+            self.store.as_deref(),
+            &self.source_root,
+            &snapshot.repository,
+        )?;
         let admission = super::review_state::memory_admission(
             state,
             stream,
@@ -136,7 +140,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             help();
             return Ok(());
         }
-        Some("snapshot" | "retain" | "assessments" | "reuse" | "prepare") => {}
+        Some("location" | "snapshot" | "retain" | "assessments" | "reuse" | "prepare") => {}
         Some("import-legacy" | "legacy-history") => {
             return legacy::run(command.as_deref().unwrap(), arguments);
         }
@@ -156,12 +160,19 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let root = PathBuf::from(args.required("--source-root")?);
     let inventory = PathBuf::from(args.required("--inventory")?);
-    let store = PathBuf::from(args.required("--store")?);
+    if command.as_deref() == Some("location") {
+        args.finish()?;
+        let (cache, _) = super::review_state::load_inventory(&inventory)?;
+        let locations = default_locations(&root, &inventory_catalog(&cache)?.repository)?;
+        create_private_directory(locations.memory_store.parent().unwrap())?;
+        return super::print_json(&json(locations)?);
+    }
+    let store = args.optional("--store").map(PathBuf::from);
     let snapshot = load_snapshot(&root, &inventory)?;
     if command.as_deref() == Some("prepare") {
-        return super::print_json(&prepare_native(args, &root, &store, &snapshot)?);
+        return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
     }
-    let store = checked_store(&store, &root)?;
+    let store = resolve_store(store.as_deref(), &root, &snapshot.repository)?;
     let operation = match command.as_deref() {
         Some("snapshot") => Operation::Snapshot {
             base: args.optional("--base"),
@@ -234,7 +245,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
 fn prepare_native(
     mut args: super::ParsedArguments,
     root: &Path,
-    store: &Path,
+    store: Option<&Path>,
     snapshot: &Snapshot,
 ) -> Result<serde_json::Value, String> {
     let state = PathBuf::from(args.required("--state-store")?);
@@ -243,6 +254,7 @@ fn prepare_native(
     let owner = args.required("--owner")?;
     let skill = args.required("--skill-root")?;
     let provider = args.optional("--provider-contract");
+    let temporary = temporary_mode(args.optional("--memory-mode").as_deref(), store.is_some())?;
     let requested = args.optional("--review-ids").map(|ids| {
         if ids.is_empty() {
             Vec::new()
@@ -252,14 +264,16 @@ fn prepare_native(
     });
     args.finish()?;
     super::review_state::outside_source(&state, root)?;
-    let retained = checked_store(store, root).and_then(|path| {
-        if !path.is_file() {
-            return Ok(None);
-        }
-        let _lock = lock_store(&path)?;
-        local_runtime()?.block_on(async {
-            let (_database, connection) = open_local(&path, true).await?;
-            assessments::latest_finished_batch(&connection, snapshot, &stream).await
+    let retained = (!temporary).then(|| {
+        resolve_store(store, root, &snapshot.repository).and_then(|path| {
+            if !path.is_file() {
+                return Ok(None);
+            }
+            let _lock = lock_store(&path)?;
+            local_runtime()?.block_on(async {
+                let (_database, connection) = open_local(&path, true).await?;
+                assessments::latest_finished_batch(&connection, snapshot, &stream).await
+            })
         })
     });
     super::review_state::MemoryPreparation {
@@ -280,11 +294,7 @@ fn prepare_native(
 
 fn load_snapshot(root: &Path, inventory: &Path) -> Result<Snapshot, String> {
     let (cache, inventory) = super::review_state::load_inventory(inventory)?;
-    let catalog = cache
-        .identity_catalog
-        .as_ref()
-        .filter(|catalog| catalog.repository.repository_key.is_some())
-        .ok_or("memory requires --repository-key at inventory creation")?;
+    let catalog = inventory_catalog(&cache)?;
     Ok(Snapshot {
         files: super::engine(
             mehscan_engine::investigation::review_inventory_source_hashes(root, &cache),
@@ -293,6 +303,93 @@ fn load_snapshot(root: &Path, inventory: &Path) -> Result<Snapshot, String> {
         source: catalog.source_fingerprint.clone(),
         inventory,
     })
+}
+
+fn inventory_catalog(
+    cache: &mehscan_engine::investigation::ReviewInventory,
+) -> Result<&mehscan_core::ReviewIdentityCatalog, String> {
+    cache
+        .identity_catalog
+        .as_ref()
+        .filter(|catalog| catalog.repository.repository_key.is_some())
+        .ok_or_else(|| "memory requires --repository-key at inventory creation".into())
+}
+
+pub(super) fn temporary_mode(mode: Option<&str>, explicit_store: bool) -> Result<bool, String> {
+    match mode {
+        None | Some("persistent") => Ok(false),
+        Some("temporary") if !explicit_store => Ok(true),
+        Some("temporary") => Err("temporary memory mode does not accept a memory store".into()),
+        Some(_) => Err("--memory-mode must be persistent or temporary".into()),
+    }
+}
+
+#[derive(Serialize)]
+struct Locations {
+    state_store: PathBuf,
+    memory_store: PathBuf,
+}
+
+fn default_locations(
+    root: &Path,
+    repository: &ReviewRepositoryIdentity,
+) -> Result<Locations, String> {
+    let directory = state_home()?
+        .join("repositories")
+        .join(fingerprint(repository)?);
+    super::review_state::outside_source(&directory, root)?;
+    let state_store = directory.join("journal");
+    super::review_state::outside_source(&state_store, root)?;
+    Ok(Locations {
+        state_store,
+        memory_store: checked_store(&directory.join("review-memory.turso"), root)?,
+    })
+}
+
+fn state_home() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("MEHSCAN_STATE_HOME") {
+        let directory = PathBuf::from(path);
+        return if directory.is_absolute() {
+            Ok(directory)
+        } else {
+            Err("MEHSCAN_STATE_HOME requires an absolute directory outside the source root".into())
+        };
+    }
+    let platform = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+    } else if cfg!(target_os = "macos") {
+        None
+    } else {
+        std::env::var_os("XDG_STATE_HOME")
+    };
+    if let Some(directory) = platform
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return Ok(directory.join("mehscan"));
+    }
+    let home = std::env::home_dir()
+        .filter(|path| path.is_absolute())
+        .ok_or("no local state home available; set MEHSCAN_STATE_HOME")?;
+    let directory = if cfg!(windows) {
+        home.join("AppData/Local")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        home.join(".local/state")
+    };
+    Ok(directory.join("mehscan"))
+}
+
+fn resolve_store(
+    explicit: Option<&Path>,
+    root: &Path,
+    repository: &ReviewRepositoryIdentity,
+) -> Result<PathBuf, String> {
+    match explicit {
+        Some(path) => checked_store(path, root),
+        None => Ok(default_locations(root, repository)?.memory_store),
+    }
 }
 
 fn checked_store(path: &Path, root: &Path) -> Result<PathBuf, String> {
@@ -327,7 +424,7 @@ fn local_runtime() -> Result<tokio::runtime::Runtime, String> {
 
 fn lock_store(store: &Path) -> Result<File, String> {
     if let Some(parent) = store.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        create_private_directory(parent)?;
     }
     let mut name = store
         .file_name()
@@ -348,6 +445,17 @@ fn lock_store(store: &Path) -> Result<File, String> {
     Ok(lock)
 }
 
+fn create_private_directory(path: &Path) -> Result<(), String> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path).map_err(|error| error.to_string())
+}
+
 fn check_store_file(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_file() => {
@@ -361,14 +469,14 @@ fn check_store_file(path: &Path) -> Result<(), String> {
 
 fn help() {
     println!(
-        "USAGE:\n  mehscan memory snapshot --store FILE --source-root ROOT --inventory DIR [--base SNAPSHOT]\n  mehscan memory retain --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N\n  mehscan memory assessments --store FILE --source-root ROOT --inventory DIR --stream STREAM\n\nRecords validated source inputs and native assessments in a local Turso database outside the source root."
+        "USAGE:\n  mehscan memory location --source-root ROOT --inventory DIR\n  mehscan memory snapshot --source-root ROOT --inventory DIR [--store FILE --base SNAPSHOT]\n  mehscan memory retain --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N [--store FILE]\n  mehscan memory assessments --source-root ROOT --inventory DIR --stream STREAM [--store FILE]\n\nUses a repository-specific local Turso database outside the source root by default. Set MEHSCAN_STATE_HOME to choose the local state directory."
     );
     println!(
-        "  mehscan memory prepare --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root DIR [--provider-contract FILE] [--review-ids ID,ID]"
+        "  mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root DIR [--provider-contract FILE] [--review-ids ID,ID] [--store FILE | --memory-mode temporary]"
     );
     legacy::help();
     println!(
-        "\n  mehscan memory reuse --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY"
+        "\n  mehscan memory reuse --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY [--store FILE]"
     );
 }
 
