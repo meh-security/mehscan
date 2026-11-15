@@ -1,4 +1,4 @@
-//! Read-only import of normalized v7 review history. These rows have no native
+//! Read-only import of saved review history. These rows have no native
 //! admission authority.
 
 use std::collections::BTreeMap;
@@ -13,6 +13,8 @@ use super::{
     check_store_file, db_error, local_runtime, lock_store, open_local, prepare_legacy_schema,
     schema_version,
 };
+
+mod raw;
 
 const VERSION: i64 = 7;
 
@@ -205,23 +207,35 @@ const TABLES: &[Table] = &[
     ),
 ];
 
+const CASE_DEPENDENCIES: Table = table!(
+    "case_dependencies",
+    "review TEXT NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL, role TEXT NOT NULL, fingerprint TEXT NOT NULL",
+    "review,kind,target,role",
+    ", FOREIGN KEY (origin, review) REFERENCES legacy_case_reviews(origin, id)"
+);
+
 pub(super) async fn install(conn: &Connection) -> Result<(), String> {
     conn.execute("CREATE TABLE legacy_imports (origin TEXT NOT NULL PRIMARY KEY, source_version INTEGER NOT NULL, digest TEXT NOT NULL)", ())
         .await.map_err(db_error)?;
     for table in TABLES {
-        let ddl = format!(
-            "CREATE TABLE legacy_{} (origin TEXT NOT NULL REFERENCES legacy_imports(origin), {},
-             PRIMARY KEY (origin, {}){})",
-            table.name, table.fields, table.key, table.references,
-        );
-        conn.execute(ddl, ()).await.map_err(db_error)?;
+        install_table(conn, table).await?;
     }
+    Ok(())
+}
+
+async fn install_table(conn: &Connection, table: &Table) -> Result<(), String> {
+    let ddl = format!(
+        "CREATE TABLE IF NOT EXISTS legacy_{} (origin TEXT NOT NULL REFERENCES legacy_imports(origin), {},
+         PRIMARY KEY (origin, {}){})",
+        table.name, table.fields, table.key, table.references,
+    );
+    conn.execute(ddl, ()).await.map_err(db_error)?;
     Ok(())
 }
 
 pub(super) fn help() {
     println!(
-        "  mehscan memory import-legacy --store FILE --legacy FILE --origin NAME\n  mehscan memory legacy-history --store FILE --origin NAME [--assessment ID]"
+        "  mehscan memory import-legacy --store FILE --legacy FILE --origin NAME [--legacy-objects FILE]\n  mehscan memory legacy-history --store FILE --origin NAME [--assessment ID]"
     );
 }
 
@@ -244,13 +258,12 @@ pub(super) fn run(operation: &str, arguments: impl Iterator<Item = String>) -> R
     let result = if operation == "import-legacy" {
         let source =
             fs::canonicalize(args.required("--legacy")?).map_err(|error| error.to_string())?;
+        let objects = args.optional("--legacy-objects").map(PathBuf::from);
         args.finish()?;
-        if !source.is_file() || destination.canonicalize().is_ok_and(|path| path == source) {
-            return Err(
-                "legacy import requires distinct source and destination database files".into(),
-            );
+        if !source.is_file() {
+            return Err("legacy import requires a source database file".into());
         }
-        local_runtime()?.block_on(import(&source, &destination, &origin))?
+        local_runtime()?.block_on(import(&source, &destination, &origin, objects.as_deref()))?
     } else {
         let assessment = args.optional("--assessment");
         args.finish()?;
@@ -266,7 +279,13 @@ pub(super) fn run(operation: &str, arguments: impl Iterator<Item = String>) -> R
     super::super::print_json(&result)
 }
 
-async fn import(source: &Path, destination: &Path, origin: &str) -> Result<Json, String> {
+async fn import(
+    source: &Path,
+    destination: &Path,
+    origin: &str,
+    objects: Option<&Path>,
+) -> Result<Json, String> {
+    distinct_destination(source, destination)?;
     let (_source_db, mut legacy) = open_local(source, true).await?;
     let read = legacy.transaction().await.map_err(db_error)?;
     let mut version = read
@@ -278,8 +297,9 @@ async fn import(source: &Path, destination: &Path, origin: &str) -> Result<Json,
         .await
         .map_err(db_error)?
         .ok_or("legacy schema version unavailable")?;
-    if row.get::<i64>(0).map_err(db_error)? != VERSION {
-        return Err("legacy import requires a normalized version 7 store".into());
+    let source_version: i64 = row.get(0).map_err(db_error)?;
+    if !(1..=VERSION).contains(&source_version) {
+        return Err("legacy import requires a supported version 1–7 store".into());
     }
     drop(version);
     let mut roots = read
@@ -293,6 +313,11 @@ async fn import(source: &Path, destination: &Path, origin: &str) -> Result<Json,
         }
     }
     drop(roots);
+    let generated = if source_version < VERSION {
+        Some(raw::normalize(&read, source, destination, objects).await?)
+    } else {
+        None
+    };
 
     let _lock = lock_store(destination)?;
     let (_target_db, mut target) = open_local(destination, false).await?;
@@ -306,25 +331,54 @@ async fn import(source: &Path, destination: &Path, origin: &str) -> Result<Json,
         write
             .execute(
                 "INSERT INTO legacy_imports VALUES (?1, ?2, '')",
-                (origin, VERSION),
+                (origin, source_version),
             )
             .await
             .map_err(db_error)?;
     }
     let mut digest = Sha256::new();
     digest.update(b"mehscanLegacyMemory/v1\0");
+    if source_version < VERSION {
+        digest.update(source_version.to_le_bytes());
+    }
     let mut counts = BTreeMap::new();
     for table in TABLES {
+        let reader = if let Some((_, generated)) = &generated
+            && table_exists(generated, table.name).await?
+        {
+            generated
+        } else {
+            &*read
+        };
+        let count = if source_version == VERSION || table_exists(reader, table.name).await? {
+            transfer_table(
+                reader,
+                &write,
+                table,
+                origin,
+                existing.is_none(),
+                &mut digest,
+            )
+            .await?
+        } else {
+            digest_bytes(&mut digest, table.name.as_bytes());
+            digest.update(0u64.to_le_bytes());
+            0
+        };
+        counts.insert(table.name, count);
+    }
+    if source_version < VERSION && table_exists(&read, CASE_DEPENDENCIES.name).await? {
+        install_table(&write, &CASE_DEPENDENCIES).await?;
         let count = transfer_table(
             &read,
             &write,
-            table,
+            &CASE_DEPENDENCIES,
             origin,
             existing.is_none(),
             &mut digest,
         )
         .await?;
-        counts.insert(table.name, count);
+        counts.insert(CASE_DEPENDENCIES.name, count);
     }
     let identity = format!("{:x}", digest.finalize());
     if let Some(previous) = &existing {
@@ -345,9 +399,29 @@ async fn import(source: &Path, destination: &Path, origin: &str) -> Result<Json,
     }
     write.commit().await.map_err(db_error)?;
     Ok(
-        json!({"authority":"historical_context","origin":origin,"source_version":VERSION,
+        json!({"authority":"historical_context","origin":origin,"source_version":source_version,
               "digest":identity,"reused":existing.is_some(),"counts":counts}),
     )
+}
+
+fn distinct_destination(input: &Path, destination: &Path) -> Result<(), String> {
+    if destination.is_file()
+        && same_file::is_same_file(input, destination).map_err(|error| error.to_string())?
+    {
+        return Err("legacy import requires distinct input and destination files".into());
+    }
+    Ok(())
+}
+
+async fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            (name,),
+        )
+        .await
+        .map_err(db_error)?;
+    Ok(rows.next().await.map_err(db_error)?.is_some())
 }
 
 async fn transfer_table(
@@ -490,6 +564,17 @@ async fn history(
             "SELECT i.fact, f.predicate, f.target, f.producer, i.role, i.value_hash, i.basis
              FROM legacy_validity_inputs i JOIN legacy_validity_facts f ON f.origin = i.origin AND f.id = i.fact
              WHERE i.origin = ?1 AND i.review = ?2 ORDER BY i.fact,i.role", (origin, id)).await?);
+        if table_exists(conn, "legacy_case_dependencies").await? {
+            result["historical_dependencies"] = json!(
+                rows_json(
+                    conn,
+                    "SELECT kind, target, role, fingerprint FROM legacy_case_dependencies
+                 WHERE origin = ?1 AND review = ?2 ORDER BY kind,target,role",
+                    (origin, id)
+                )
+                .await?
+            );
+        }
         result["historical_candidates"] = json!(rows_json(conn,
             "SELECT id, case_id, owner_path, proposal_key, status, origin_review, current_review
              FROM legacy_case_candidates WHERE origin = ?1 AND (origin_review = ?2 OR current_review = ?2)
@@ -532,8 +617,7 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn normalized_legacy_import_is_read_only_idempotent_and_transactional() {
+    fn fixture_directory() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -543,6 +627,21 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&base).unwrap();
+        base
+    }
+
+    fn remove_fixture(base: PathBuf) {
+        assert!(
+            base.canonicalize()
+                .unwrap()
+                .starts_with(std::env::temp_dir().canonicalize().unwrap())
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn normalized_legacy_import_is_read_only_idempotent_and_transactional() {
+        let base = fixture_directory();
         let source = base.join("legacy.sqlite");
         let target = base.join("memory.turso");
         local_runtime().unwrap().block_on(async {
@@ -577,8 +676,8 @@ mod tests {
                 assert_eq!(schema_version(&conn).await.unwrap(), 2);
             }
             let original = fs::read(&source).unwrap();
-            let first = import(&source, &target, "fixture").await.unwrap();
-            let repeated = import(&source, &target, "fixture").await.unwrap();
+            let first = import(&source, &target, "fixture", None).await.unwrap();
+            let repeated = import(&source, &target, "fixture", None).await.unwrap();
             assert_eq!(first["counts"]["case_reviews"], 1);
             assert_eq!(repeated["reused"], true);
             assert_eq!(repeated["digest"], first["digest"]);
@@ -598,20 +697,125 @@ mod tests {
                 conn.execute("UPDATE check_decisions SET summary = 'Changed old archive'", ()).await.unwrap();
                 conn.execute("INSERT INTO case_evidence VALUES ('artifact','proofs',0,1,'missing')", ()).await.unwrap();
             }
-            let error = import(&source, &target, "fixture").await.unwrap_err();
+            let error = import(&source, &target, "fixture", None).await.unwrap_err();
             assert!(error.contains("refers to different history"), "{error}");
-            let error = import(&source, &target, "failed-import").await.unwrap_err();
+            let error = import(&source, &target, "failed-import", None).await.unwrap_err();
             assert!(error.contains("case_evidence"), "{error}");
             let (_db, conn) = open_local(&target, true).await.unwrap();
             assert!(imported_digest(&conn, "failed-import").await.unwrap().is_none());
             let saved = history(&conn, "fixture", Some("review")).await.unwrap();
             assert_eq!(saved["checks"][0]["summary"], "Awaiting caller evidence");
         });
-        assert!(
-            base.canonicalize()
-                .unwrap()
-                .starts_with(std::env::temp_dir().canonicalize().unwrap())
-        );
-        fs::remove_dir_all(base).unwrap();
+        remove_fixture(base);
+    }
+
+    #[test]
+    fn pre_relational_import_checks_split_objects_and_preserves_review_history() {
+        let base = fixture_directory();
+        let source = base.join("legacy.sqlite");
+        let target = base.join("memory.turso");
+        let directory = base.join("legacy.sqlite.artifacts");
+        let pack = base.join("moved-objects.sqlite");
+        fs::create_dir(&directory).unwrap();
+
+        let proof = json!([{"path":"app.js","start_line":2,"end_line":4,"quote":"excerpt"}]);
+        let question = json!([{"id":"bounds","question":"Is the input bounded?"}]);
+        let objects = [&proof, &question].map(|object| {
+            let body = object.to_string();
+            let hash = format!("{:x}", Sha256::digest(body.as_bytes()));
+            (hash, body)
+        });
+        let whole = json!({"case":{"id":"whole"},"result":{}}).to_string();
+        let split = json!({
+            "case_artifact_version":2,
+            "case":{"id":"split","owner_path":"app.js"},
+            "case_parts":{"proofs":objects[0].0},
+            "question_artifact":objects[1].0,
+            "result":{"draft":{
+                "work_checks":[{"check_id":"bounds","status":"unresolved","next_deciding_fact":"Caller binding"}],
+                "proposals":[{"key":"proposal","question":"Is the input bounded?","assessment":{"decision":"needs_review"}}]
+            }}
+        }).to_string();
+        let ids = [whole, split].map(|body| {
+            let hash = format!("{:x}", Sha256::digest(body.as_bytes()));
+            fs::write(directory.join(&hash), body).unwrap();
+            hash
+        });
+
+        local_runtime().unwrap().block_on(async {
+            {
+                let (_db, conn) = open_local(&pack, false).await.unwrap();
+                conn.execute("CREATE TABLE objects (hash TEXT PRIMARY KEY, body BLOB NOT NULL, codec TEXT NOT NULL)", ()).await.unwrap();
+                for (hash, body) in &objects {
+                    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(body.as_bytes(), 3);
+                    conn.execute("INSERT INTO objects VALUES (?,?, 'zlib')", (hash.as_str(), compressed)).await.unwrap();
+                }
+            }
+            {
+                let (_db, conn) = open_local(&source, false).await.unwrap();
+                conn.execute_batch(
+                    "PRAGMA user_version = 6;
+                     CREATE TABLE repositories (id TEXT PRIMARY KEY, root TEXT NOT NULL);
+                     CREATE TABLE snapshots (id TEXT PRIMARY KEY, repository TEXT, policy TEXT, config TEXT, parent TEXT);
+                     CREATE TABLE inputs (snapshot TEXT, path TEXT, hash TEXT);
+                     CREATE TABLE case_reviews (id TEXT PRIMARY KEY, snapshot TEXT, binding TEXT, artifact TEXT, closed INTEGER, created INTEGER);
+                     CREATE TABLE case_dependencies (review TEXT, kind TEXT, target TEXT, role TEXT, fingerprint TEXT);
+                     CREATE TABLE validity_facts (id TEXT PRIMARY KEY, subject TEXT, predicate TEXT, target TEXT, producer TEXT);
+                     CREATE TABLE validity_observations (fact TEXT, snapshot TEXT, value_hash TEXT, body TEXT);
+                     CREATE TABLE validity_inputs (review TEXT, fact TEXT, role TEXT, value_hash TEXT, basis TEXT);
+                     CREATE TABLE questions (id TEXT PRIMARY KEY, repository TEXT, body TEXT);
+                     CREATE TABLE answers (id TEXT PRIMARY KEY, question TEXT, snapshot TEXT, body TEXT, created INTEGER);
+                     INSERT INTO repositories VALUES ('repo','archived-checkout');
+                     INSERT INTO snapshots VALUES ('snapshot','repo','policy','{}',NULL);
+                     INSERT INTO inputs VALUES ('snapshot','app.js','old-hash');
+                     INSERT INTO case_dependencies VALUES ('split','file','app.js','control','old-hash');
+                     INSERT INTO validity_facts VALUES ('fact','subject','file','app.js','producer');
+                     INSERT INTO validity_observations VALUES ('fact','snapshot','old-hash','{\"path\":\"app.js\"}');
+                     INSERT INTO validity_inputs VALUES ('split','fact','control','old-hash','{\"fact\":\"fact\",\"observation_snapshot\":\"snapshot\"}');"
+                ).await.unwrap();
+                for (review, artifact) in ["whole", "split"].into_iter().zip(&ids) {
+                    conn.execute("INSERT INTO case_reviews VALUES (?1,'snapshot','binding',?2,0,1)", (review, artifact.as_str())).await.unwrap();
+                }
+                let spec = json!({"subject":"caller","kind":"binding","boundary":"input","scope":"app.js","schema":"v1","operands":[],"conditions":[]});
+                conn.execute("INSERT INTO questions VALUES ('delegated','repo',?1)", (spec.to_string(),)).await.unwrap();
+                let answer = json!({"outcome":"needs_review","summary":"Caller binding","provenance":"reviewer","contract":{},"conditions":[],"gaps":[],"evidence":[{
+                    "path":"app.js","start_line":2,"end_line":4,"artifact":"old-hash","quote":"excerpt"
+                }]});
+                conn.execute("INSERT INTO answers VALUES ('answer','delegated','snapshot',?1,1)", (answer.to_string(),)).await.unwrap();
+            }
+            let originals = [&source, &pack].map(|file| fs::read(file).unwrap());
+            let error = import(&source, &pack, "fixture", Some(&pack)).await.unwrap_err();
+            assert!(error.contains("distinct input and destination files"), "{error}");
+            let first = import(&source, &target, "fixture", Some(&pack)).await.unwrap();
+            let repeat = import(&source, &target, "fixture", Some(&pack)).await.unwrap();
+            assert_eq!(first["counts"]["case_records"], 2);
+            assert_eq!(first["counts"]["validity_values"], 1);
+            assert_eq!(first["counts"]["question_details"], 1);
+            assert_eq!(first["counts"]["answer_details"], 1);
+            assert_eq!(first["counts"]["answer_evidence"], 1);
+            assert_eq!(repeat["reused"], true);
+            assert_eq!(repeat["digest"], first["digest"]);
+            assert_eq!([&source, &pack].map(|file| fs::read(file).unwrap()), originals);
+            {
+                let (_db, conn) = open_local(&target, true).await.unwrap();
+                let saved = history(&conn, "fixture", Some("split")).await.unwrap();
+                assert_eq!(saved["authority"], "historical_context");
+                assert_eq!(saved["checks"][0]["question"], "Is the input bounded?");
+                assert_eq!(saved["checks"][0]["next_fact"], "Caller binding");
+                assert_eq!(saved["findings"][0]["decision"], "needs_review");
+                assert_eq!(saved["evidence"][0]["start_line"], 2);
+                assert_eq!(saved["dependencies"][0]["role"], "control");
+                assert_eq!(saved["historical_dependencies"][0]["fingerprint"], "old-hash");
+            }
+            {
+                let (_db, conn) = open_local(&pack, false).await.unwrap();
+                conn.execute("UPDATE objects SET codec = 'raw', body = ?1 WHERE hash = ?2", (b"[]".to_vec(), objects[0].0.as_str())).await.unwrap();
+            }
+            let error = import(&source, &target, "corrupt", Some(&pack)).await.unwrap_err();
+            assert!(error.contains("checksum differs"), "{error}");
+            let (_db, conn) = open_local(&target, true).await.unwrap();
+            assert!(imported_digest(&conn, "corrupt").await.unwrap().is_none());
+        });
+        remove_fixture(base);
     }
 }
