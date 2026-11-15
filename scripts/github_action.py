@@ -971,6 +971,8 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 worker_error = error
             worker_path = directory / "review/worker.json"
             worker_record = json.loads(worker_path.read_text(encoding="utf-8")) if worker_path.is_file() else {}
+            admitted = worker_record.get("status") == "admitted"
+            native_admission = admitted or worker_record.get("native_admission") is True
             if worker_record.get("status") == "selection_required" and worker_error is None:
                 record.update(status="selection_required", reason="bounded_value_selection_required",
                               review_execution="selection_required",
@@ -996,7 +998,7 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 if owned["generation"]!=derived["generation"] or owned["snapshot_id"]!=derived["snapshot_id"]:
                     raise ValueError("source review generation changed before result")
                 receipt=derived
-                if worker_record.get("status") == "admitted":
+                if admitted:
                     state_json(plan,execute,"work",[*common,"--inventory",str(augmented),"--source-root",str(Path(plan["checkout"])/plan["scan_root"]),
                         "--generation",str(derived["generation"]),"--owner",derived["owner"],"--skill-root",plan["review"]["skill_root"],*provider_arguments(plan)])
                 record["coordination"].update(generation=receipt["generation"],native_snapshot_id=receipt["snapshot_id"])
@@ -1006,21 +1008,27 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
             current = state_json(plan, execute, "status", [*common, "--repository-key", key])
             if current["generation"] != receipt["generation"] or current["snapshot_id"] != receipt["snapshot_id"]:
                 raise ValueError("review generation changed before result")
-            record["completion"] = current["completion"]
+            completion = current["completion"]
+            # The initial plan lists missing work even before a reviewer can
+            # start. Publish completion accounting once there is review progress.
+            if (native_admission
+                    or any(subject["current_decision_ids"] for subject in current.get("subjects", ()))
+                    or any(path["status"] != "unassessed" for path in completion.get("changed_paths", ()))):
+                record["completion"] = completion
             if cancelled():
                 raise CancelledRun()
             if not is_current(plan["endpoints"], observe(plan, get)):
                 record.update(status="stale", reason="endpoints_changed_during_review")
-            elif worker_error is not None or worker_record.get("status") != "admitted":
+            elif worker_error is not None or not admitted:
                 record.update(status="incomplete", reason="review_worker_incomplete")
             else:
                 record.update(status="reviewed", reason="advisory_review_finished", review_execution="admitted")
                 terminal = "finished"
-            if worker_record.get("status") == "admitted" or worker_record.get("native_admission") is True:
+            if native_admission:
                 if record["status"] == "incomplete":
                     record["review_execution"] = "partially_admitted"
                 elif record["status"] == "stale":
-                    record["review_execution"] = "admitted" if worker_record["status"] == "admitted" else "partially_admitted"
+                    record["review_execution"] = "admitted" if admitted else "partially_admitted"
                 record["exports"] = export_module().export_review(plan, directory, record, reviewer_label, execute, native_environment())
                 review_tools(plan, execute)
                 review_source(plan, execute)
