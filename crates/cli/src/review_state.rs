@@ -51,6 +51,16 @@ enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         work_package: Option<mehscan_core::ReviewWorkPackage>,
     },
+    Reuse {
+        key: String,
+        generation: u64,
+        owner: String,
+        batch: String,
+        previous_generation: u64,
+        previous_attempt: String,
+        decision_ids: Vec<String>,
+        work_package: mehscan_core::ReviewWorkPackage,
+    },
     End {
         key: String,
         generation: u64,
@@ -124,6 +134,7 @@ struct Stream {
     heads: BTreeMap<String, BTreeSet<String>>,
     lineage: BTreeMap<String, ReviewStateSupersession>,
     admissions: BTreeMap<u64, BTreeSet<String>>,
+    reusable_admissions: BTreeMap<u64, BTreeMap<String, String>>,
     provenance: BTreeMap<u64, Vec<Value>>,
     completion_plans: BTreeMap<u64, Vec<mehscan_core::ReviewCompletionPlanRecord>>,
     pending: BTreeMap<String, mehscan_core::ReviewPendingRecord>,
@@ -167,6 +178,12 @@ impl State {
                 (key, None, None, Some(attempt_id))
             }
             Command::Record {
+                key,
+                generation,
+                owner,
+                ..
+            }
+            | Command::Reuse {
                 key,
                 generation,
                 owner,
@@ -443,6 +460,15 @@ impl State {
                         .insert(record.decision_id.clone());
                 }
                 if let Some(package) = work_package {
+                    if reusable_work(package) {
+                        let candidates = stream.reusable_admissions.entry(*generation).or_default();
+                        for record in records.iter().filter(|record| settled(record)) {
+                            candidates.insert(
+                                record.decision_id.clone(),
+                                package.payload.plan_id.clone(),
+                            );
+                        }
+                    }
                     for fact in &package.payload.evidence_updates {
                         let question = &stream.pending[&fact.question_id];
                         if let mehscan_core::ReviewPendingOrigin::Decision { decision_id } =
@@ -469,6 +495,98 @@ impl State {
                     .push(provenance.clone());
                 Ok(
                     json!({"status":"recorded","generation":generation,"decision_ids":incoming.keys().collect::<Vec<_>>()}),
+                )
+            }
+            Command::Reuse {
+                key,
+                generation,
+                owner,
+                batch,
+                previous_generation,
+                previous_attempt,
+                decision_ids,
+                work_package,
+            } => {
+                let stream = self.owned_stream(key, *generation, owner)?;
+                let current = stream.attempts.last().unwrap();
+                validate_work_package(stream, current, work_package, &[])?;
+                if !reusable_work(work_package) {
+                    return Err("memory reuse requires a bound full-source work package without pending questions or evidence updates".into());
+                }
+                let previous = stream
+                    .attempts
+                    .iter()
+                    .find(|attempt| {
+                        attempt.generation == *previous_generation
+                            && attempt.attempt_id == *previous_attempt
+                    })
+                    .ok_or("retained memory generation does not exist in this native stream")?;
+                if previous.generation >= current.generation
+                    || previous.status != ReviewAttemptStatus::Finished
+                    || previous.binding != current.binding
+                {
+                    return Err("memory reuse requires matching native bindings from an earlier finished generation".into());
+                }
+                let previous_plan = stream
+                    .completion_plans
+                    .get(previous_generation)
+                    .and_then(|plans| plans.last())
+                    .ok_or("earlier generation lacks a native completion plan")?;
+                let current_plan = stream.completion_plans[generation].last().unwrap();
+                if previous_plan.plan != current_plan.plan {
+                    return Err(
+                        "memory reuse requires the same native plan and review runtime".into(),
+                    );
+                }
+                let mut records = Vec::new();
+                let mut review_ids = BTreeSet::new();
+                for id in decision_ids {
+                    let Some(record) = stream.decisions.get(id) else {
+                        return Err("retained decision is missing from native state".into());
+                    };
+                    let review = &record.response.review_id;
+                    let parents = work_package.payload.expected_parents.get(review);
+                    if previous.admissions.contains(id)
+                        && stream
+                            .reusable_admissions
+                            .get(previous_generation)
+                            .and_then(|eligible| eligible.get(id))
+                            == Some(&previous_plan.plan_id)
+                        && settled(record)
+                        && parents.is_some_and(|parents| parents.as_slice() == [id.as_str()])
+                        && !current.admissions.contains(id)
+                        && review_ids.insert(review.clone())
+                    {
+                        records.push(record.clone());
+                    }
+                }
+                let remaining = work_package
+                    .payload
+                    .review_ids
+                    .iter()
+                    .filter(|id| {
+                        let parents = &work_package.payload.expected_parents[*id];
+                        !review_ids.contains(*id)
+                            && !matches!(parents.as_slice(), [parent]
+                                if current.admissions.contains(parent) && settled(&stream.decisions[parent]))
+                    })
+                    .collect::<Vec<_>>();
+                let reused: Vec<_> = records
+                    .iter()
+                    .map(|record| record.decision_id.clone())
+                    .collect();
+                if !records.is_empty() {
+                    self.apply(&Command::Record {
+                        key: key.clone(), generation: *generation, owner: owner.clone(),
+                        records, supersessions: Vec::new(),
+                        provenance: json!({"kind":"exact_memory_reuse","batch":batch,"previous_generation":previous_generation,
+                                           "work_package_id":work_package.package_id,"decision_ids":reused}),
+                        work_package: Some(work_package.clone()),
+                    })?;
+                }
+                Ok(
+                    json!({"status":"memory_reuse","generation":generation,"decision_ids":reused,
+                    "reused_review_ids":review_ids,"remaining_review_ids":remaining,"model_calls":0}),
                 )
             }
             Command::End {
@@ -970,6 +1088,28 @@ fn validate_work_package(
     Ok(())
 }
 
+fn reusable_work(package: &mehscan_core::ReviewWorkPackage) -> bool {
+    let payload = &package.payload;
+    payload
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.orchestration.is_none())
+        && payload.impact_scope.is_none()
+        && payload.change_pass.is_empty()
+        && payload.pending_questions.is_empty()
+        && payload.evidence_updates.is_empty()
+}
+
+fn settled(record: &ReviewDecisionRecord) -> bool {
+    record.response.decision != mehscan_core::ReviewDecision::NeedsReview
+        && record.response.checks.is_empty()
+        && record
+            .response
+            .investigation
+            .as_ref()
+            .is_none_or(|trace| trace.blockers.is_empty())
+}
+
 fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Result<Value, String> {
     let Some(saved) = stream
         .completion_plans
@@ -1198,6 +1338,45 @@ pub(super) struct MemoryAdmission {
     pub records: Vec<ReviewDecisionRecord>,
 }
 
+pub(super) struct RetainedBatch {
+    pub id: String,
+    pub generation: u64,
+    pub attempt: String,
+    pub decisions: Vec<String>,
+}
+
+pub(super) fn reuse_memory(
+    store: &Path,
+    stream: &str,
+    owner: String,
+    operation_key: &str,
+    work: mehscan_core::ReviewWorkPackage,
+    batch: RetainedBatch,
+) -> Result<Value, String> {
+    let key = stream_key(
+        work.payload
+            .repository
+            .repository_key
+            .as_deref()
+            .ok_or("missing repository key")?,
+        stream,
+    )?;
+    transact(
+        store,
+        operation_key,
+        Command::Reuse {
+            key,
+            generation: work.payload.generation,
+            owner,
+            work_package: work,
+            batch: batch.id,
+            previous_generation: batch.generation,
+            previous_attempt: batch.attempt,
+            decision_ids: batch.decisions,
+        },
+    )
+}
+
 pub(super) fn memory_admission(
     store: &Path,
     stream: &str,
@@ -1336,7 +1515,7 @@ fn validate_runtime_engine(runtime: &mehscan_core::ReviewRuntimeContract) -> Res
     Ok(())
 }
 
-fn validate_runtime_skill(
+pub(super) fn validate_runtime_skill(
     runtime: &mehscan_core::ReviewRuntimeContract,
     skill: Option<&str>,
     provider: Option<&str>,

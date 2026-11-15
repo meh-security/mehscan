@@ -77,6 +77,14 @@ enum Operation {
     Assessments {
         stream: String,
     },
+    Reuse {
+        stream: String,
+        state: PathBuf,
+        owner: String,
+        operation_key: String,
+        work: Box<mehscan_core::ReviewWorkPackage>,
+        batch: String,
+    },
 }
 
 pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
@@ -86,10 +94,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             help();
             return Ok(());
         }
-        Some("snapshot" | "retain" | "assessments") => {}
+        Some("snapshot" | "retain" | "assessments" | "reuse") => {}
         Some(other) => {
             return Err(format!(
-                "unknown memory operation {other:?}; expected snapshot, retain or assessments"
+                "unknown memory operation {other:?}; expected snapshot, retain, assessments or reuse"
             ));
         }
     }
@@ -147,6 +155,41 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         Some("assessments") => Operation::Assessments {
             stream: args.required("--stream")?,
         },
+        Some("reuse") => {
+            let state = PathBuf::from(args.required("--state-store")?);
+            let work_path = PathBuf::from(args.required("--work-package")?);
+            super::review_state::outside_source(&state, &root)?;
+            super::review_state::outside_source(&work_path, &root)?;
+            let work: mehscan_core::ReviewWorkPackage =
+                serde_json::from_slice(&fs::read(work_path).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            if work.payload.repository != snapshot.repository
+                || work.payload.inventory_input_fingerprint != snapshot.inventory
+            {
+                return Err("work package does not match current memory inventory".into());
+            }
+            let contract = work
+                .payload
+                .runtime
+                .as_ref()
+                .ok_or("memory reuse requires a bound review runtime")?;
+            let skill = args.required("--skill-root")?;
+            let provider = args.optional("--provider-contract");
+            super::review_state::validate_runtime_skill(
+                contract,
+                Some(&skill),
+                provider.as_deref(),
+                &root,
+            )?;
+            Operation::Reuse {
+                stream: args.required("--stream")?,
+                state,
+                work: Box::new(work),
+                owner: args.required("--owner")?,
+                operation_key: args.required("--operation-key")?,
+                batch: args.required("--batch")?,
+            }
+        }
         _ => unreachable!(),
     };
     args.finish()?;
@@ -154,6 +197,9 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         && !store.is_file()
     {
         return super::print_json(&assessments::empty(&snapshot)?);
+    }
+    if matches!(operation, Operation::Reuse { .. }) && !store.is_file() {
+        return Err("memory reuse requires an existing local database".into());
     }
     if let Some(parent) = store.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -194,6 +240,9 @@ fn check_store_file(path: &Path) -> Result<(), String> {
 fn help() {
     println!(
         "USAGE:\n  mehscan memory snapshot --store FILE --source-root ROOT --inventory DIR [--base SNAPSHOT]\n  mehscan memory retain --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N\n  mehscan memory assessments --store FILE --source-root ROOT --inventory DIR --stream STREAM\n\nRecords validated source inputs and native assessments in a local Turso database outside the source root."
+    );
+    println!(
+        "\n  mehscan memory reuse --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY"
     );
 }
 
@@ -315,7 +364,10 @@ impl Snapshot {
 
 async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Result<(), String> {
     let path = path.to_str().ok_or("memory store path must be UTF-8")?;
-    let read_only = matches!(operation, Operation::Assessments { .. });
+    let read_only = matches!(
+        operation,
+        Operation::Assessments { .. } | Operation::Reuse { .. }
+    );
     let database = Builder::new_local(path)
         .read_only(read_only)
         .build()
@@ -331,6 +383,25 @@ async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Re
         .map_err(db_error)?;
     if let Operation::Assessments { stream } = operation {
         return super::print_json(&assessments::lookup(&connection, snapshot, &stream).await?);
+    }
+    if let Operation::Reuse {
+        stream,
+        state,
+        owner,
+        operation_key,
+        work,
+        batch,
+    } = operation
+    {
+        let retained = assessments::reuse_batch(&connection, snapshot, &stream, batch).await?;
+        return super::print_json(&super::review_state::reuse_memory(
+            &state,
+            &stream,
+            owner,
+            &operation_key,
+            *work,
+            retained,
+        )?);
     }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)

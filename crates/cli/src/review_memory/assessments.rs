@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use turso::Connection;
 
 use super::{Snapshot, db_error, fingerprint, schema_version};
-use crate::review_state::MemoryAdmission;
+use crate::review_state::{MemoryAdmission, RetainedBatch};
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE assessment_batches (
@@ -330,6 +330,56 @@ pub(super) async fn lookup(
         });
     }
     Ok(result)
+}
+
+pub(super) async fn reuse_batch(
+    conn: &Connection,
+    snapshot: &Snapshot,
+    stream: &str,
+    batch: String,
+) -> Result<RetainedBatch, String> {
+    if schema_version(conn).await? < 2 {
+        return Err("memory store has no retained assessments".into());
+    }
+    let id = snapshot.id(&fingerprint(&snapshot.repository)?)?;
+    let mut rows = conn
+        .query(
+            "SELECT generation, native_attempt FROM assessment_batches
+         WHERE snapshot_id = ?1 AND inventory_fingerprint = ?2 AND stream = ?3 AND id = ?4
+           AND attempt_status = 'finished'",
+            (
+                id.as_str(),
+                snapshot.inventory.as_str(),
+                stream,
+                batch.as_str(),
+            ),
+        )
+        .await
+        .map_err(db_error)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(db_error)?
+        .ok_or("retained finished batch does not match current inventory and stream")?;
+    let generation = u64::try_from(row.get::<i64>(0).map_err(db_error)?)
+        .map_err(|_| "invalid retained native generation")?;
+    let attempt = row.get(1).map_err(db_error)?;
+    drop(rows);
+    let mut rows = conn.query(
+        "SELECT a.decision_id FROM batch_assessments b JOIN assessments a ON a.id = b.assessment_id
+         WHERE b.batch_id = ?1 ORDER BY a.decision_id",
+        (batch.as_str(),),
+    ).await.map_err(db_error)?;
+    let mut decisions = Vec::new();
+    while let Some(row) = rows.next().await.map_err(db_error)? {
+        decisions.push(row.get(0).map_err(db_error)?);
+    }
+    Ok(RetainedBatch {
+        id: batch,
+        generation,
+        attempt,
+        decisions,
+    })
 }
 
 async fn read_assessments(conn: &Connection, batch: &str) -> Result<Vec<Assessment>, String> {

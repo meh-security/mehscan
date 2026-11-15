@@ -184,6 +184,190 @@ fn turso_retains_native_pending_decisions_only_for_exact_current_inputs() {
     fs::remove_dir_all(&fixture.base).unwrap();
 }
 
+#[test]
+fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
+    let fixture = Fixture::new("memory-replay");
+    let skill = fixture.base.join("skill");
+    fs::create_dir(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "Trusted local review policy.").unwrap();
+    let skill = skill.to_str().unwrap();
+    let mut plan = fixture.plan_template("value");
+    plan["runtime"] = ok(&["state", "runtime-template", "--skill-root", skill]);
+    let plan_file = fixture.base.join("plan.json");
+    let work_file = fixture.base.join("work.json");
+    let work = work_file.to_str().unwrap();
+    let end = |generation: &str, owner: &str, status: &str, key: &str| {
+        ok(&[
+            "state",
+            "end",
+            "--store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--repository-key",
+            "repo:123",
+            "--generation",
+            generation,
+            "--owner",
+            owner,
+            "--status",
+            status,
+            "--operation-key",
+            key,
+        ]);
+    };
+    let prepare = |generation: &str, owner: &str, draft: &Value, key: &str| {
+        fs::write(&plan_file, draft.to_string()).unwrap();
+        let mut plan_args = fixture.plan_args(owner, &plan_file, key);
+        let index = plan_args
+            .iter()
+            .position(|value| *value == "--generation")
+            .unwrap();
+        plan_args[index + 1] = generation;
+        plan_args.extend(["--skill-root", skill]);
+        ok(&plan_args);
+        let mut work_args = fixture.work_args(owner, false);
+        let index = work_args
+            .iter()
+            .position(|value| *value == "--generation")
+            .unwrap();
+        work_args[index + 1] = generation;
+        work_args.extend(["--skill-root", skill]);
+        let package = ok(&work_args);
+        fs::write(&work_file, package.to_string()).unwrap();
+        package
+    };
+
+    let first = fixture.claim("initial", "0", "reuse-claim-1", false);
+    let owner = first["result"]["owner"].as_str().unwrap();
+    prepare("1", owner, &plan, "reuse-plan-1");
+    let decisions = fixture.answers("not_issue", "Synthetic source assessment.");
+    assert!(!decisions.is_empty());
+    let mut record = fixture.record_args("1", owner, "original-record");
+    record.extend(["--skill-root", skill, "--work-package", work]);
+    ok(&record);
+    end("1", owner, "finished", "reuse-end-1");
+    let db = fixture.base.join("review-memory.turso");
+    let common = [
+        "--store",
+        db.to_str().unwrap(),
+        "--state-store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ];
+    let mut retain = vec!["memory", "retain", "--generation", "1"];
+    retain.extend(common);
+    let saved = ok(&retain);
+    assert_eq!(saved["assessments"], decisions.len());
+    let batch = saved["batch"].as_str().unwrap();
+    let reuse = |owner, operation| {
+        let mut args = vec![
+            "memory",
+            "reuse",
+            "--batch",
+            batch,
+            "--owner",
+            owner,
+            "--work-package",
+            work,
+            "--skill-root",
+            skill,
+            "--operation-key",
+            operation,
+        ];
+        args.extend(common);
+        args
+    };
+
+    let second = fixture.claim("different-runtime", "1", "reuse-claim-2", true);
+    let owner = second["result"]["owner"].as_str().unwrap();
+    let mut different = plan.clone();
+    different["runtime"]["limits"]["queries"] = json!(7);
+    prepare("2", owner, &different, "reuse-plan-2");
+    reject(
+        &reuse(owner, "reuse-admission"),
+        "same native plan and review runtime",
+    );
+    assert!(
+        !fixture.view(false)["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["state"] == "recorded")
+    );
+    end("2", owner, "incomplete", "reuse-end-2");
+
+    let third = fixture.claim("matching-runtime", "2", "reuse-claim-3", true);
+    let owner = third["result"]["owner"].as_str().unwrap();
+    let package = prepare("3", owner, &plan, "reuse-plan-3");
+    let args = reuse(owner, "reuse-admission");
+    let receipt = ok(&args);
+    assert_eq!(receipt["result"]["model_calls"], 0);
+    assert_eq!(
+        receipt["result"]["reused_review_ids"],
+        package["payload"]["review_ids"]
+    );
+    assert_eq!(receipt["result"]["remaining_review_ids"], json!([]));
+    assert_eq!(ok(&args)["replayed"], true);
+    let history = fixture.view(true);
+    assert_eq!(
+        history["decisions"].as_object().unwrap().len(),
+        decisions.len()
+    );
+    assert_eq!(
+        history["admission_provenance"]["3"][0]["kind"],
+        "exact_memory_reuse"
+    );
+    assert_eq!(
+        history["admission_provenance"]["3"][0]["previous_generation"],
+        1
+    );
+    assert!(
+        history["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["state"] == "recorded")
+    );
+
+    let pending = fixture.answers("needs_review", "The caller still needs a deciding fact.");
+    let links = fixture.supersessions(&pending, &history, "reuse-supersessions.json");
+    let mut record = fixture.record_args("3", owner, "reopen-after-reuse");
+    record.extend([
+        "--skill-root",
+        skill,
+        "--work-package",
+        work,
+        "--supersessions",
+        links.to_str().unwrap(),
+    ]);
+    ok(&record);
+    end("3", owner, "finished", "reuse-end-3");
+
+    let fourth = fixture.claim("pending-parent", "3", "reuse-claim-4", true);
+    let owner = fourth["result"]["owner"].as_str().unwrap();
+    let package = prepare("4", owner, &plan, "reuse-plan-4");
+    let skipped = ok(&reuse(owner, "reuse-after-supersession"));
+    assert_eq!(skipped["result"]["reused_review_ids"], json!([]));
+    assert_eq!(
+        skipped["result"]["remaining_review_ids"],
+        package["payload"]["review_ids"]
+    );
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
 impl Fixture {
     fn new(label: &str) -> Self {
         let nonce = SystemTime::now()

@@ -40,7 +40,9 @@ comparison and treat the reported paths as source changes, with review coverage
 and verdicts tracked by the ordinary work plan. Once native state ends, use
 `mehscan memory retain` with the exact inventory and generation. Use
 `mehscan memory assessments` to retrieve matching historical context for the
-next review. The current work plan still determines which checks to execute.
+next review. For a matching finished batch on unchanged full source, use
+`mehscan memory reuse` with the current native work package. Review the returned
+remaining IDs and keep the declared source-coverage obligations.
 
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security

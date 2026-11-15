@@ -574,6 +574,24 @@ inventory and stream.
 Use the returned batches as historical context. Native state remains the
 authority for supersession, unresolved checks, and the current verdict.
 
+For an unchanged full-source review, the controller can reuse settled decisions
+from a finished batch in the same native journal and stream. Start the new
+native generation, bind the same plan and single-model runtime, and request its
+current work package:
+
+```text
+mehscan memory reuse --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --owner OWNER --work-package RUN/work.json --skill-root TRUSTED/mehscan-security --batch BATCH --operation-key reuse-BATCH
+```
+
+Include the current `--provider-contract` if the work package binds one. The
+controller checks the current source and plan, the original native admission,
+and the exact current parent of every reused decision. Work packages with
+pending questions or evidence updates go through regular review. After reuse,
+obtain a fresh work package for `result.remaining_review_ids`. Only the listed
+native review IDs have been accounted for. Broader source coverage and scoped
+threat-model work use their own checks. If the batch or work contract differs,
+continue ordinary review under the current work package.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create
