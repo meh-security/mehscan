@@ -7,6 +7,18 @@ use mehscan_core::{
 };
 use sha2::{Digest, Sha256};
 
+pub(super) fn source_fingerprint(sources: &RepositorySources) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"mehscan-review-sources/v1\0");
+    for (path, file) in &sources.files {
+        hash.update((path.len() as u64).to_le_bytes());
+        hash.update(path.as_bytes());
+        hash.update((file.source.len() as u64).to_le_bytes());
+        hash.update(file.source.as_bytes());
+    }
+    format!("review-sources-v1-{:x}", hash.finalize())
+}
+
 pub(super) fn build_catalog(
     root: &Path,
     sources: &RepositorySources,
@@ -34,15 +46,7 @@ pub(super) fn build_catalog(
                 .to_string();
         }
     }
-    let mut hash = Sha256::new();
-    hash.update(b"mehscan-review-sources/v1\0");
-    for (path, file) in &sources.files {
-        hash.update((path.len() as u64).to_le_bytes());
-        hash.update(path.as_bytes());
-        hash.update((file.source.len() as u64).to_le_bytes());
-        hash.update(file.source.as_bytes());
-    }
-    let source_fingerprint = format!("review-sources-v1-{:x}", hash.finalize());
+    let source_fingerprint = source_fingerprint(sources);
     let assessment_context = mehscan_core::ReviewAssessmentContext {
         kind: "source_only".into(),
         source_boundary: context.path_prefix.clone(),

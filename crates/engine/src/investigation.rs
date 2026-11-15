@@ -450,6 +450,29 @@ pub fn validate_review_inventory(
     validate_review_inventory_sources(root, inventory, &RepositorySources::load_snapshot(root)?)
 }
 
+/// Hash the same discovered inputs used to validate the native inventory.
+pub fn review_inventory_source_hashes(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<BTreeMap<String, String>, EngineError> {
+    let sources = RepositorySources::load_snapshot(root)?;
+    validate_review_inventory_sources(root, inventory, &sources)?;
+    if inventory
+        .identity_catalog
+        .as_ref()
+        .is_some_and(|catalog| catalog.source_fingerprint != identity::source_fingerprint(&sources))
+    {
+        return Err(EngineError(
+            "inventory identity does not match its source fingerprint".into(),
+        ));
+    }
+    Ok(sources
+        .files
+        .into_iter()
+        .map(|(path, file)| (path, review_content_fingerprint(file.source.as_bytes())))
+        .collect())
+}
+
 /// Validate the raw source snapshot for fresh compiler collection only.
 /// Collectors consume source captures, not cached compiler facts or verdicts.
 /// Bundle/history reuse still requires full source/native validation above.

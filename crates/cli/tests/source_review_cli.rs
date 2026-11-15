@@ -54,6 +54,112 @@ fn cleanup(base: &Path) {
 }
 
 #[test]
+fn local_review_memory_tracks_only_changes_in_validated_native_inputs() {
+    let base = fixture();
+    let source = base.join("source");
+    let db = base.join("review-memory.turso");
+    fs::write(source.join("keep.js"), "export const keep = true;\n").unwrap();
+    fs::write(source.join("edit.js"), "export const size = 3;\n").unwrap();
+    fs::write(source.join("remove.js"), "export const color = 'blue';\n").unwrap();
+
+    let inventory = |name: &str, repository: &str| {
+        let path = base.join(name);
+        run(&[
+            "investigate",
+            "review-inventory",
+            source.to_str().unwrap(),
+            "--repository-key",
+            repository,
+            "--output",
+            path.to_str().unwrap(),
+        ]);
+        path
+    };
+    let first = inventory("first", "fixture:memory");
+    let command = |inventory: &Path, db: &Path, baseline: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mehscan"));
+        command
+            .args(["memory", "snapshot", "--store"])
+            .arg(db)
+            .arg("--source-root")
+            .arg(&source)
+            .arg("--inventory")
+            .arg(inventory);
+        if let Some(id) = baseline {
+            command.args(["--base", id]);
+        }
+        command
+    };
+    let capture = |inventory: &Path, previous: Option<&str>| {
+        let output = command(inventory, &db, previous).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let original = capture(&first, None);
+    assert_eq!(original["files"], 3);
+    assert_eq!(original["reused"], false);
+    let id = original["snapshot"].as_str().unwrap();
+    let repeat = capture(&first, Some(id));
+    assert_eq!(repeat["snapshot"], id);
+    assert_eq!(repeat["reused"], true);
+    assert_eq!(
+        repeat["changes"],
+        json!({"added":[],"modified":[],"removed":[]})
+    );
+
+    fs::write(source.join("edit.js"), "export const size = 4;\n").unwrap();
+    fs::remove_file(source.join("remove.js")).unwrap();
+    fs::write(source.join("add.js"), "export const offset = 2;\n").unwrap();
+    let stale = command(&first, &db, Some(id)).output().unwrap();
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("source files changed"));
+    let second = inventory("second", "fixture:memory");
+    let current = capture(&second, Some(id));
+    assert_ne!(current["snapshot"], id);
+    assert_eq!(
+        current["changes"],
+        json!({"added":["add.js"],"modified":["edit.js"],"removed":["remove.js"]})
+    );
+    assert_eq!(capture(&second, Some(id))["snapshot"], current["snapshot"]);
+
+    let foreign = inventory("foreign", "fixture:other");
+    let refused = command(&foreign, &db, Some(id)).output().unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("repository scope"));
+    assert_eq!(capture(&foreign, None)["reused"], false);
+    let shared = base.join("shared-memory.turso");
+    let spawn = || {
+        command(&second, &shared, None)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let writers = [spawn(), spawn()];
+    let captures = writers.map(|child| {
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    });
+    assert_eq!(captures[0]["snapshot"], captures[1]["snapshot"]);
+    assert_ne!(captures[0]["reused"], captures[1]["reused"]);
+
+    let under_source = source.join("misplaced.turso");
+    let refused = command(&second, &under_source, None).output().unwrap();
+    assert!(!refused.status.success());
+    assert!(!under_source.exists());
+    cleanup(&base);
+}
+
+#[test]
 fn model_cors_questions_do_not_require_native_detector_credential_tags() {
     let base = fixture();
     let source = base.join("source");

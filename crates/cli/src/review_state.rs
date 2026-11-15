@@ -1177,7 +1177,7 @@ fn sync_journal(file: &File, _store: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn outside_source(store: &Path, root: &Path) -> Result<(), String> {
+pub(super) fn outside_source(store: &Path, root: &Path) -> Result<(), String> {
     let source = fs::canonicalize(root).map_err(|error| error.to_string())?;
     let mut ancestor = std::path::absolute(store).map_err(|error| error.to_string())?;
     let mut missing = Vec::new();
@@ -1196,6 +1196,24 @@ fn outside_source(store: &Path, root: &Path) -> Result<(), String> {
     }
 }
 
+pub(super) fn load_inventory(
+    path: &Path,
+) -> Result<(mehscan_engine::investigation::ReviewInventory, String), String> {
+    let cache: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
+        &fs::read(path.join("scan-cache.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let fingerprint = super::engine(cache.input_fingerprint())?;
+    let summary: Value = serde_json::from_slice(
+        &fs::read(path.join("inventory.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if summary["input_fingerprint"].as_str() != Some(&fingerprint) {
+        return Err("inventory summary does not match cache".into());
+    }
+    Ok((cache, fingerprint))
+}
+
 fn inventory(
     path: &Path,
     root: &Path,
@@ -1206,21 +1224,10 @@ fn inventory(
     ),
     String,
 > {
-    let cache: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
-        &fs::read(path.join("scan-cache.json")).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
+    let (cache, fingerprint) = load_inventory(path)?;
     super::engine(mehscan_engine::investigation::validate_review_inventory(
         root, &cache,
     ))?;
-    let fingerprint = super::engine(cache.input_fingerprint())?;
-    let summary: Value = serde_json::from_slice(
-        &fs::read(path.join("inventory.json")).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    if summary["input_fingerprint"].as_str() != Some(&fingerprint) {
-        return Err("inventory summary does not match cache".into());
-    }
     let catalog = cache
         .identity_catalog
         .as_ref()

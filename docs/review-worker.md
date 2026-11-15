@@ -539,6 +539,25 @@ unavailable. Provider elapsed totals are sums of calls, not parallel wall time;
 the second-pass summary records its own wall time separately. See
 [usage and cache accounting](#usage-and-cache-accounting) for receipt handling.
 
+## Capture local review memory
+
+To record a source snapshot, prepare a native inventory with a stable
+`--repository-key` and run the controller:
+
+```text
+mehscan memory snapshot --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory
+```
+
+Keep the Turso database outside the source root. Save the returned `snapshot`
+with the review attempt. After preparing an inventory for a later revision, run
+the same command with `--base SNAPSHOT` to get its added, modified and removed
+inputs. File membership follows native inventory discovery, including its normal
+exclusions. Repeated captures with the same source inputs share a snapshot.
+The inventory fingerprint records the native assessment inputs for each capture.
+
+The skill uses these paths for deciding which source to inspect. Review outcomes
+and review coverage still come from the ordinary review worker.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create

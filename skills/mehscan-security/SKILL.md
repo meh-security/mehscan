@@ -32,6 +32,13 @@ information; do not impose a monetary cap unless the user requests one.
 Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 
+When the user requests local review memory, use the controller's
+[`mehscan memory snapshot`](../../docs/review-worker.md#capture-local-review-memory)
+after preparing the native inventory. Keep the database with durable review
+artifacts outside the source root. Save the returned snapshot ID for later
+comparison and treat the reported paths as source changes, with review coverage
+and verdicts tracked by the ordinary work plan.
+
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security
 decisions default to the review owner. Do not assign a general first pass,
