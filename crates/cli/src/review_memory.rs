@@ -1,7 +1,7 @@
 //! Local review-memory persistence owned by the native controller.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -135,10 +135,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             help();
             return Ok(());
         }
-        Some("snapshot" | "retain" | "assessments" | "reuse") => {}
+        Some("snapshot" | "retain" | "assessments" | "reuse" | "prepare") => {}
         Some(other) => {
             return Err(format!(
-                "unknown memory operation {other:?}; expected snapshot, retain, assessments or reuse"
+                "unknown memory operation {other:?}; expected snapshot, retain, assessments, reuse or prepare"
             ));
         }
     }
@@ -152,8 +152,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let root = PathBuf::from(args.required("--source-root")?);
     let inventory = PathBuf::from(args.required("--inventory")?);
-    let store = checked_store(Path::new(&args.required("--store")?), &root)?;
+    let store = PathBuf::from(args.required("--store")?);
     let snapshot = load_snapshot(&root, &inventory)?;
+    if command.as_deref() == Some("prepare") {
+        return super::print_json(&prepare_native(args, &root, &store, &snapshot)?);
+    }
+    let store = checked_store(&store, &root)?;
     let operation = match command.as_deref() {
         Some("snapshot") => Operation::Snapshot {
             base: args.optional("--base"),
@@ -223,6 +227,53 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     super::print_json(&operate(&store, &snapshot, operation)?)
 }
 
+fn prepare_native(
+    mut args: super::ParsedArguments,
+    root: &Path,
+    store: &Path,
+    snapshot: &Snapshot,
+) -> Result<serde_json::Value, String> {
+    let state = PathBuf::from(args.required("--state-store")?);
+    let stream = args.required("--stream")?;
+    let generation = args.required_usize("--generation")? as u64;
+    let owner = args.required("--owner")?;
+    let skill = args.required("--skill-root")?;
+    let provider = args.optional("--provider-contract");
+    let requested = args.optional("--review-ids").map(|ids| {
+        if ids.is_empty() {
+            Vec::new()
+        } else {
+            ids.split(',').map(str::to_owned).collect()
+        }
+    });
+    args.finish()?;
+    super::review_state::outside_source(&state, root)?;
+    let retained = checked_store(store, root).and_then(|path| {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let _lock = lock_store(&path)?;
+        local_runtime()?.block_on(async {
+            let (_database, connection) = open_local(&path, true).await?;
+            assessments::latest_finished_batch(&connection, snapshot, &stream).await
+        })
+    });
+    super::review_state::MemoryPreparation {
+        store: &state,
+        stream: &stream,
+        repository_key: snapshot
+            .repository
+            .repository_key
+            .as_deref()
+            .ok_or("missing repository key")?,
+        inventory: &snapshot.inventory,
+        generation,
+        owner: &owner,
+        requested: requested.as_deref(),
+    }
+    .prepare(root, &skill, provider.as_deref(), retained)
+}
+
 fn load_snapshot(root: &Path, inventory: &Path) -> Result<Snapshot, String> {
     let (cache, inventory) = super::review_state::load_inventory(inventory)?;
     let catalog = cache
@@ -260,6 +311,17 @@ fn operate(
     if matches!(operation, Operation::Reuse { .. }) && !store.is_file() {
         return Err("memory reuse requires an existing local database".into());
     }
+    let _lock = lock_store(store)?;
+    local_runtime()?.block_on(run_local(store, snapshot, operation))
+}
+
+fn local_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn lock_store(store: &Path) -> Result<File, String> {
     if let Some(parent) = store.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -279,10 +341,7 @@ fn operate(
         .map_err(|e| e.to_string())?;
     // The SDK can lock the database as early as open, outside SQL busy handling.
     fs2::FileExt::lock_exclusive(&lock).map_err(|e| e.to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| e.to_string())?;
-    runtime.block_on(run_local(store, snapshot, operation))
+    Ok(lock)
 }
 
 fn check_store_file(path: &Path) -> Result<(), String> {
@@ -299,6 +358,9 @@ fn check_store_file(path: &Path) -> Result<(), String> {
 fn help() {
     println!(
         "USAGE:\n  mehscan memory snapshot --store FILE --source-root ROOT --inventory DIR [--base SNAPSHOT]\n  mehscan memory retain --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N\n  mehscan memory assessments --store FILE --source-root ROOT --inventory DIR --stream STREAM\n\nRecords validated source inputs and native assessments in a local Turso database outside the source root."
+    );
+    println!(
+        "  mehscan memory prepare --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root DIR [--provider-contract FILE] [--review-ids ID,ID]"
     );
     println!(
         "\n  mehscan memory reuse --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY"
@@ -430,24 +492,11 @@ async fn run_local(
     snapshot: &Snapshot,
     operation: Operation,
 ) -> Result<serde_json::Value, String> {
-    let path = path.to_str().ok_or("memory store path must be UTF-8")?;
     let read_only = matches!(
         operation,
         Operation::Assessments { .. } | Operation::Reuse { .. }
     );
-    let database = Builder::new_local(path)
-        .read_only(read_only)
-        .build()
-        .await
-        .map_err(db_error)?;
-    let mut connection = database.connect().map_err(db_error)?;
-    connection
-        .busy_timeout(Duration::from_secs(10))
-        .map_err(db_error)?;
-    connection
-        .execute("PRAGMA foreign_keys = ON", ())
-        .await
-        .map_err(db_error)?;
+    let (_database, mut connection) = open_local(path, read_only).await?;
     if let Operation::Assessments { stream } = operation {
         return json(assessments::lookup(&connection, snapshot, &stream).await?);
     }
@@ -506,6 +555,24 @@ async fn run_local(
         base,
         changes,
     })
+}
+
+async fn open_local(path: &Path, read_only: bool) -> Result<(turso::Database, Connection), String> {
+    let path = path.to_str().ok_or("memory store path must be UTF-8")?;
+    let database = Builder::new_local(path)
+        .read_only(read_only)
+        .build()
+        .await
+        .map_err(db_error)?;
+    let connection = database.connect().map_err(db_error)?;
+    connection
+        .busy_timeout(Duration::from_secs(10))
+        .map_err(db_error)?;
+    connection
+        .execute("PRAGMA foreign_keys = ON", ())
+        .await
+        .map_err(db_error)?;
+    Ok((database, connection))
 }
 
 async fn persist_snapshot(

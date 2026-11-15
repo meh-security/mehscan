@@ -196,6 +196,29 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let plan_file = fixture.base.join("plan.json");
     let work_file = fixture.base.join("work.json");
     let work = work_file.to_str().unwrap();
+    let db = fixture.base.join("review-memory.turso");
+    let startup = |generation: &str, owner: &str, memory: &Path| {
+        ok(&[
+            "memory",
+            "prepare",
+            "--store",
+            memory.to_str().unwrap(),
+            "--state-store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--generation",
+            generation,
+            "--owner",
+            owner,
+            "--skill-root",
+            skill,
+        ])
+    };
     let end = |generation: &str, owner: &str, status: &str, key: &str| {
         ok(&[
             "state",
@@ -240,14 +263,17 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
 
     let first = fixture.claim("initial", "0", "reuse-claim-1", false);
     let owner = first["result"]["owner"].as_str().unwrap();
-    prepare("1", owner, &plan, "reuse-plan-1");
+    let first_work = prepare("1", owner, &plan, "reuse-plan-1");
+    let cold = startup("1", owner, &db);
+    assert_eq!(cold["memory"]["status"], "no_batch");
+    assert_eq!(cold["work_package"], first_work);
+    assert!(!db.exists());
     let decisions = fixture.answers("not_issue", "Synthetic source assessment.");
     assert!(!decisions.is_empty());
     let mut record = fixture.record_args("1", owner, "original-record");
     record.extend(["--skill-root", skill, "--work-package", work]);
     ok(&record);
     end("1", owner, "finished", "reuse-end-1");
-    let db = fixture.base.join("review-memory.turso");
     let common = [
         "--store",
         db.to_str().unwrap(),
@@ -288,11 +314,14 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let owner = second["result"]["owner"].as_str().unwrap();
     let mut different = plan.clone();
     different["runtime"]["limits"]["queries"] = json!(7);
-    prepare("2", owner, &different, "reuse-plan-2");
+    let different_work = prepare("2", owner, &different, "reuse-plan-2");
     reject(
         &reuse(owner, "reuse-admission"),
         "same native plan and review runtime",
     );
+    let fallback = startup("2", owner, &db);
+    assert_eq!(fallback["memory"]["status"], "incompatible");
+    assert_eq!(fallback["work_package"], different_work);
     assert!(
         !fixture.view(false)["subjects"]
             .as_array()
@@ -305,15 +334,21 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
     let third = fixture.claim("matching-runtime", "2", "reuse-claim-3", true);
     let owner = third["result"]["owner"].as_str().unwrap();
     let package = prepare("3", owner, &plan, "reuse-plan-3");
-    let args = reuse(owner, "reuse-admission");
-    let receipt = ok(&args);
-    assert_eq!(receipt["result"]["model_calls"], 0);
+    let receipt = startup("3", owner, &db);
+    assert_eq!(receipt["memory"]["model_calls"], 0);
     assert_eq!(
-        receipt["result"]["reused_review_ids"],
+        receipt["memory"]["reused_review_ids"],
         package["payload"]["review_ids"]
     );
-    assert_eq!(receipt["result"]["remaining_review_ids"], json!([]));
-    assert_eq!(ok(&args)["replayed"], true);
+    assert_eq!(receipt["work_package"]["payload"]["review_ids"], json!([]));
+    let repeat = startup("3", owner, &db);
+    assert_eq!(repeat["memory"]["replayed"], true);
+    assert_eq!(repeat["work_package"], receipt["work_package"]);
+    let no_access = fixture.base.join("not-a-database");
+    fs::create_dir(&no_access).unwrap();
+    let fallback = startup("3", owner, &no_access);
+    assert_eq!(fallback["memory"]["status"], "unavailable");
+    assert_eq!(fallback["work_package"], receipt["work_package"]);
     let history = fixture.view(true);
     assert_eq!(
         history["decisions"].as_object().unwrap().len(),
@@ -358,6 +393,9 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
         skipped["result"]["remaining_review_ids"],
         package["payload"]["review_ids"]
     );
+    let pending_work = startup("4", owner, &db);
+    assert_eq!(pending_work["memory"]["status"], "no_eligible_decisions");
+    assert_eq!(pending_work["work_package"], package);
     assert!(
         fixture
             .base

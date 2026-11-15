@@ -361,10 +361,23 @@ pub(super) async fn reuse_batch(
         .await
         .map_err(db_error)?
         .ok_or("retained finished batch does not match current inventory and stream")?;
-    let generation = u64::try_from(row.get::<i64>(0).map_err(db_error)?)
-        .map_err(|_| "invalid retained native generation")?;
-    let attempt = row.get(1).map_err(db_error)?;
     drop(rows);
+    batch_with_decisions(
+        conn,
+        batch,
+        row.get(0).map_err(db_error)?,
+        row.get(1).map_err(db_error)?,
+    )
+    .await
+}
+
+async fn batch_with_decisions(
+    conn: &Connection,
+    batch: String,
+    generation: i64,
+    attempt: String,
+) -> Result<RetainedBatch, String> {
+    let generation = u64::try_from(generation).map_err(|_| "invalid retained native generation")?;
     let mut rows = conn.query(
         "SELECT a.decision_id FROM batch_assessments b JOIN assessments a ON a.id = b.assessment_id
          WHERE b.batch_id = ?1 ORDER BY a.decision_id",
@@ -380,6 +393,46 @@ pub(super) async fn reuse_batch(
         attempt,
         decisions,
     })
+}
+
+pub(super) async fn latest_finished_batch(
+    conn: &Connection,
+    snapshot: &Snapshot,
+    stream: &str,
+) -> Result<Option<RetainedBatch>, String> {
+    if schema_version(conn).await? < 2 {
+        return Ok(None);
+    }
+    let id = snapshot.id(&fingerprint(&snapshot.repository)?)?;
+    let mut rows = conn
+        .query(
+            "SELECT id, attempt_status, generation, native_attempt FROM assessment_batches
+         WHERE snapshot_id = ?1 AND inventory_fingerprint = ?2 AND stream = ?3
+           AND generation = (SELECT MAX(generation) FROM assessment_batches
+               WHERE snapshot_id = ?1 AND inventory_fingerprint = ?2 AND stream = ?3)
+         ORDER BY id LIMIT 2",
+            (id.as_str(), snapshot.inventory.as_str(), stream),
+        )
+        .await
+        .map_err(db_error)?;
+    let Some(row) = rows.next().await.map_err(db_error)? else {
+        return Ok(None);
+    };
+    if rows.next().await.map_err(db_error)?.is_some() {
+        return Err("multiple retained batches match the latest generation".into());
+    }
+    if row.get::<String>(1).map_err(db_error)? != "finished" {
+        return Ok(None);
+    }
+    drop(rows);
+    batch_with_decisions(
+        conn,
+        row.get(0).map_err(db_error)?,
+        row.get(2).map_err(db_error)?,
+        row.get(3).map_err(db_error)?,
+    )
+    .await
+    .map(Some)
 }
 
 async fn read_assessments(conn: &Connection, batch: &str) -> Result<Vec<Assessment>, String> {

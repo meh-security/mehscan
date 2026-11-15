@@ -590,8 +590,25 @@ authority for supersession, unresolved checks, and the current verdict.
 
 For an unchanged full-source review, the controller can reuse settled decisions
 from a finished batch in the same native journal and stream. Start the new
-native generation, bind the same plan and single-model runtime, and request its
-current work package:
+native generation and bind its plan and single-model runtime. For the
+native-only first pass, ask the controller to prepare the work:
+
+```text
+mehscan memory prepare --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security
+```
+
+Save the returned `work_package` as the worker input. The controller checks the
+latest retained batch and records eligible reuse from a matching finished
+generation in native state. An empty list means the requested native work
+has already been accounted for. If memory is unavailable or incompatible, the
+controller reports that status and returns the native work still outstanding.
+Retrying preparation recovers already admitted reuse. Include the bound
+`--provider-contract` when required and use `--review-ids` for an explicit
+subset. Source-first work plans continue to use their full `state work`
+handoff so they can account for source coverage and AI-only checks.
+
+To select a specific retained batch, request the current `state work` package
+and pass its saved file to the explicit reuse command:
 
 ```text
 mehscan memory reuse --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --owner OWNER --work-package RUN/work.json --skill-root TRUSTED/mehscan-security --batch BATCH --operation-key reuse-BATCH

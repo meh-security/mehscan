@@ -1351,6 +1351,123 @@ pub(super) struct RetainedBatch {
     pub decisions: Vec<String>,
 }
 
+pub(super) struct MemoryPreparation<'a> {
+    pub store: &'a Path,
+    pub stream: &'a str,
+    pub repository_key: &'a str,
+    pub inventory: &'a str,
+    pub generation: u64,
+    pub owner: &'a str,
+    pub requested: Option<&'a [String]>,
+}
+
+impl MemoryPreparation<'_> {
+    fn native_work(
+        &self,
+        state: &mut State,
+        key: &str,
+    ) -> Result<mehscan_core::ReviewWorkPackage, String> {
+        let stream = state.owned_stream(key, self.generation, self.owner)?;
+        let attempt = stream.attempts.last().unwrap();
+        if attempt.binding.inventory_input_fingerprint != self.inventory {
+            return Err("work inventory differs from active generation".into());
+        }
+        work_package(stream, attempt, self.requested, false)
+    }
+
+    fn remaining_work(
+        &self,
+        state: &mut State,
+        key: &str,
+        full: mehscan_core::ReviewWorkPackage,
+    ) -> Result<mehscan_core::ReviewWorkPackage, String> {
+        if !reusable_work(&full) {
+            return Ok(full);
+        }
+        let stream = state.owned_stream(key, self.generation, self.owner)?;
+        let attempt = stream.attempts.last().unwrap();
+        let remaining = full.payload.review_ids.iter().filter(|id| {
+            let parents = &full.payload.expected_parents[*id];
+            !matches!(parents.as_slice(), [parent]
+                if attempt.admissions.contains(parent)
+                && stream.reusable_admissions.get(&self.generation).and_then(|admitted| admitted.get(parent)) == Some(&full.payload.plan_id)
+                && settled(&stream.decisions[parent]))
+        }).cloned().collect::<Vec<_>>();
+        if remaining.len() == full.payload.review_ids.len() {
+            return Ok(full);
+        }
+        work_package(stream, attempt, Some(&remaining), false)
+    }
+
+    pub(super) fn prepare(
+        &self,
+        source: &Path,
+        skill: &str,
+        provider: Option<&str>,
+        retained: Result<Option<RetainedBatch>, String>,
+    ) -> Result<Value, String> {
+        let key = stream_key(self.repository_key, self.stream)?;
+        let mut state = read_store(self.store, None)?;
+        let mut full = self.native_work(&mut state, &key)?;
+        if let Some(runtime) = &full.payload.runtime {
+            validate_runtime_skill(runtime, Some(skill), provider, source)?;
+        }
+        let (mut memory, reuse) = match retained {
+            Ok(Some(batch)) => {
+                let operation = hash(
+                    "mehscanMemoryPrepare/v1",
+                    &(&key, self.generation, &full.package_id, &batch.id),
+                )?;
+                let command = reuse_command(key.clone(), self.owner.into(), full.clone(), batch);
+                let command_hash = hash("mehscanStateCommand/v1", &command)?;
+                if let Some((saved_hash, _, _)) = state.receipts.get(&operation) {
+                    if &command_hash != saved_hash {
+                        return Err(
+                            "memory preparation operation conflicts with its journal receipt"
+                                .into(),
+                        );
+                    }
+                    (json!({"status":"matched"}), Some((operation, command)))
+                } else {
+                    // Preview against the same native validation used by the
+                    // explicit command. A compatibility miss leaves normal work.
+                    match state.apply(&command) {
+                        Ok(result)
+                            if result["reused_review_ids"]
+                                .as_array()
+                                .is_some_and(|ids| !ids.is_empty()) =>
+                        {
+                            (json!({"status":"matched"}), Some((operation, command)))
+                        }
+                        Ok(_) => (json!({"status":"no_eligible_decisions"}), None),
+                        Err(reason) => (json!({"status":"incompatible","reason":reason}), None),
+                    }
+                }
+            }
+            Ok(None) => (json!({"status":"no_batch"}), None),
+            Err(reason) => (json!({"status":"unavailable","reason":reason}), None),
+        };
+        if let Some((operation, command)) = reuse {
+            // Once the controller attempts the append, report write or race
+            // failures explicitly. A retry can recover the exact receipt.
+            let receipt = transact(self.store, &operation, command)?;
+            memory = receipt["result"].clone();
+            memory["replayed"] = receipt["replayed"].clone();
+            state = read_store(self.store, None)?;
+            let current = self.native_work(&mut state, &key)?;
+            if current.payload.runtime != full.payload.runtime {
+                return Err(
+                    "native runtime changed during memory preparation; request fresh work".into(),
+                );
+            }
+            full = current;
+        }
+        let work = self.remaining_work(&mut state, &key, full)?;
+        memory["remaining_review_ids"] = json!(work.payload.review_ids);
+        Ok(json!({"memory":memory,"work_package":work}))
+    }
+}
+
 pub(super) fn reuse_memory(
     store: &Path,
     stream: &str,
@@ -1367,20 +1484,25 @@ pub(super) fn reuse_memory(
             .ok_or("missing repository key")?,
         stream,
     )?;
-    transact(
-        store,
-        operation_key,
-        Command::Reuse {
-            key,
-            generation: work.payload.generation,
-            owner,
-            work_package: work,
-            batch: batch.id,
-            previous_generation: batch.generation,
-            previous_attempt: batch.attempt,
-            decision_ids: batch.decisions,
-        },
-    )
+    transact(store, operation_key, reuse_command(key, owner, work, batch))
+}
+
+fn reuse_command(
+    key: String,
+    owner: String,
+    work: mehscan_core::ReviewWorkPackage,
+    batch: RetainedBatch,
+) -> Command {
+    Command::Reuse {
+        key,
+        generation: work.payload.generation,
+        owner,
+        work_package: work,
+        batch: batch.id,
+        previous_generation: batch.generation,
+        previous_attempt: batch.attempt,
+        decision_ids: batch.decisions,
+    }
 }
 
 pub(super) fn memory_admission(

@@ -42,9 +42,10 @@ and verdicts tracked by the ordinary work plan. Pass `--memory-store`,
 completed generation. If memory reports pending, retry the same end operation
 after addressing the reported reason. Use
 `mehscan memory assessments` to retrieve matching historical context for the
-next review. For a matching finished batch on unchanged full source, use
-`mehscan memory reuse` with the current native work package. Review the returned
-remaining IDs and keep the declared source-coverage obligations.
+next review. For unchanged full-source native-only work after planning, use
+`mehscan memory prepare` and save the returned `work_package` for the remaining
+IDs. Keep the ordinary full work package for source-first work plans and their
+declared coverage obligations.
 
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security
