@@ -54,6 +54,143 @@ fn cleanup(base: &Path) {
 }
 
 #[test]
+fn model_cors_questions_do_not_require_native_detector_credential_tags() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::write(source.join("Program.cs"), "builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin()));\n").unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        source.to_str().unwrap(),
+        "--repository-key",
+        "cors-question",
+        "--output",
+        inventory.to_str().unwrap(),
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        source.to_str().unwrap(),
+        "--inventory",
+        inventory.to_str().unwrap(),
+    ]);
+    let citation = json!({"path":"Program.cs", "start_line":1, "end_line":1, "quote":"policy.AllowAnyOrigin()"});
+    let input = base.join("admission.json");
+    fs::write(&input, serde_json::to_vec(&json!({
+        "plan":plan, "inspected":[], "proposals":[{
+            "key":"cors-response", "assignment_id":plan["assignments"][0]["id"],
+            "capability":"cors_configuration", "cwes":["CWE-942"],
+            "question":"Can arbitrary origins read sensitive endpoint responses?",
+            "mechanism":"The default policy allows every origin; endpoint sensitivity still needs review.",
+            "consequence":"Sensitive responses may become readable across origins.",
+            "priority":"comprehensive", "anchor":citation, "evidence":[citation]
+        }]
+    })).unwrap()).unwrap();
+    let output = base.join("admitted");
+    let result = run(&[
+        "investigate",
+        "source-review-admit",
+        source.to_str().unwrap(),
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+    ]);
+    let review_id = result["mapping"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    let admitted = read_json(output.join("inventory.json"));
+    let question = admitted["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| &entry["review_id"] == review_id)
+        .unwrap();
+    assert_eq!(question["rule_id"], "model-discovered-security-question");
+    assert_eq!(question["capability"], "cors_configuration");
+    // Admission creates a question, not a vulnerability verdict.
+    assert!(question.get("decision").is_none());
+    fs::write(source.join("Program.cs"), "// changed source\n").unwrap();
+    assert!(
+        !invoke(&[
+            "investigate",
+            "source-review-check",
+            source.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--input",
+            input.to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    cleanup(&base);
+}
+
+#[test]
+fn referenced_admission_plan_retains_source_and_plan_validation() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::write(source.join("A.cs"), "class A { int Get() => 1; }\n").unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "reference",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let plan_path = base.join("plan.json");
+    let input = base.join("admission.json");
+    fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(&input, br#"{"inspected":[],"proposals":[]}"#).unwrap();
+    let args = [
+        "investigate",
+        "source-review-check",
+        root,
+        "--inventory",
+        inv,
+        "--input",
+        input.to_str().unwrap(),
+        "--source-plan",
+        plan_path.to_str().unwrap(),
+    ];
+    run(&args);
+    let mut wrong = plan.clone();
+    wrong["plan_id"] = json!("tampered");
+    fs::write(&plan_path, serde_json::to_vec(&wrong).unwrap()).unwrap();
+    assert!(!invoke(&args).status.success());
+    fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({"plan":plan,"inspected":[],"proposals":[]})).unwrap(),
+    )
+    .unwrap();
+    assert!(!invoke(&args).status.success());
+    fs::write(&input, br#"{"inspected":[],"proposals":[]}"#).unwrap();
+    fs::write(source.join("A.cs"), "class A { int Get() => 2; }\n").unwrap();
+    assert!(!invoke(&args).status.success());
+    cleanup(&base);
+}
+
+#[test]
 fn supporting_sources_are_explicitly_excluded_and_plan_bound() {
     let base = fixture();
     let source = base.join("source");

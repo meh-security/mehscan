@@ -458,6 +458,12 @@ content. File hashes also bind inspected context outside the scanner index.
 Binary content, stale bytes and fabricated or unread ranges are rejected. These
 checks establish evidence provenance, not the model's interpretation of that code.
 
+For repeated source admissions, `investigate source-review-check` and
+`investigate source-review-admit` accept `--source-plan FILE`. The admission JSON
+then omits `plan`, allowing several admissions to use one stored plan. Supply
+either an embedded plan or the option. The referenced plan receives the same
+current-source and plan-identity validation as an embedded plan.
+
 `investigate review-bundles` accepts optional `--scope-label TEXT`,
 `--project NAME` and `--revision REF` labels and persists them in manifest scope.
 `report` inherits them and accepts the same options for existing runs. Supply

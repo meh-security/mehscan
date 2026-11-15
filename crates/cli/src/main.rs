@@ -978,11 +978,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 )?)
             } else {
                 let input = PathBuf::from(parsed.required("--input")?);
+                let source_plan = parsed.optional("--source-plan").map(PathBuf::from);
                 if operation == "source-review-check" {
                     parsed.finish()?;
-                    let admission =
-                        serde_json::from_slice(&fs::read(input).map_err(|e| e.to_string())?)
-                            .map_err(|e| e.to_string())?;
+                    let admission = read_source_admission(&input, source_plan.as_deref())?;
                     let evidence = engine(
                         mehscan_engine::investigation::source_review::validate_admission(
                             &root, &base, &admission,
@@ -994,9 +993,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 }
                 let output = PathBuf::from(parsed.required("--output")?);
                 parsed.finish()?;
-                let admission =
-                    serde_json::from_slice(&fs::read(input).map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?;
+                let admission = read_source_admission(&input, source_plan.as_deref())?;
                 let (inventory, mapping) = engine(
                     mehscan_engine::investigation::source_review::admit(&root, &base, &admission),
                 )?;
@@ -3076,6 +3073,25 @@ fn review_run_directories(
         }
     }
     Ok(())
+}
+
+fn read_source_admission(
+    input: &Path,
+    source_plan: Option<&Path>,
+) -> Result<mehscan_engine::investigation::source_review::Admission, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(input).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if let Some(path) = source_plan {
+        let object = value.as_object_mut().ok_or("admission must be an object")?;
+        if object.contains_key("plan") {
+            return Err("supply an embedded plan or --source-plan, not both".into());
+        }
+        let plan = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        object.insert("plan".into(), plan);
+    }
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 fn write_review_inventory(
