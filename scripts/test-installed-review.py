@@ -53,11 +53,14 @@ def main():
     source = base / "source"
     source.mkdir()
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    def call(*args, cwd=None):
+    def call(*args, cwd=None, failure_record=None):
         result = subprocess.run([str(value) for value in args], cwd=cwd, env=env,
             capture_output=True, text=True, encoding="utf-8", timeout=120)
         if result.returncode:
-            raise RuntimeError(Path(str(args[0])).name + " failed: " + result.stdout[-1000:] + result.stderr[-1000:])
+            diagnostic = result.stdout[-1000:] + result.stderr[-1000:]
+            if failure_record is not None and failure_record.is_file():
+                diagnostic += "\n" + failure_record.read_text(encoding="utf-8")[-4000:]
+            raise RuntimeError(Path(str(args[0])).name + " failed: " + diagnostic)
         return result.stdout
     def native(*args):
         return json.loads(call(scanner, *args))
@@ -98,7 +101,13 @@ def main():
     save(work_file, native("state", "work", *common, "--skill-root", skill))
     reviewer = base / "reviewer.py"
     reviewer.write_text('''import json, sys
+from pathlib import Path
+
 task = json.load(sys.stdin)
+with Path(task["provider_metrics"]).open("a", encoding="utf-8") as receipt:
+    receipt.write(json.dumps({"conversation_id": task["conversation_id"], "round": task["research"]["round"],
+        "provider": None, "elapsed_ms": 1,
+        "usage": {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 10}}) + "\\n")
 if task["kind"] == "change_pass":
     ids = json.load(open(task["work_package"], encoding="utf-8"))["payload"]["review_ids"]
     result = {"change_pass":[{"path":"app.js", "status":"reviewed", "summary":"Compared the supplied old and current operation.",
@@ -131,13 +140,19 @@ print(json.dumps(result))
 ''', encoding="utf-8")
     command = base / "reviewer-command.json"
     save(command, [sys.executable, "-B", str(reviewer)])
+    source_plan = native("investigate", "source-review-plan", source, "--inventory", inventory,
+                         "--review-ids", ",".join(plan["selected_review_ids"]))
+    selection = base / "source-selection.json"
+    save(selection, {"source_plan_id": source_plan["plan_id"], "source_fingerprint": source_plan["source_fingerprint"],
+                     "assignment_ids": [], "assignments": []})
     attempt = base / "attempt"
     call(sys.executable, "-B", package / "scripts/review_worker.py", "--scanner", scanner,
          "--source-root", source, "--inventory", inventory, "--store", store, "--stream", "package-smoke",
          "--claim", claim_file, "--work-package", work_file, "--reviewer-command", command,
-         "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", attempt, "--skill-root", skill)
+         "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", attempt, "--skill-root", skill,
+         "--source-selection", selection, failure_record=attempt / "worker.json")
     record = json.loads((attempt / "worker.json").read_text(encoding="utf-8"))
-    assert record["status"] == "admitted"
+    assert record["status"] == "admitted", record
     assert record["completion"]["pending_review_ids"]
     assert record["completion"]["security_resolution"] == "not_established"
     handoff = json.loads((attempt / "source-review/summary.json").read_text(encoding="utf-8"))
@@ -158,7 +173,8 @@ print(json.dumps(result))
          "--claim", claim_file, "--work-package", work_file, "--reviewer-command", command,
          "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", second,
          "--skill-root", skill, "--phase", "native", "--first-pass", attempt,
-         "--second-pass", "fast", "--second-pass-scope", "pending", "--supersede")
+         "--second-pass", "fast", "--second-pass-scope", "pending", "--supersede",
+         failure_record=second / "worker.json")
     checked = json.loads((second / "second-pass.json").read_text(encoding="utf-8"))
     labels = json.loads((second / "training-labels.json").read_text(encoding="utf-8"))
     assert checked["status"] == "complete" and checked["checked"] == len(plan["selected_review_ids"])

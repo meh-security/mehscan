@@ -51,8 +51,8 @@ class BatchComparisonTests(unittest.TestCase):
         config=fixtures.read(opts['config']);command=fixtures.read(opts['command'])
         entries={e['review_id']:e for e in fixtures.read(f.inventory/'inventory.json')['entries']}
         original=worker.execute;calls=[]
-        def execute(argv,cwd,env,timeout,payload=None):
-            if argv!=command:return original(argv,cwd,env,timeout,payload)
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
+            if argv!=command:return original(argv,cwd,env,timeout,payload,**kwargs)
             task=json.loads(payload);calls.append(task)
             rid=task['review_ids'][0]
             if len(calls)==1:
@@ -93,9 +93,9 @@ class BatchComparisonTests(unittest.TestCase):
         entries={e['review_id']:e for e in fixtures.read(f.inventory/'inventory.json')['entries']}
         command_to_arm={tuple(fixtures.read(opts['command'])):arm for arm,opts in setup['arms'].items()}
         original=worker.execute;packets={}
-        def execute(argv,cwd,env,timeout,payload=None):
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
             arm=command_to_arm.get(tuple(argv))
-            if arm is None:return original(argv,cwd,env,timeout,payload)
+            if arm is None:return original(argv,cwd,env,timeout,payload,**kwargs)
             task=json.loads(payload);packet=fixtures.read(task['evidence_packet']);packets[arm]=packet
             paths={w['path'] for w in packet['primary']['windows']}
             self.assertTrue(set(f.extra_source)<=paths)
@@ -148,8 +148,8 @@ class BatchComparisonTests(unittest.TestCase):
         _,_,setup=pilot.load_run(root);opts=setup["arms"]["treatment"]
         config=fixtures.read(opts["config"]);command=fixtures.read(opts["command"])
         original=worker.execute;prompts=[]
-        def execute(argv,cwd,env,timeout,payload=None):
-            if argv!=command:return original(argv,cwd,env,timeout,payload)
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
+            if argv!=command:return original(argv,cwd,env,timeout,payload,**kwargs)
             task=json.loads(payload);packet=fixtures.read(task["evidence_packet"])
             self.assertEqual(task["research"]["workspace_budget"]["work_remaining"]["model_calls"],6)
             class Fake:
@@ -182,8 +182,8 @@ class BatchComparisonTests(unittest.TestCase):
         config=fixtures.read(opts["config"]);command=fixtures.read(opts["command"])
         entries={e["review_id"]:e for e in fixtures.read(f.inventory/"inventory.json")["entries"]}
         original=worker.execute;calls=[]
-        def execute(argv,cwd,env,timeout,payload=None):
-            if argv!=command:return original(argv,cwd,env,timeout,payload)
+        def execute(argv,cwd,env,timeout,payload=None,**kwargs):
+            if argv!=command:return original(argv,cwd,env,timeout,payload,**kwargs)
             task=json.loads(payload);calls.append(task)
             class Fake:
                 def review(instance,prompt,schema,thread_id=None,timeout=600):

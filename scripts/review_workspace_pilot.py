@@ -335,9 +335,9 @@ def run_control(root):
     command = read(opts["command"])
     original = worker.execute
     parity = read(root / "initial-evidence.json")
-    def execute(argv,cwd,env,timeout,payload=None):
+    def execute(argv,cwd,env,timeout,payload=None,**kwargs):
         if argv != command:
-            return original(argv,cwd,env,timeout,payload)
+            return original(argv,cwd,env,timeout,payload,**kwargs)
         usage = metrics(output,budget["reserved_calls"])
         enforce_usage(usage,design["per_arm_experiment"])
         if usage["observed_calls"] != budget["reserved_calls"]:
@@ -369,7 +369,7 @@ def run_control(root):
         budget["reserved_calls"] += 1
         budget["bundle_calls"][batch_key] = budget["bundle_calls"].get(batch_key,0)+1
         worker.write(root / "control/budget.json",{**budget,"usage":usage,"received_query_bytes":received})
-        value = original(argv,cwd,env,min(timeout,remaining),json.dumps(task))
+        value = original(argv,cwd,env,min(timeout,remaining),json.dumps(task),**kwargs)
         units = worker.research_cost(value.get("research",[]))
         if budget["queries"] + units > design["per_arm_limits"]["queries"]:
             raise ValueError("ordinary aggregate query ceiling reached")
