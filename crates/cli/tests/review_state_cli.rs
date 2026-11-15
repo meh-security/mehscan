@@ -1141,16 +1141,43 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
     )
     .unwrap();
     fs::write(fixture.source.join("empty.js"), "").unwrap();
+    fs::write(
+        fixture.source.join("old-name.js"),
+        "export const limit = 5;\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("settings.json"),
+        "{\"approvalRequired\":true}\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("caller.js"),
+        "function canPublish(settings, approved) { return !settings.approvalRequired || approved; }\n",
+    ).unwrap();
     git(&["add", "."]);
     git(&["commit", "--quiet", "-m", "base"]);
     let base = git(&["rev-parse", "HEAD"]);
     fs::remove_file(fixture.source.join("guard.js")).unwrap();
     fs::remove_file(fixture.source.join("empty.js")).unwrap();
+    fs::rename(
+        fixture.source.join("old-name.js"),
+        fixture.source.join("new-name.js"),
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("settings.json"),
+        "{\"approvalRequired\":false}\n",
+    )
+    .unwrap();
     fs::write(
         fixture.source.join("unknown.xyz"),
         "changed unsupported contract\n",
     )
     .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "changed controls and files"]);
+    let target = git(&["rev-parse", "HEAD"]);
     fixture.inventory = fixture.base.join("changed-inventory");
     ok(&[
         "investigate",
@@ -1158,6 +1185,9 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
         fixture.source.to_str().unwrap(),
         "--changed-from",
         &base,
+        "--target",
+        &target,
+        "--merge-base",
         "--diff-mode",
         "files",
         "--repository-key",
@@ -1192,6 +1222,22 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
             entry["summary"] = json!("Inspected the pinned empty file removed by this change.");
             entry["evidence"] =
                 json!([{ "side":"base", "path":"empty.js", "start_line":1, "end_line":1 }]);
+        } else if entry["path"] == "new-name.js" {
+            entry["status"] = json!("reviewed");
+            entry["summary"] = json!("Compared the renamed constant at both pinned endpoints.");
+            entry["evidence"] = json!([
+                {"side":"base", "path":"old-name.js", "start_line":1, "end_line":1},
+                {"side":"current", "path":"new-name.js", "start_line":1, "end_line":1}
+            ]);
+        } else if entry["path"] == "settings.json" {
+            entry["status"] = json!("reviewed");
+            entry["summary"] =
+                json!("Compared the approval setting and read its unchanged caller.");
+            entry["evidence"] = json!([
+                {"side":"base", "path":"settings.json", "start_line":1, "end_line":1},
+                {"side":"current", "path":"settings.json", "start_line":1, "end_line":1},
+                {"side":"current", "path":"caller.js", "start_line":1, "end_line":1}
+            ]);
         } else {
             entry["status"] = json!("coverage_gap");
             entry["summary"] = json!("Native analyzer does not cover this contract.");
@@ -1226,6 +1272,26 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
             .contains("user.admin")
     );
     assert_eq!(guard["evidence"][0]["revision"], base);
+    let changed_paths = history["completion"]["changed_paths"].as_array().unwrap();
+    assert_eq!(changed_paths.len(), 5);
+    let configuration = changed_paths
+        .iter()
+        .find(|entry| entry["path"] == "settings.json")
+        .unwrap();
+    assert_eq!(configuration["status"], "reviewed");
+    assert_eq!(configuration["evidence"].as_array().unwrap().len(), 3);
+    assert_eq!(configuration["evidence"][2]["source"]["path"], "caller.js");
+    let rename = changed_paths
+        .iter()
+        .find(|entry| entry["path"] == "new-name.js")
+        .unwrap();
+    assert_eq!(rename["status"], "reviewed");
+    assert_eq!(rename["evidence"].as_array().unwrap().len(), 2);
+    assert!(
+        !changed_paths
+            .iter()
+            .any(|entry| entry["path"] == "caller.js")
+    );
     let mut bad = draft.clone();
     for entry in bad["change_pass"].as_array_mut().unwrap() {
         if entry["path"] == "guard.js" {

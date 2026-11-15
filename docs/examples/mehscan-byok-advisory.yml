@@ -28,6 +28,10 @@ on:
         description: Explicitly authorize a manual fork model review
         type: boolean
         default: false
+      require_complete_delta_coverage:
+        description: Fail when the pinned delta still has required review work
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -93,6 +97,7 @@ jobs:
         with:
           scanner-path: ${{ runner.temp }}/mehscan-build/release/mehscan
           review-mode: ${{ steps.lane.outputs.model-allowed == 'true' && (inputs.review_mode || 'value') || 'native' }}
+          require-complete-delta-coverage: ${{ inputs.require_complete_delta_coverage && 'true' || 'false' }}
           provider-config: ${{ steps.lane.outputs.model-allowed == 'true' && format('{0}/company-mehscan-provider/config.json', runner.temp) || '' }}
           allow-fork-review: ${{ inputs.allow_fork_review && 'true' || 'false' }}
           pull-request: ${{ inputs.pull_request }}

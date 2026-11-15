@@ -22,6 +22,9 @@ inputs:
   review-mode:
     description: native (default), value or comprehensive; AI modes prepare a handoff, or execute BYOK review when provider-config is supplied.
     default: native
+  require-complete-delta-coverage:
+    description: Fail the Action when required review work on the pinned delta remains. Available artifacts can still be uploaded.
+    default: 'false'
   skill-root:
     description: Optional trusted security skill directory outside source; defaults to this pinned Action package.
     default: ''
@@ -55,7 +58,16 @@ outputs:
     value: ${{ steps.prepare.outputs.artifact-name }}
   status:
     description: native_only, review_ready, reviewed, stale, incomplete, cancelled or skipped; never a merge verdict.
-    value: ${{ steps.review.outputs.status || (steps.review.outcome == 'failure' && 'incomplete') || steps.finish.outputs.status }}
+    value: ${{ steps.coverage.outputs.status || steps.review.outputs.status || (steps.review.outcome == 'failure' && 'incomplete') || steps.finish.outputs.status }}
+  delta-coverage-status:
+    description: Coverage of the pinned delta within scan-root, including work without native candidates.
+    value: ${{ steps.coverage.outputs.delta-coverage-status || steps.review.outputs.delta-coverage-status || steps.finish.outputs.delta-coverage-status }}
+  delta-coverage-reason:
+    description: Reason for the final delta coverage status.
+    value: ${{ steps.coverage.outputs.delta-coverage-reason || steps.review.outputs.delta-coverage-reason || steps.finish.outputs.delta-coverage-reason }}
+  delta-coverage-gate:
+    description: disabled, pending, passed, blocked or not_applicable.
+    value: ${{ steps.coverage.outputs.delta-coverage-gate || steps.review.outputs.delta-coverage-gate || steps.finish.outputs.delta-coverage-gate }}
   snapshot-id:
     description: Source/policy/tool contract hash, separate from execution identity.
     value: ${{ steps.review.outputs.snapshot-id || steps.finish.outputs.snapshot-id }}
@@ -96,6 +108,7 @@ runs:
         MEHSCAN_SOURCE_PATH: ${{ inputs.source-path }}
         MEHSCAN_SCAN_ROOT: ${{ inputs.scan-root }}
         MEHSCAN_REVIEW_MODE: ${{ inputs.review-mode }}
+        MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE: ${{ inputs.require-complete-delta-coverage }}
         MEHSCAN_SKILL_ROOT: ${{ inputs.skill-root }}
         MEHSCAN_PROVIDER_CONTRACT: ${{ inputs.provider-contract }}
         MEHSCAN_PROVIDER_CONFIG: ${{ inputs.provider-config }}
@@ -138,3 +151,13 @@ runs:
         MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
         GH_TOKEN: ${{ inputs.token }}
       run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" run-model "$MEHSCAN_PLAN"
+    - name: Require complete delta coverage
+      id: coverage
+      if: always() && !cancelled() && inputs.require-complete-delta-coverage == 'true' && steps.prepare.outputs.plan != ''
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        MEHSCAN_ACTION_PATH: ${{ github.action_path }}
+        MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" require-coverage "$MEHSCAN_PLAN"

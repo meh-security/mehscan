@@ -150,13 +150,17 @@ def delivered_source_window(root, result):
             "source_sha256":hashlib.sha256(data).hexdigest()}
 
 
-def base_object(root, base, path, env, timeout):
-    relative_file(root, path)
+def git_prefix(root, env, timeout):
     prefix = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-prefix"], env=env,
                             capture_output=True, timeout=timeout)
     if prefix.returncode:
         raise ValueError("base source root is not in the pinned Git repository")
-    return base + ":" + prefix.stdout.decode("utf-8").rstrip("\r\n") + path
+    return prefix.stdout.decode("utf-8").rstrip("\r\n")
+
+
+def base_object(root, base, path, env, timeout):
+    relative_file(root, path)
+    return base + ":" + git_prefix(root, env, timeout) + path
 
 
 
@@ -267,6 +271,8 @@ def prepare_changes(root, scope, native, env, timeout):
     base = (comparison.get("merge_base_commit") or comparison["base_commit"]) if comparison else None
     if base is not None and not re.fullmatch(r"[0-9a-fA-F]{40,64}", base):
         raise ValueError("base evidence requires a pinned commit")
+    old_paths = base is not None and any(file["status"] not in ("added", "untracked") for file in scope["changed_files"])
+    prefix = git_prefix(root, env, timeout) if old_paths else ""
     for changed in scope["changed_files"]:
         path = changed["path"]
         previous = changed.get("previous_path") or path
@@ -278,19 +284,21 @@ def prepare_changes(root, scope, native, env, timeout):
             continue
         current_bytes = current_path.read_bytes() if current_path.is_file() else None
         old_bytes = None
-        if base is not None:
-            obj = base_object(root, base, previous, env, timeout)
+        if base is not None and changed["status"] not in ("added", "untracked"):
+            obj = base + ":" + prefix + previous
             command = ["git", "--no-pager", "-C", str(root), "-c", "core.hooksPath=", "cat-file", "blob", obj]
             size = subprocess.run(["git", "-C", str(root), "cat-file", "-s", obj],
                                   env=env, capture_output=True, timeout=timeout)
-            if size.returncode == 0 and int(size.stdout) > MAX_FILE_BYTES:
+            if size.returncode:
+                limits.append({"path": path, "reason": "pinned old primary source is unavailable"})
+            elif int(size.stdout) > MAX_FILE_BYTES:
                 limits.append({"path": path, "reason": "old primary text exceeds bounded preparation"})
-                continue
-            proc = subprocess.run(command, env=env, capture_output=True, timeout=timeout)
-            if proc.returncode == 0:
-                old_bytes = proc.stdout
-            elif changed["status"] not in ("added", "untracked"):
-                raise ValueError("pinned old primary source is unavailable")
+            else:
+                proc = subprocess.run(command, env=env, capture_output=True, timeout=timeout)
+                if proc.returncode == 0:
+                    old_bytes = proc.stdout
+                else:
+                    limits.append({"path": path, "reason": "pinned old primary source is unavailable"})
         try:
             old = source_lines(old_bytes.decode("utf-8")) if old_bytes is not None else []
             current = source_lines(current_bytes.decode("utf-8")) if current_bytes is not None else []

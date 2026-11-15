@@ -45,7 +45,8 @@ class Routing(fixtures.FixtureBase):
         directory = self.workspace / "artifacts"
         directory.mkdir()
         record = {"schema_version":"1", "status":"reviewed", "snapshot_id":"test-snapshot", "reason":"advisory_review_finished",
-            "contract":{"endpoints":{"base_commit":fixtures.A,"target_commit":fixtures.H}}}
+            "contract":{"endpoints":{"base_commit":fixtures.A,"target_commit":fixtures.H},
+                        "scan_root":".", "policy":adapter.POLICY}}
         adapter.save_result(directory,record)
         self.assertIn("issue-count=\n",(self.workspace / "outputs").read_text())
         record["completion"] = {"review_work_complete":False,"security_resolution":"not_established",

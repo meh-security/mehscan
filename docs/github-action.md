@@ -35,6 +35,7 @@ The composite Action accepts:
 | `pull-request` | Explicit PR number on `workflow_dispatch`; automatic PR events supply their number. |
 | `base`, `target` | Both required for a manual release delta; mutually exclusive with `pull-request`. |
 | `review-mode` | `native` (default), `value` or `comprehensive`. The latter prepare active review work; `provider-config` additionally invokes the bundled worker. Value requires a bound coverage plan before provider review. |
+| `require-complete-delta-coverage` | Default `false`. Set to `true` to fail the Action when the pinned delta has required review work remaining. Use Comprehensive and an authorized provider configuration to complete the review within the Action. |
 | `skill-root` | Trusted security skill outside target source; defaults to the pinned Action package. |
 | `provider-contract` | Optional descriptor for a separate trusted handoff consumer. Mutually exclusive with `provider-config`. |
 | `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and invoke the bundled worker; Value can stop at its zero-AI selection checkpoint. |
@@ -303,6 +304,34 @@ clearance. A successful execution may retain pending questions and coverage limi
 `completion.json` binds this accounting to the snapshot and exact endpoints,
 including historical/stale results. `summary.md` displays status and these counts.
 Neither `reviewed` nor complete work asserts application safety or merge approval.
+
+### Delta coverage
+
+`delta-coverage.json` records the pinned base tip, merge base when applicable,
+head, scan root, review policy and coverage for each changed path. The changed
+paths cover the full current PR diff within `scan-root`, including earlier
+commits on the PR. Renames include the old path, and deletions can be assessed
+against pinned base evidence. A file without a native candidate still needs
+an admitted change-pass result. This includes configuration and changes whose
+effect depends on an unchanged caller.
+
+`delta-coverage-status`, `delta-coverage-reason`, and `delta-coverage-gate`
+report the final outcome. Prepared work is pending. The artifact identifies
+reviewed, pending, deferred, unavailable, stale, and cancelled paths. Gate
+completion requires a current pinned result, reviewed paths, and no pending,
+deferred, missing, or conflicting required native decisions. An admitted issue
+can coexist with complete coverage. Changed current line ranges without
+admitted primary-source citations remain open. Native analysis limits remain visible in
+`completion.json`; evidence-backed change-pass review can account for a path
+that the native scanner could not analyze.
+
+With the gate enabled, it checks endpoint freshness again before accepting a
+complete result. A native-only run, an unfinished Value selection, a failed
+review, or a required coverage gap blocks the gate. Closed or otherwise
+inapplicable deliveries report `not_applicable`. Use a scanner built from the
+same reviewed release as the Action for per-path completion. Keep the caller's
+artifact upload conditional on `always() && !cancelled()` and a nonempty
+`artifact-directory` so a failed gate still delivers available results.
 
 After native admission, the artifact directory also contains:
 

@@ -1161,6 +1161,17 @@ fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Resu
         .collect::<Vec<_>>();
     let change_pending = plan.change_pass.iter().filter(|entry| entry.status == mehscan_core::ReviewChangePassStatus::NeedsReview)
         .map(|entry| json!({"path":entry.path,"questions":entry.questions,"native_review_ids":entry.native_review_ids})).collect::<Vec<_>>();
+    let changed_paths = plan
+        .change_pass
+        .iter()
+        .map(|entry| {
+            json!({"path":entry.path,"status":entry.status,"summary":entry.summary,
+                "questions":entry.questions,"native_review_ids":entry.native_review_ids,
+                "evidence":entry.evidence.iter().map(|evidence| json!({
+                    "artifact_id":evidence.artifact_id,"source":evidence.source,"revision":evidence.revision
+                })).collect::<Vec<_>>()})
+        })
+        .collect::<Vec<_>>();
     let work_complete = missing.is_empty() && unassessed.is_empty() && limited.is_empty();
     let has_limits = !limited.is_empty()
         || !plan.native_coverage_limits.is_empty()
@@ -1172,6 +1183,7 @@ fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Resu
         "excluded_review_ids":plan.excluded_review_ids,
         "missing_or_conflicting_review_ids":missing,"pending_review_ids":pending,"issue_review_ids":issues,
         "unassessed_changed_paths":unassessed,"limited_changed_paths":limited,"pending_changed_effects":change_pending,
+        "changed_paths":changed_paths,
         "native_coverage_limits":plan.native_coverage_limits,"security_resolution":"not_established"}))
 }
 

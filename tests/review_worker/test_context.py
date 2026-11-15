@@ -176,7 +176,7 @@ class Context(unittest.TestCase):
         self.assertEqual((empty["path"],empty["side"],empty["start_line"],empty["end_line"],empty["text"]), ("empty.js","current",1,1,""))
         self.assertTrue(any(item["path"] == "binary.js" and "UTF-8" in item["reason"] for item in value["limits"]))
 
-    def test_large_deleted_unit_is_clipped_explicitly_and_missing_old_blob_is_rejected(self):
+    def test_large_deletion_and_missing_old_blob_keep_path_specific_limits(self):
         text = "".join("const item" + str(n) + " = " + str(n) + ";\n" for n in range(800))
         (self.root / "large.js").write_text(text)
         base = self.commit()
@@ -185,8 +185,11 @@ class Context(unittest.TestCase):
         self.assertTrue(value["windows"][0]["clipped"])
         self.assertEqual(value["windows"][0]["end_line"], 400)
         self.assertTrue(value["limits"])
-        with self.assertRaises(ValueError):
-            self.prepare(base, [{"path":"missing.js","status":"deleted","changed_lines":[]}])
+        (self.root / "new.js").write_text("const added = true;\n")
+        value = self.prepare(base, [{"path":"missing.js","status":"deleted","changed_lines":[]},
+                                    {"path":"new.js","status":"added","changed_lines":[]}])
+        self.assertEqual([window["path"] for window in value["windows"]], ["new.js"])
+        self.assertEqual(value["limits"], [{"path":"missing.js","reason":"pinned old primary source is unavailable"}])
 
     def test_runtime_contract_is_compiled_from_versioned_trusted_sections(self):
         skill = PRODUCT / "skills/mehscan-security"
