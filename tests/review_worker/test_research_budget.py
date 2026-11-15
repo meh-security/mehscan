@@ -19,6 +19,23 @@ def definition():
 
 
 class BudgetPlan(unittest.TestCase):
+    def test_optional_root_aliases_are_scoped_normalizations_not_file_paths(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            for value in ("", ".", "./"):
+                query = definition()
+                query['arguments']['path_prefix'] = value
+                command = worker.research_arguments(query, root, ['id'], root/'journals')
+                self.assertNotIn('--path-prefix', command)
+                self.assertEqual(command.filter_normalization['code'], 'authorized_root_filter_omitted')
+                self.assertEqual(query['arguments']['path_prefix'], value)
+                with self.assertRaises(ValueError):
+                    worker.research_arguments(source(value), root, ['id'], root/'journals')
+            for value in ('../', '/tmp', 'C:/outside', 'a/../b', '.git'):
+                query = definition();query['arguments']['path_prefix'] = value
+                with self.assertRaises(ValueError):
+                    worker.research_batch_plan([source(), query], root, ['id'], root/'journals', 10)
+
     def test_exact_fit_and_priority_order_without_splitting_a_definition(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name).resolve()

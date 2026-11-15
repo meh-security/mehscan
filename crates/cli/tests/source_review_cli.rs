@@ -54,6 +54,407 @@ fn cleanup(base: &Path) {
 }
 
 #[test]
+fn model_cors_questions_do_not_require_native_detector_credential_tags() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::write(source.join("Program.cs"), "builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.AllowAnyOrigin()));\n").unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        source.to_str().unwrap(),
+        "--repository-key",
+        "cors-question",
+        "--output",
+        inventory.to_str().unwrap(),
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        source.to_str().unwrap(),
+        "--inventory",
+        inventory.to_str().unwrap(),
+    ]);
+    let citation = json!({"path":"Program.cs", "start_line":1, "end_line":1, "quote":"policy.AllowAnyOrigin()"});
+    let input = base.join("admission.json");
+    fs::write(&input, serde_json::to_vec(&json!({
+        "plan":plan, "inspected":[], "proposals":[{
+            "key":"cors-response", "assignment_id":plan["assignments"][0]["id"],
+            "capability":"cors_configuration", "cwes":["CWE-942"],
+            "question":"Can arbitrary origins read sensitive endpoint responses?",
+            "mechanism":"The default policy allows every origin; endpoint sensitivity still needs review.",
+            "consequence":"Sensitive responses may become readable across origins.",
+            "priority":"comprehensive", "anchor":citation, "evidence":[citation]
+        }]
+    })).unwrap()).unwrap();
+    let output = base.join("admitted");
+    let result = run(&[
+        "investigate",
+        "source-review-admit",
+        source.to_str().unwrap(),
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+    ]);
+    let review_id = result["mapping"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    let admitted = read_json(output.join("inventory.json"));
+    let question = admitted["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| &entry["review_id"] == review_id)
+        .unwrap();
+    assert_eq!(question["rule_id"], "model-discovered-security-question");
+    assert_eq!(question["capability"], "cors_configuration");
+    // Admission creates a question, not a vulnerability verdict.
+    assert!(question.get("decision").is_none());
+    fs::write(source.join("Program.cs"), "// changed source\n").unwrap();
+    assert!(
+        !invoke(&[
+            "investigate",
+            "source-review-check",
+            source.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--input",
+            input.to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    cleanup(&base);
+}
+
+#[test]
+fn referenced_admission_plan_retains_source_and_plan_validation() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::write(source.join("A.cs"), "class A { int Get() => 1; }\n").unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "reference",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let plan_path = base.join("plan.json");
+    let input = base.join("admission.json");
+    fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(&input, br#"{"inspected":[],"proposals":[]}"#).unwrap();
+    let args = [
+        "investigate",
+        "source-review-check",
+        root,
+        "--inventory",
+        inv,
+        "--input",
+        input.to_str().unwrap(),
+        "--source-plan",
+        plan_path.to_str().unwrap(),
+    ];
+    run(&args);
+    let mut wrong = plan.clone();
+    wrong["plan_id"] = json!("tampered");
+    fs::write(&plan_path, serde_json::to_vec(&wrong).unwrap()).unwrap();
+    assert!(!invoke(&args).status.success());
+    fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({"plan":plan,"inspected":[],"proposals":[]})).unwrap(),
+    )
+    .unwrap();
+    assert!(!invoke(&args).status.success());
+    fs::write(&input, br#"{"inspected":[],"proposals":[]}"#).unwrap();
+    fs::write(source.join("A.cs"), "class A { int Get() => 2; }\n").unwrap();
+    assert!(!invoke(&args).status.success());
+    cleanup(&base);
+}
+
+#[test]
+fn supporting_sources_are_explicitly_excluded_and_plan_bound() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir(source.join("SeederApi")).unwrap();
+    fs::write(
+        source.join("SeederApi/Populate.cs"),
+        "class Populate { void Run() {} }\n",
+    )
+    .unwrap();
+    fs::write(source.join("Contracts.cs"), "namespace Example; public interface IStore { int Get(); } public enum Mode { A = 1, B = 2 }\n").unwrap();
+    fs::write(
+        source.join("Active.cs"),
+        "public interface IActive { int Get() => 1; }\n",
+    )
+    .unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-support",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let excluded = plan["excluded_sources"].as_array().unwrap();
+    assert!(
+        excluded
+            .iter()
+            .any(|x| x["path"] == "SeederApi/Populate.cs")
+    );
+    assert!(excluded.iter().any(|x| x["path"] == "Contracts.cs"));
+    assert!(!excluded.iter().any(|x| x["path"] == "Active.cs"));
+    let opt_in = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ]);
+    assert!(opt_in["excluded_sources"].as_array().unwrap().is_empty());
+    assert_ne!(plan["plan_id"], opt_in["plan_id"]);
+    let mut tampered = plan;
+    tampered["excluded_sources"] = json!([]);
+    let input = base.join("tampered.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&json!({"plan":tampered,"inspected":[],"proposals":[]})).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !invoke(&[
+            "investigate",
+            "source-review-check",
+            root,
+            "--inventory",
+            inv,
+            "--input",
+            input.to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    cleanup(&base);
+}
+
+#[test]
+fn schema_and_sql_are_lookup_only_but_executable_migrations_are_assigned() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir(source.join("Migrations")).unwrap();
+    fs::create_dir_all(source.join("tests/Migrations")).unwrap();
+    fs::write(source.join("tests/Migrations/TestFixture.cs"), "// SECRET_SENTINEL_TEST\nclass TestFixture : Migration { void Up() { ExecuteCustom(); } }\n").unwrap();
+    fs::write(source.join("Migrations/Schema.cs"), "// SECRET_SENTINEL_SCHEMA\nclass Schema : Migration { protected override void Up(MigrationBuilder migrationBuilder) { migrationBuilder.AddColumn<string>(name: \"Name\", table: \"T\"); } protected override void Down(MigrationBuilder migrationBuilder) { migrationBuilder.DropColumn(name: \"Name\", table: \"T\"); } }\n").unwrap();
+    fs::write(source.join("Migrations/Custom.cs"), "class Custom : Migration { protected override void Up(MigrationBuilder migrationBuilder) { migrationBuilder.Sql(ReadResource()); } }\n").unwrap();
+    fs::write(source.join("Migrations/Unique.cs"), "class Unique : Migration { protected override void Up(MigrationBuilder migrationBuilder) { migrationBuilder.CreateIndex(name: \"IX\", table: \"T\", column: \"Name\", unique: true); } }\n").unwrap();
+    fs::write(source.join("Migrations/Schema.Designer.cs"), "// <auto-generated />\n// SECRET_SENTINEL_DESIGNER\npartial class Schema { protected override void BuildTargetModel(ModelBuilder modelBuilder) { modelBuilder.HasAnnotation(\"Version\", \"1\"); modelBuilder.Entity(\"Account\").HasDiscriminator(\"Kind\").HasValue(\"Admin\"); } }\n").unwrap();
+    fs::write(source.join("Migrations/Custom.Designer.cs"), "// <auto-generated />\npartial class Custom { protected override void BuildTargetModel(ModelBuilder modelBuilder) { } private bool CheckAccess() { return true; } }\n").unwrap();
+    fs::write(
+        source.join("query.sql"),
+        "-- SECRET_SENTINEL_SQL\nSELECT 1;\n",
+    )
+    .unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-schema",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let excluded = plan["excluded_sources"].as_array().unwrap();
+    for name in [
+        "Migrations/Schema.cs",
+        "Migrations/Schema.Designer.cs",
+        "Migrations/Unique.cs",
+        "query.sql",
+    ] {
+        let entry = excluded
+            .iter()
+            .find(|x| x["path"] == name)
+            .unwrap_or_else(|| panic!("missing {name}: {excluded:?}"));
+        assert_eq!(entry["source_sha256"].as_str().unwrap().len(), 64);
+        assert!(entry["line_count"].as_u64().unwrap() > 0);
+    }
+    let serialized = serde_json::to_string(&plan).unwrap();
+    assert!(!serialized.contains("SECRET_SENTINEL"));
+    let windows: Vec<_> = plan["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|a| a["windows"].as_array().unwrap())
+        .collect();
+    assert!(windows.iter().any(|w| w["path"] == "Migrations/Custom.cs"));
+    assert!(
+        windows
+            .iter()
+            .any(|w| w["path"] == "Migrations/Custom.Designer.cs")
+    );
+    assert!(!windows.iter().any(|w| w["path"] == "Migrations/Unique.cs"));
+    let opted_in = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ]);
+    assert!(
+        !serde_json::to_string(&opted_in)
+            .unwrap()
+            .contains("SECRET_SENTINEL")
+    );
+    cleanup(&base);
+}
+
+#[test]
+fn passive_data_shapes_and_schema_mapping_stay_queryable() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir(source.join("Models")).unwrap();
+    let files = [
+        (
+            "Models/Profile.cs",
+            "[JsonConverter(typeof(Converter))] public class Profile { [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] [Required] public string Secret { get; set; } = \"SENTINEL_PASSIVE\"; public int Max { get; set; } = 5; public DateTime Created { get; set; } = DateTime.UtcNow; public List<string> Names { get; set; } = new List<string>(); public Profile(Profile other) : base(\"object\") { Secret = other.Secret; Max = other.Max; } }",
+        ),
+        (
+            "Tokens.cs",
+            "public static class Tokens { public const string Name = \"SENTINEL_CONSTANT\"; }",
+        ),
+        (
+            "Models/Validator.cs",
+            "public class Validator { public bool Validate() { return true; } }",
+        ),
+        (
+            "Models/Computed.cs",
+            "public class Computed { public string Secret { get { return ReadSecret(); } } }",
+        ),
+        (
+            "Models/CopyLogic.cs",
+            "public class CopyLogic { public int Count { get; set; } public CopyLogic(CopyLogic other) { Count += other.Count; } }",
+        ),
+        (
+            "Models/Protected.cs",
+            "[Authorize] public class Protected { public string Value { get; set; } }",
+        ),
+        (
+            "PlainService.cs",
+            "public class PlainService { public string Name { get; set; } }",
+        ),
+        (
+            "Map.cs",
+            "class Map : IEntityTypeConfiguration<Item> { void Configure(EntityTypeBuilder<Item> builder) { builder.ToTable(nameof(Item)); builder.Property(x => x.Id).ValueGeneratedNever(); builder.Property(x => x.Name).HasMaxLength(42); /* SENTINEL_MAPPING */ } }",
+        ),
+        (
+            "Filter.cs",
+            "class Filter : IEntityTypeConfiguration<Item> { void Configure(EntityTypeBuilder<Item> builder) { builder.HasQueryFilter(x => x.Visible); } }",
+        ),
+    ];
+    for (name, text) in files {
+        fs::write(source.join(name), text).unwrap();
+    }
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-data",
+        "--output",
+        inv,
+    ]);
+    let plan = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+    ]);
+    let excluded = plan["excluded_sources"].as_array().unwrap();
+    for name in ["Models/Profile.cs", "Tokens.cs", "Map.cs"] {
+        assert!(
+            excluded.iter().any(|v| v["path"] == name),
+            "missing {name}: {excluded:?}"
+        );
+    }
+    let windows: Vec<_> = plan["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|v| v["windows"].as_array().unwrap())
+        .collect();
+    for name in [
+        "Models/Validator.cs",
+        "Models/Computed.cs",
+        "Models/CopyLogic.cs",
+        "Models/Protected.cs",
+        "PlainService.cs",
+        "Filter.cs",
+    ] {
+        assert!(windows.iter().any(|v| v["path"] == name), "missing {name}");
+    }
+    assert!(!serde_json::to_string(&plan).unwrap().contains("SENTINEL_"));
+    let opt_in = run(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ]);
+    let excluded = opt_in["excluded_sources"].as_array().unwrap();
+    assert!(excluded.iter().any(|v| v["path"] == "Map.cs"));
+    assert!(!excluded.iter().any(|v| v["path"] == "Models/Profile.cs"));
+    cleanup(&base);
+}
+
+#[test]
 fn admitted_source_questions_export_complete_inventory_and_reuse_finalized_history() {
     let base = fixture();
     let source = base.join("source");

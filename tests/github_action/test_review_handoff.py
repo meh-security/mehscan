@@ -43,7 +43,7 @@ else:
 ''', encoding="utf-8")
         self.command.write_text(json.dumps([sys.executable, str(self.reviewer)]))
 
-    def ready(self, policy="value", execute=None):
+    def ready(self, policy="comprehensive", execute=None):
         os.environ["MEHSCAN_REVIEW_MODE"] = policy
         directory, plan = self.prepare()
         record = adapter.finish(directory / "plan.json", self.delivery.get, execute or self.execute)
@@ -57,6 +57,17 @@ else:
     def consume(self, record, execute=None):
         return adapter.review(record["review_handoff"], self.command, "deterministic/medium",
                               self.delivery.get, execute or self.execute)
+
+    def test_value_prepares_selection_without_invoking_reviewer(self):
+        self.reviewer.write_text("raise AssertionError('Value checkpoint must not invoke a model')\n")
+        directory, plan, record = self.ready("value")
+        result = self.consume(record)
+        self.assertEqual(result["status"], "selection_required", result)
+        self.assertEqual(result["review_execution"], "selection_required")
+        self.assertTrue(Path(result["source_selection"]).is_file())
+        self.assertNotIn("completion", result)
+        self.assertEqual(self.view(directory, plan)["attempt_status"], "incomplete")
+        self.assertFalse((directory / "review/findings.json").exists())
 
     def test_native_default_and_invalid_or_persistent_review_configuration(self):
         directory, plan = self.prepare()
@@ -204,7 +215,7 @@ else:
             self.assertEqual(self.view(directory, plan)["attempt_status"], "incomplete" if kind == "stale" else "cancelled")
 
     def test_failed_consumer_closes_incomplete_and_tool_drift_prevents_launch(self):
-        for kind in ("failure", "controller_drift"):
+        for kind in ("failure", "controller_drift", "evidence_drift", "case_state_drift", "source_recovery_drift", "fact_audit_drift"):
             directory, plan, record = self.ready()
             def execute(argv, **kwargs):
                 if str(argv[1]).endswith("review_worker.py"):
@@ -213,7 +224,10 @@ else:
                 return self.execute(argv, **kwargs)
             original = adapter.file_digest
             def changed(path):
-                return "changed" if kind == "controller_drift" and Path(path).name == "review_worker.py" else original(path)
+                target = {"controller_drift":"review_worker.py", "evidence_drift":"review_evidence.py",
+                          "case_state_drift":"review_case_state.py", "source_recovery_drift":"review_source_recovery.py",
+                          "fact_audit_drift":"review_fact_audit.py"}.get(kind)
+                return "changed" if Path(path).name == target else original(path)
             with patch.object(adapter, "file_digest", side_effect=changed):
                 result = self.consume(record, execute)
             self.assertEqual(result["status"], "incomplete", result)

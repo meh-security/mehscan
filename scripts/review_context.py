@@ -129,6 +129,12 @@ def delivered_source_window(root, result):
     lines = source_lines(original)
     first, last = window["start_line"], window["end_line"]
     rows = source_lines(window["text"])
+    # A joined excerpt can end on an empty source line. str::lines treats
+    # its final LF as a terminator; the declared extent disambiguates that
+    # representation. The original-byte comparison below still checks it.
+    if (window["text"].endswith("\n") and len(rows) == last - first
+            and last <= len(lines) and lines[last - 1] == ""):
+        rows.append("")
     if first > len(lines) or last > len(lines) or len(rows) != last - first + 1:
         raise ValueError("source result has inconsistent line coordinates")
     expected = lines[first - 1:last]

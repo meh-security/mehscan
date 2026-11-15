@@ -19,6 +19,7 @@ import review_context as context
 import review_source_profile as source_profiles
 import review_orchestration as orchestration
 import review_second_pass as second_pass
+import review_budget
 from review_trace import ReviewTrace
 
 _cancelled = False
@@ -64,6 +65,30 @@ def observed_turn(directory, turn, provider, *, require_complete_usage=True):
     if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens","cached_input_tokens","output_tokens")):
         return None
     return rows[0] if usage["cached_input_tokens"] <= usage["input_tokens"] else None
+
+
+def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=None, *, lease=None):
+    """Every controller-owned inference shares the same admission ledger."""
+    if budget_path and lease is None:
+        lease = review_budget.reserve(budget_path, frame["kind"])
+    failure = None
+    try:
+        return execute(command, cwd, env, timeout, json.dumps(frame))
+    except Exception as error:
+        failure = error
+        raise
+    finally:
+        if lease is not None:
+            try:
+                receipt = observed_turn(cwd, frame["research"] | {"conversation_id": frame["conversation_id"]},
+                                        provider, require_complete_usage=False)
+            except Exception:
+                receipt = None
+            if not review_budget.finish(budget_path, lease, receipt):
+                detail = "provider input usage is unknown; shared review budget fenced"
+                if failure is not None:
+                    detail += "; original failure: " + type(failure).__name__ + ": " + str(failure)[:1000]
+                raise ValueError(detail) from failure
 
 
 def reply_validation_feedback(error, task):
@@ -122,6 +147,10 @@ class ResearchBatchError(ValueError):
                         **({"lookup_feedback":error.result} if isinstance(error, ResearchFilterError) else {})}
                        for index,error in errors[:32]]
         self.error_count = len(errors)
+
+
+class SourceUnanswered(ValueError):
+    """A source-stage obligation has no answer; never buy a fallback review."""
 
 
 def missing_source_result(query, error):
@@ -353,6 +382,7 @@ def validate_provider_command(argv, expected, skill_root, root, artifact_root):
         **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
     if actual != expected:
         raise ValueError("actual provider configuration differs from the native work binding")
+    return config
 
 
 @contextmanager
@@ -534,7 +564,7 @@ class NativeWrites:
         "plan": ({"--input", "--work-package", "--expected-plan-id"}, set()),
         "pending": ({"--input"}, set()),
         "pending-batch": ({"--input"}, set()),
-        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution"}),
+        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution", "--allow-partial"}),
     }
     PATHS = {"--input", "--work-package", "--run", "--supersessions", "--review-execution"}
 
@@ -655,6 +685,11 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     required, optional = definitions[tool]
     if not required <= values.keys() or values.keys() - required - optional:
         raise ValueError("unsupported research arguments")
+    omitted_root_filters = []
+    for key in ("path", "path_prefix"):
+        if key in optional and values.get(key) in ("", ".", "./"):
+            omitted_root_filters.append(key)
+            values.pop(key)
     if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
         values["path_prefix"] = values["path_prefix"].rstrip("/")
     for key in ("path", "path_prefix"):
@@ -701,7 +736,10 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     # All arguments and both scopes pass validation before this narrow repair.
     # Never turn different filters, unknown paths or required-file tools into
     # a directory search. Keep the original request separate from effective argv.
-    normalization = None
+    normalization = ({"code":"authorized_root_filter_omitted",
+        "original_arguments":query["arguments"].copy(), "effective_arguments":values.copy(),
+        "authority":"Optional root alias omitted within the authorized source; not source evidence."}
+        if omitted_root_filters else None)
     if (tool in ("references", "symbol", "definition") and "path_prefix" in optional and "path" in values
             and (root / values["path"]).is_dir()
             and ("path_prefix" not in values or values["path_prefix"] == values["path"])):
@@ -834,7 +872,11 @@ def definition_result(discovery, read_source, find_references=None):
     return result
 
 
-def execute(command, cwd, env, timeout, payload=None):
+REVIEWER_OUTPUT_LIMIT = 8 * 1024 * 1024
+NATIVE_OUTPUT_LIMIT = 64 * 1024 * 1024
+
+
+def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_OUTPUT_LIMIT):
     if _cancelled:
         raise InterruptedError("review cancelled")
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
@@ -853,8 +895,8 @@ def execute(command, cwd, env, timeout, payload=None):
                 supplied = True
         if process.returncode:
             raise CommandFailure(process.returncode, diagnostic)
-        if len(output) > 8 * 1024 * 1024:
-            raise ValueError("reviewer output exceeds bounded intake")
+        if len(output) > output_limit:
+            raise ValueError("command output exceeds bounded intake")
         return json.loads(output) if output.strip() else None
     finally:
         if process.poll() is None:
@@ -867,6 +909,30 @@ def execute(command, cwd, env, timeout, payload=None):
 
 
 def run(args):
+    if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
+        raise ValueError("question routing requires all-phase work goals")
+    work_path = getattr(args, "work_plan", None)
+    if getattr(args, "resolve_checks", None) and (not work_path or not getattr(args, "resume_from", None)
+            or args.phase != "all" or getattr(args, "second_pass", "off") != "off"):
+        raise ValueError("scoped correction requires --work-plan, --resume-from and --phase all without a second pass")
+    if getattr(args, "fact_audit_policy", None) and (not work_path or not getattr(args, "question_routing", False) or args.phase != "all"):
+        raise ValueError("factual audits require all-phase work goals with explicit question routing")
+    if not work_path and any(getattr(args, key, None) is not None for key in ("review_goal", "coverage_target", "cost_budget", "cost_rates")):
+        raise ValueError("review goals, targets and cost allowances require a source-bound work plan")
+    if work_path and (args.phase != "all" or getattr(args, "domain_plan", None) or getattr(args, "source_selection", None)
+            or getattr(args, "group_operations", False) or getattr(args, "source_profile", None)
+            or getattr(args, "validate_only", False) or getattr(args, "first_pass", None)
+            or getattr(args, "reuse_source_results", None) or getattr(args, "native_share", 80) != 80):
+        raise ValueError("work goals require all-phase work without legacy selection or source-result reuse")
+    if work_path:
+        args.domain_session_mode = "isolated"
+    if getattr(args, "domain_session_mode", "shared") != "shared" and not (getattr(args, "domain_plan", None) or work_path):
+        raise ValueError("domain session mode requires an explicit domain plan")
+    if getattr(args, "domain_plan", None) and (args.phase != "all" or getattr(args, "group_operations", False)
+            or getattr(args, "source_profile", None) or getattr(args, "validate_only", False)):
+        raise ValueError("domain review requires fresh all-phase source work without grouping or native-only profiles")
+    if getattr(args, "group_operations", False) and args.phase != "native":
+        raise ValueError("operation grouping pilot requires --phase native")
     root = Path(args.source_root).resolve(strict=True)
     store = outside(args.store, root)
     key = context.digest([str(root), args.stream])
@@ -891,8 +957,14 @@ def run(args):
 
 
 def run_locked(args):
+    group_operations = getattr(args, "group_operations", False)
+    if type(group_operations) is not bool or group_operations and args.phase != "native":
+        raise ValueError("operation grouping pilot requires --phase native")
     second_mode = getattr(args, "second_pass", "off")
     second_scope = second_pass.review_scope(getattr(args, "second_pass_scope", "all"))
+    fast_max_claims = getattr(args, "fast_max_claims", second_pass.FAST_MAX_CLAIMS)
+    if type(fast_max_claims) is not int or not 1 <= fast_max_claims <= second_pass.FAST_MAX_CLAIMS:
+        raise ValueError("Fast claim cap must be between 1 and 20")
     if second_mode == "off" and second_scope != second_pass.review_scope("all"):
         raise ValueError("second-pass scope requires --second-pass fast or full")
     first_path = getattr(args, "first_pass", None)
@@ -924,8 +996,36 @@ def run_locked(args):
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
     first_directory = outside(first_path, root) if first_path else None
-    if first_directory and read(first_directory / "worker.json")["status"] not in ("admitted", "source_validated"):
-        raise ValueError("first pass must have complete source-validated results")
+    correction_handoff_digest = None
+    correction_handoff = None
+    correction_ledger = None
+    correction_directory = first_directory
+    if first_directory and (first_directory / "source-review/resolution-handoff.json").is_file():
+        if second_mode == "off":
+            raise ValueError("correction handoff requires explicit Fast or Full native reconciliation")
+        import review_work
+        correction_handoff_digest = digest_file(first_directory / "source-review/resolution-handoff.json")
+        correction_handoff, correction_ledger, first_directory = review_work.read_resolution_handoff(
+            first_directory, root, sys.modules[__name__])
+    if first_directory:
+        first_record = read(first_directory / "worker.json")
+        partial_work = first_directory / "source-review/work-ledger.json"
+        admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
+            and partial_work.is_file() and read(partial_work).get("native_admission_status") == "admitted"
+            and (first_directory / "source-review/work-handoff.json").is_file())
+        if first_record["status"] not in ("admitted", "source_validated") and not admitted_partial:
+            raise ValueError("first pass must have source-validated native results")
+    work_followup = None
+    if first_directory and (first_directory / "source-review/work-plan.json").is_file() and not (
+            first_directory / "source-review/work-handoff.json").is_file():
+        raise ValueError("work-plan first pass lacks a bound handoff; cannot start a fresh follow-up allowance")
+    if first_directory and (first_directory / "source-review/work-handoff.json").is_file():
+        import review_work
+        handoff, parent_source, parent_budget = review_work.read_handoff(first_directory, root, sys.modules[__name__])
+        args._review_budget = parent_budget
+        work_followup = {"parent_attempt":str(first_directory), "budget_path":parent_budget,
+            "case_coverage":"Historical first-pass checks; this follow-up audits native claims.",
+            "handoff_sha256":digest_file(first_directory / "source-review/work-handoff.json")}
     rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
     if rates_path:
         second_pass.validate_rates(read(rates_path))
@@ -943,6 +1043,9 @@ def run_locked(args):
             outside(argument, root)
     output = outside(args.output, root, False)
     source_prepared = getattr(args,"_source_prepared",None)
+    budget_path = getattr(args, "_review_budget", None)
+    if source_prepared:
+        budget_path = read(source_prepared).get("budget_path", budget_path)
     if source_prepared:
         prepared_path=outside(source_prepared,root)
         if prepared_path.parent.parent != output and not getattr(args,"resume_from",None):
@@ -979,6 +1082,8 @@ def run_locked(args):
     record = {"schema_version": "1", "status": "running", "generation": generation,
               "reviewer": args.reviewer_label, "alert_disposition": "not_established", "timings_ms": timings,
               "workers": workers, "query_workers": query_workers, "jobs": {}}
+    if group_operations:
+        record["group_operations"] = True
     bound_runtime = None
     shared_budget = None
     tiered_policy = None
@@ -1018,7 +1123,8 @@ def run_locked(args):
             trace_subject = {"draft":draft_name, "job_id":draft_name.removeprefix("draft-")}
         execution_trace.emit("native_started", operation=operation, **trace_subject)
         try:
-            value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout)
+            value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout,
+                            output_limit=NATIVE_OUTPUT_LIMIT)
             execution_trace.emit("native_completed", operation=operation, **trace_subject)
         except Exception as error:
             execution_trace.emit("native_failed", operation=operation, error=type(error).__name__, **trace_subject)
@@ -1076,6 +1182,8 @@ def run_locked(args):
                           task.get("profile", "routine"), task.get("review_role", "investigator")]
         if task.get("assessment_cycle"):
             identity_parts.append(task["assessment_cycle"])
+        if group_operations:
+            identity_parts.append("operation-groups-v1")
         identity = context.digest(identity_parts)
         binding = {"package_id": package["package_id"], "runtime": bound_runtime,
                    "reviewer_configuration": reviewer_configuration,
@@ -1085,6 +1193,8 @@ def run_locked(args):
                    "source_handoff_sha256": context.digest(task.get("source_handoff")),
                    "assessment_cycle":task.get("assessment_cycle"),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
+        if group_operations:
+            binding["operation_groups"] = "v1"
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None,
                              timeout=args.timeout, provider=tiered_policy["expert"] if task.get("profile")=="expert" else bound_runtime.get("provider"))
@@ -1138,6 +1248,8 @@ def run_locked(args):
         if source_prepared and task["kind"] == "native_bundle" and not task.get("second_pass") and not task.get("stage_context"):
             prepared=read(source_prepared)
             rows=prepared["assessments"]
+            if not set(task["review_ids"]) <= set(rows):
+                raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
             if set(task["review_ids"]) <= set(rows):
                 draft={"results":[rows[rid] for rid in task["review_ids"]]}
                 validate_native_candidate(task,job,draft,args.timeout)
@@ -1146,13 +1258,21 @@ def run_locked(args):
                 material=[]
                 for assignment in source_plan["assignments"]:
                     if assignment["id"] not in assignment_ids:continue
-                    result=next(r for r in prepared["results"] if r["assignment_id"]==assignment["id"])
-                    facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
-                        "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
-                        "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
-                    material.extend({**fact,"origin_package_id":prepared["plan_id"],"origin_review_id":None,
-                        "origin_kind":"source_assignment","source_assignment_id":assignment["id"]} for fact in facts)
-                job.save(results=material,source_assignment_ids=sorted(assignment_ids))
+                    matches=[r for r in prepared["results"] if r["assignment_id"]==assignment["id"] and r["status"]=="complete"]
+                    for result in matches:
+                        facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
+                            "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
+                            "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
+                        for index, fact in enumerate(facts):
+                            if any(prior["result_id"]==fact["result_id"] for prior in material):
+                                continue
+                            reuse = result.get("reuse") if index < len(result["facts"]) else None
+                            material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
+                                "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
+                job.save(results=material,source_assignment_ids=sorted(assignment_ids),
+                    claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
+                    claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
+                    followups=[n for n in prepared.get("followups", []) if n["review_id"] in task["review_ids"]])
                 return job.complete(draft)
         if job.state.get("unknown_provider_calls"):
             raise ValueError("previous provider usage is unknown; reconcile before another call")
@@ -1253,6 +1373,13 @@ def run_locked(args):
             packet["primary"] = {**prepared_changes,
                 "windows": source_profiles.combine(prepared_changes["windows"], explicit["windows"], application["windows"]),
                 "limits": [*prepared_changes["limits"], *application["limits"]]}
+            if group_operations:
+                operation = source_profiles.prepare_operations(root, inventory_data["entries"],
+                    payload["review_ids"], ids, payload["snapshot_id"], packet["primary"]["windows"],
+                    source_contexts=packet["sweep"].get("source_contexts", []))
+                packet["primary"]["windows"] = source_profiles.combine(packet["primary"]["windows"], operation["windows"])
+                packet["primary"]["limits"].extend(operation["limits"])
+                packet["operation_groups"] = operation["groups"]
             for source in packet["sweep"].get("source_contexts", []):
                 fact = {"result_id":"mehscanSweepSource/v1:" + context.digest([payload["snapshot_id"], source]),
                     "origin_package_id":expected["package_id"], "origin_review_id":None,
@@ -1267,7 +1394,10 @@ def run_locked(args):
             raise ValueError("prepared reviewer context exceeds 2 MiB; split the authorized review work")
         with shared_lock:
             record.setdefault("prepared_contexts", []).append({"conversation_id": conversation_id, "bytes": packet_path.stat().st_size,
-                                                              "contract_id": packet["contract"]["contract_id"]})
+                "contract_id": packet["contract"]["contract_id"],
+                **({"operation_group_count": len(packet.get("operation_groups", [])),
+                    "operation_grouped_review_count": sum(len(g["review_ids"]) for g in packet.get("operation_groups", []))}
+                   if group_operations else {})})
         facts_path = output / ("facts-" + conversation_id + ".json")
         working_chain, progress = job.state.get("working_chain", ""), job.state.get("progress", [])
         feedback, corrections = (job.state.get("repair_countercheck") or job.state.get("research_budget_feedback")
@@ -1377,6 +1507,7 @@ def run_locked(args):
             write(facts_path, {"schema_version": "1", "scanner_sha256": scanner_hash,
                               "snapshot_id": payload["snapshot_id"], "facts": display_facts})
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
+                     "followup_selection": task["kind"] == "native_bundle" and role == "investigator",
                      "routing_allowed":bool(tiered_policy and task["kind"] == "native_bundle"),
                      "dependency_allowed":bool(source_handles and tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle")),
                      "conversation_id": conversation_id, "evidence_packet": str(packet_path),
@@ -1418,18 +1549,20 @@ def run_locked(args):
                 round=round_index, calls_remaining=calls_left-round_index, queries_remaining=frame["research"]["queries_remaining"])
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
+            lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
             job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time(),
                      active_turn={"conversation_id":conversation_id,"round":round_index})
             succeeded = False
             try:
-                value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
+                value = execute_provider(worker_command, output, dict(os.environ), remaining(), frame,
+                    tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"), budget_path, lease=lease)
                 succeeded = True
             except CommandFailure as error:
                 provider = tiered_policy["expert"] if profile=="expert" else bound_runtime.get("provider")
                 if observed_turn(output, job.state["active_turn"], provider) is not None:
                     job.save(model_inflight=False, active_turn=None, active_since=time.time())
                     correction = reply_validation_feedback(error, frame)
-                    if (correction is not None and not job.state.get("reply_validation_corrections")
+                    if (not budget_path and correction is not None and not job.state.get("reply_validation_corrections")
                             and round_index + 1 < calls_left and deadline > time.monotonic()):
                         job.save(reply_validation_corrections=1)
                         feedback = correction
@@ -1572,6 +1705,15 @@ def run_locked(args):
                             job.save(review_checks=list(normalized_checks.values()))
                         elif value.get("review_checks"):
                             raise ValueError("review checks require a second-pass audit role")
+                        nominations = second_pass.take_followups(value["draft"])
+                        context_errors = []
+                        claim_contexts = second_pass.take_claim_contexts(value["draft"], errors=context_errors)
+                        if claim_contexts and (task["kind"] != "native_bundle" or role != "investigator"):
+                            raise ValueError("only first-pass assessments supply claim context")
+                        if nominations and (task["kind"] != "native_bundle" or role != "investigator"):
+                            raise ValueError("only first-pass assessments nominate follow-ups")
+                        if role == "investigator":
+                            job.save(followups=nominations, claim_contexts=claim_contexts, claim_context_errors=context_errors)
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
                         if any(item["reason"] in {"external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
                                and decisions.get(item["review_id"]) != "needs_review" for item in [*reported_routing, *routing]):
@@ -1608,6 +1750,14 @@ def run_locked(args):
                         raise ValueError("second-pass checks require an annotated final draft")
                     if role in ("research", "collection"):
                         raise ValueError("research tasks return scoped knowledge, not verdicts")
+                    nominations = second_pass.take_followups(value)
+                    context_errors = []
+                    claim_contexts = second_pass.take_claim_contexts(value, errors=context_errors)
+                    if claim_contexts and (task["kind"] != "native_bundle" or role != "investigator"):
+                        raise ValueError("only first-pass assessments supply claim context")
+                    if nominations and (task["kind"] != "native_bundle" or role != "investigator"):
+                        raise ValueError("only first-pass assessments nominate follow-ups")
+                    job.save(followups=nominations, claim_contexts=claim_contexts, claim_context_errors=context_errors)
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
                 queries = value["research"]
                 if role == "second_pass_fast" and frame["fast_phase"] == "audit":
@@ -1715,7 +1865,7 @@ def run_locked(args):
                         def read_definition(values):
                             nonlocal native_queries
                             child = {**query, "tool":"source", "arguments":values}
-                            child_args = research_arguments(child, root, ids, journals)
+                            child_args = research_arguments(child, root, ids, journals, api=lookup_api)
                             prepared = source_lookup(child, remaining())
                             if prepared is not None:
                                 return prepared
@@ -1733,7 +1883,7 @@ def run_locked(args):
                             child = {**query, "tool":"references", "arguments":{
                                 **{k:v for k,v in values.items() if k != "name"},
                                 "symbol":values["name"]}}
-                            child_args = research_arguments(child, root, ids, journals)
+                            child_args = research_arguments(child, root, ids, journals, api=lookup_api)
                             native_queries += 1
                             try:
                                 return native(child_args, remaining())
@@ -1891,12 +2041,16 @@ def run_locked(args):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if group_operations:
+            recovery_binding["operation_groups"] = "v1"
         if second_mode != "off":
             recovery_binding["second_pass"] = {"mode":second_mode,
                 "scope":list(second_scope),
+                "fast_max_claims":fast_max_claims if second_mode == "fast" else None,
                 "implementation_sha256":digest_file(second_pass.__file__),
                 "first_report_sha256":digest_file(first_directory / "findings.json") if first_directory else None,
-                "rates_sha256":digest_file(rates_path) if rates_path else None}
+                "rates_sha256":digest_file(rates_path) if rates_path else None,
+                "correction_handoff_sha256":correction_handoff_digest}
         recovered_change_pass = False
         if recovery:
             prior = read(recovery / "recovery.json")
@@ -1922,7 +2076,7 @@ def run_locked(args):
                         if path.is_symlink() or not path.is_file():
                             raise ValueError("recovered reviewer inputs require regular files")
                         shutil.copyfile(path, output / path.name)
-                for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json"):
+                for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json", "review-options.json", "review-options.md"):
                     path = recovery / name
                     if path.exists():
                         if path.is_symlink() or not path.is_file():
@@ -2259,10 +2413,12 @@ def run_locked(args):
                     "waiting_questions":sum(row["status"] == "waiting" for row in dependencies.values())}
                 if waiting and not failures:
                     raise ValueError("research dependencies remain unresolved; no complete report can be admitted")
-                if failures:
+                if failures and (not source_prepared or any(not isinstance(error, SourceUnanswered) for error in failures)):
                     # Preserve completed drafts/responses; never fabricate the missing
                     # ones or admit a partial set as a complete native run.
                     raise failures[0]
+                if failures:
+                    record["source_unanswered_results"] = True
                 if second_mode != "off":
                     original_metrics = []
                     if first_directory:
@@ -2288,9 +2444,35 @@ def run_locked(args):
                     outside_scope = []
                     scoped_responses = {}
                     all_rows = {r["review_id"]:r for b in baselines.values() for r in b["results"]}
-                    if second_scope != second_pass.review_scope("all"):
-                        scope_ids = [rid for rid,row in all_rows.items() if row["decision"] in second_scope]
-                        outside_scope = [row for row in all_rows.values() if row["decision"] not in second_scope]
+                    claim_contexts = second_pass.claim_contexts(first_directory or output, all_rows)
+                    selection = second_pass.select_followups(list(all_rows.values()),
+                        second_pass.followup_notes(first_directory or output, all_rows), scope=second_scope,
+                        max_claims=fast_max_claims, contexts=claim_contexts)
+                    correction_context = []
+                    if correction_ledger:
+                        for item in correction_ledger["items"]:
+                            for rid, reason in item.get("native_reconsideration", {}).items():
+                                if rid in all_rows and all_rows[rid]["decision"] in second_scope:
+                                    correction_context.append({"review_id":rid, "case_id":item["id"], "reason":reason,
+                                        "check_results":item["check_results"], "actor":item["actor"], "conditions":item["conditions"]})
+                        nominated = list(dict.fromkeys(r["review_id"] for r in correction_context))
+                        selected_ids = nominated[:fast_max_claims]
+                        selection["selected"] = [{"review_id":rid, "decision":all_rows[rid]["decision"],
+                            "selection_source":"scoped_correction", "reasons":[{"reason":"conflicting_evidence",
+                                "question":"Reconcile this native decision with the corrected owner checks and original source."}]}
+                            for rid in selected_ids]
+                        selection["policy"] = "scoped-correction/v1"
+                        selection["limits"] = {"max_claims":fast_max_claims, "effective_cap":len(selected_ids)}
+                        selection["deferred"] = [{"review_id":rid, "reason":"fast_cap"} for rid in nominated if rid not in selected_ids]
+                        selection["excluded"] = [{"review_id":rid, "reason":"outside_correction_selection"}
+                            for rid in all_rows if rid not in nominated]
+                    second_pass.write_options(output, selection, list(all_rows.values()), write,
+                        source_directory=first_directory or output, contexts=claim_contexts)
+                    narrowed = second_mode == "fast" or second_scope != second_pass.review_scope("all")
+                    if narrowed:
+                        scope_ids = ([r["review_id"] for r in selection["selected"]] if second_mode == "fast" else
+                            [rid for rid,row in all_rows.items() if row["decision"] in second_scope])
+                        outside_scope = [row for rid,row in all_rows.items() if rid not in set(scope_ids)]
                         scope_run = output / "second-pass-bundles"
                         scoped_manifest = {"bundles":[]}
                         if scope_ids:
@@ -2317,7 +2499,7 @@ def run_locked(args):
                         if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(scope_ids):
                             raise ValueError("scoped bundles differ from the selected first-pass decisions")
                     def finalize_second(response, filename, request):
-                        if second_scope == second_pass.review_scope("all"):
+                        if not narrowed:
                             return finalize_combined(response, filename, request)
                         draft_file = output / "second-pass-finalized" / ("draft-" + filename)
                         response_file = output / "second-pass-finalized" / filename
@@ -2335,8 +2517,10 @@ def run_locked(args):
                     summary = second_pass.run(mode=second_mode, requests=review_requests, baselines=review_baselines,
                         first_directory=first_directory or output, output=output, task_base=task_base,
                         execute_stage=second_stage, finalize=finalize_second, write=write,
-                        workers=workers, byte_limit=args.research_bytes, outside_scope=outside_scope, scope=second_scope, archive_baselines=False)
-                    if second_scope != second_pass.review_scope("all"):
+                        workers=workers, byte_limit=args.research_bytes, outside_scope=outside_scope, scope=second_scope,
+                        selection=selection if second_mode == "fast" else None, archive_baselines=False,
+                        corrections=correction_context)
+                    if narrowed:
                         for filename,request,data in requests:
                             finalize_combined(second_pass.brief({"results":[scoped_responses.get(rid,all_rows[rid]) for rid in data["review_ids"]]}), filename, request)
                     record["second_pass"] = {k:summary[k] for k in ("mode", "status", "scope", "selected", "targeted", "checked", "outside_scope", "outcomes")}
@@ -2449,7 +2633,7 @@ def run_locked(args):
                         "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
                 # Report validates the completed response set before a state write.
                 report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
-                                 "--reviewer", args.reviewer_label])
+                                 "--reviewer", args.reviewer_label, *(["--allow-partial", "true"] if source_prepared else [])])
                 write(output / "findings.json", report)
                 execution_path = output / "review-execution.json"
                 if tiered_policy:
@@ -2468,6 +2652,8 @@ def run_locked(args):
                 copy_bundle_run(run_dir, admitted_run, response_dir)
                 record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
                                   "--reviewer": args.reviewer_label}
+                if source_prepared:
+                    record_options["--allow-partial"] = "true"
                 if links:
                     links_path = output / "supersessions.json"
                     write(links_path, links)
@@ -2511,11 +2697,17 @@ def run_locked(args):
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        if source["completed_assignments"] != source["assignments"]:
-            record["status"]="incomplete"
-            record["detail"]="Native results retained; some assigned source ranges were not reviewed."
+        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review", "work_review") if k in source})
+        work_review = source.get("work_review")
+        source_incomplete = (work_review["completed_items"] != work_review["funded_items"] if work_review else
+            source["completed_assignments"] != source.get("selected_assignments", source["assignments"]))
+        if source_incomplete or record.get("source_unanswered_results"):
+            if record["status"] != "cancelled":
+                record["status"]="incomplete"
+            record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
         record["source_review"]["calls"]=source["calls"]
-        record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"]!="complete"]
+        record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] not in ("complete", "deferred")]
+        record["source_review"]["deferred_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] == "deferred"]
         write(output/"source-review.json",record["source_review"])
     record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000) + (source["elapsed_ms"] if source_prepared else 0)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
@@ -2547,6 +2739,28 @@ def run_locked(args):
         except (OSError, ValueError, KeyError, TypeError) as error:
             record["second_pass_export_error"] = type(error).__name__
             record["status"] = "incomplete"
+    if work_followup:
+        if correction_handoff:
+            work_followup["correction_attempt"] = str(correction_directory)
+            work_followup["correction_handoff_sha256"] = correction_handoff_digest
+            if digest_file(correction_directory / "source-review/resolution-handoff.json") != correction_handoff_digest:
+                raise ValueError("correction handoff changed during native reconciliation")
+        if (output / "second-pass.json").is_file():
+            audit = read(output / "second-pass.json")
+            work_followup["case_reconsideration"] = review_work.audit_case_gaps(
+                read(first_directory / "source-review/work-plan.json"), audit["results"])
+        if correction_handoff and (output / "second-pass.json").is_file() and (output / "findings.json").is_file():
+            native_rows = [r["response"] for r in read(output / "findings.json").get("decision_records", [])]
+            reconciled = review_work.reconciled_resolution(correction_directory, correction_handoff,
+                read(output / "second-pass.json"), native_rows, review_budget.snapshot(budget_path), sys.modules[__name__])
+            write(output / "work-ledger.json", reconciled)
+            write_text(output / "remaining-work.md", review_work.markdown(reconciled))
+            record["work_goal"] = {"goal":reconciled["goal"], "status":reconciled["target_status"],
+                "target_complete":reconciled["target_complete"], "ledger":str(output / "work-ledger.json")}
+            if reconciled["goal"] == "coverage" and not reconciled["target_complete"]:
+                record["status"] = "incomplete"
+        record["work_followup"] = work_followup
+        write(output / "work-followup.json", work_followup)
     if record["status"] not in ("admitted", "source_validated") and "package" in locals():
         try:
             partial = save_partial_results(output, package)
@@ -2554,6 +2768,24 @@ def run_locked(args):
                 "completed":len(partial["completed_review_ids"]),"incomplete":len(partial["incomplete_review_ids"])}
         except (OSError,ValueError,KeyError,TypeError) as error:
             record["partial_export_error"] = type(error).__name__
+    if record["status"] in ("admitted", "source_validated") or (output / "findings.json").is_file():
+        try:
+            report = read(output / "findings.json") if (output / "findings.json").is_file() else {}
+            rows = [r["response"] for r in report.get("decision_records", [])]
+            claim_contexts = second_pass.claim_contexts(first_directory or output, [r["review_id"] for r in rows])
+            annotation_errors = [error for _,job,_ in second_pass.original_jobs(first_directory or output)
+                if job.get("binding", {}).get("role", "investigator") == "investigator"
+                for error in job.get("claim_context_errors", []) if error["review_id"] in {r["review_id"] for r in rows}]
+            if not (output / "review-options.json").exists():
+                options = second_pass.select_followups(rows, second_pass.followup_notes(output, [r["review_id"] for r in rows]),
+                    max_claims=fast_max_claims, contexts=claim_contexts)
+                second_pass.write_options(output, options, rows, write, contexts=claim_contexts)
+            second_pass.write_groups(output, rows, claim_contexts, write, annotation_errors=annotation_errors)
+            record["finding_groups"] = "finding-groups.json"
+            record["review_options"] = "review-options.json"
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            # Advisory export cannot undo already admitted decisions.
+            record["review_options_error"] = {"reason":type(error).__name__, "detail":str(error)}
     write(output / "worker.json", record)
     execution_trace.emit("attempt_completed", status=record["status"], elapsed_ms=record["elapsed_ms"])
     return record
@@ -2566,8 +2798,25 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
+    parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
+    parser.add_argument("--domain-plan", help="opt-in source-bound domain cases with verify/cover/context evidence roles")
+    parser.add_argument("--work-plan", help="source-bound ranked work items with required evidence-backed checks")
+    parser.add_argument("--review-goal", choices=("budget", "coverage"), help="work plan stopping goal (default: budget)")
+    parser.add_argument("--coverage-target", help="comma-separated work item IDs to complete; coverage defaults to all declared items")
+    parser.add_argument("--cost-budget", help="configured-rate USD admission allowance for managed work; not an invoice cap")
+    parser.add_argument("--cost-rates", help="model-bound token rates for cost reporting; add --cost-budget only to enforce an estimated allowance")
+    parser.add_argument("--domain-session-mode", choices=("shared", "isolated"), default="shared",
+                        help="share a thread across domain cases, or isolate cases while retaining the same evidence plan")
+    parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
+    parser.add_argument("--max-calls", type=int, default=40, help="shared provider-call ceiling for Value and work goals")
+    parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")
+    parser.add_argument("--admission-seconds", type=int, default=1200, help="Value new-call admission window; active work can drain")
+    parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
+    parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
     parser.add_argument("--second-pass", choices=("off", "fast", "full"), default="off", help="optional guided evidence/trace repair or independent review")
-    parser.add_argument("--second-pass-scope", default="all", help="all or comma-separated issues,dismissals,pending from the first pass; filter before bundling")
+    parser.add_argument("--second-pass-scope", default="all", help="eligible verdict classes: all or issues,dismissals,pending; Fast then automatically narrows this pool")
+    parser.add_argument("--fast-max-claims", type=int, default=second_pass.FAST_MAX_CLAIMS,
+                        help="lower Fast's claim cap (1-20); Fast also selects at most 25%% of the eligible pool, rounded up")
     parser.add_argument("--first-pass", help="completed worker attempt to review instead of buying a new first pass")
     parser.add_argument("--second-pass-rates", help="optional JSON model token rates for first/second/combined price accounting")
     parser.add_argument("--artifact-root")
@@ -2580,14 +2829,20 @@ def main():
     parser.add_argument("--research-queries", type=int)
     parser.add_argument("--research-bytes", type=int)
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
+    parser.add_argument("--question-routing", action="store_true", help="work goals only: routine profile answers explicit source_fact checks; expert owns security decisions")
+    parser.add_argument("--fact-audit-policy", help="optional bounded factual audit selection; uses the bound owner and original remaining allowance")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
+    parser.add_argument("--resolve-checks", help="resolve named reopened/unresolved work checks from --resume-from under its original allowance")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
+    parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
     parser.add_argument("--expert-workers", type=int, default=1)
     parser.add_argument("--expert-review-ids", help="route these exact IDs' bounded bundles directly to the expert")
     parser.add_argument("--source-collector-profile", choices=("routine", "expert"),
                         help="experimental raw-source collection using a bound profile; otherwise use scoped expert research")
     args = parser.parse_args()
+    if not (0 <= args.native_share <= 100 and args.max_calls > 0 and args.input_token_budget > 0 and args.admission_seconds > 0):
+        parser.error("native share must be 0..100 and whole-review budgets must be positive")
     if not ((args.research_rounds is None or 0 <= args.research_rounds <= 10)
             and (args.research_queries is None or 0 <= args.research_queries <= 100)
             and (args.research_bytes is None or 1 <= args.research_bytes <= 8 * 1024 * 1024)
@@ -2597,8 +2852,12 @@ def main():
     summary = {"status": result["status"], "generation": result["generation"], "directory": args.output}
     if "second_pass" in result:
         summary["second_pass"] = result["second_pass"]
+    if "review_options" in result:
+        summary["review_options"] = result["review_options"]
+    if "work_goal" in result:
+        summary["work_goal"] = result["work_goal"]
     print(json.dumps(summary))
-    return 0 if result["status"] in ("admitted", "source_validated") else 2
+    return 0 if result["status"] in ("admitted", "source_validated", "selection_required") else 2
 
 
 if __name__ == "__main__":

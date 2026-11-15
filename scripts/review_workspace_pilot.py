@@ -167,7 +167,7 @@ def prepare(args):
     package = root / "package"
     (package / "scripts").mkdir(parents=True)
     product = Path(__file__).resolve().parents[1]
-    for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_hybrid.py","review_routing.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
+    for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_hybrid.py","review_routing.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_evidence.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
                  "review_worker.py","review_context.py","review_source_profile.py","review_orchestration.py","review_trace.py","review_export.py"):
         shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",
@@ -335,9 +335,9 @@ def run_control(root):
     command = read(opts["command"])
     original = worker.execute
     parity = read(root / "initial-evidence.json")
-    def execute(argv,cwd,env,timeout,payload=None):
+    def execute(argv,cwd,env,timeout,payload=None,**kwargs):
         if argv != command:
-            return original(argv,cwd,env,timeout,payload)
+            return original(argv,cwd,env,timeout,payload,**kwargs)
         usage = metrics(output,budget["reserved_calls"])
         enforce_usage(usage,design["per_arm_experiment"])
         if usage["observed_calls"] != budget["reserved_calls"]:
@@ -369,7 +369,7 @@ def run_control(root):
         budget["reserved_calls"] += 1
         budget["bundle_calls"][batch_key] = budget["bundle_calls"].get(batch_key,0)+1
         worker.write(root / "control/budget.json",{**budget,"usage":usage,"received_query_bytes":received})
-        value = original(argv,cwd,env,min(timeout,remaining),json.dumps(task))
+        value = original(argv,cwd,env,min(timeout,remaining),json.dumps(task),**kwargs)
         units = worker.research_cost(value.get("research",[]))
         if budget["queries"] + units > design["per_arm_limits"]["queries"]:
             raise ValueError("ordinary aggregate query ceiling reached")

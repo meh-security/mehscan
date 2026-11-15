@@ -14,6 +14,18 @@ import review_context as context
 
 
 class Context(unittest.TestCase):
+    def test_joined_excerpt_can_end_on_an_empty_source_line(self):
+        (self.root / "blank.js").write_bytes(b"before\r\ncontrol();\r\n\r\nafter\r\n")
+        result = {"operation": "prepared_source", "results": {
+            "path": "blank.js", "start_line": 2, "end_line": 3, "text": "control();\n"}}
+        window = context.delivered_source_window(self.root, result)
+        self.assertEqual((window["start_line"], window["end_line"], window["text"]),
+                         (2, 3, "control();\n"))
+        # An extra declared line is accepted only when original bytes match.
+        result["results"].update(start_line=1, end_line=2, text="before\n")
+        with self.assertRaisesRegex(ValueError, "inconsistent line coordinates"):
+            context.delivered_source_window(self.root, result)
+
     def test_delivered_evidence_is_language_independent_and_hashes_exact_bytes(self):
         # Parser support and metadata extensions do not change evidence checks.
         for suffix in ("c", "cpp", "h", "cs", "java", "kt", "js", "ts", "tsx",

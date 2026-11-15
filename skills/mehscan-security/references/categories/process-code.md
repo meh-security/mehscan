@@ -15,6 +15,11 @@ For evaluators, locate the exact code operand and any template, stored field or
 file that supplies it. A numeric expression with a closed operator alphabet can
 be clean even though eval is present. A sandbox label does not establish isolation;
 inspect the exposed authority only when sandbox escape is the selected claim.
+For persisted operands, inspect the write and model setter as well as the read:
+identify what the actual sanitizer preserves, then compare that output with the
+evaluator's grammar. HTML filtering is not a JavaScript grammar restriction.
+Keep the writer's sanitization branch and the consumer's activation condition
+together; an enabled conditional path need not apply to every deployment.
 
 The interpreted-input unsafe-construction policy distinguishes source-supported
 shell/code construction from proven remote exploitation. State unresolved caller

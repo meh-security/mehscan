@@ -13,7 +13,8 @@ It runs locally without building or executing your application. Use the CLI on i
 - Investigate serializer, deserializer and XML parser implementations with language-specific source checks.
 - Match a Rust lockfile against a local copy of the RustSec advisory database.
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
-- Add an optional second pass to check review quality or reassess selected results.
+- Group related findings while preserving affected callers and conditions.
+- Automatically select a bounded Fast follow-up, or audit all eligible results with Full.
 - Export JSON, SARIF and Markdown reports.
 
 Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
@@ -73,9 +74,29 @@ See the [Changed review guide](skills/mehscan-security/references/changed-review
 
 Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your coding agent to review a repository or a change. The skill uses your agent's model and Mehscan's source lookup tools to investigate the relevant code.
 
-**Value** is the default review mode. It prioritizes useful security leads and keeps deferred work visible. **Comprehensive** uses conservative eligibility and reviews every admitted item, including broader unresolved security questions. Findings include supporting evidence; unresolved items identify what still needs investigation. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the scope of each mode.
+**Value** is the default review mode: your agent pursues the highest-severity findings with credible source support first, across native candidates and source areas the scanner does not cover. It ranks plausible impact, exposure, control evidence and the next deciding check within a shared budget. Native leads remain accounted for when the budget cannot finish them. **Comprehensive** explicitly extends the admitted scope systematically, reusing completed work. Findings retain actor, effect and applicability conditions; unresolved items name the deciding missing fact. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the limits of each mode.
 
-An optional [second pass](docs/review-worker.md#optional-second-pass) can check all results or just findings, dismissals or unresolved items. **Fast** checks the evidence and investigation trace, investigates specific gaps and corrects results where the evidence supports it. **Full** adds an independent assessment for deeper audits. Second pass is off by default; neither mode certifies a result as correct.
+For new Value reviews, use [budget and coverage goals](skills/mehscan-security/references/work-goals.md), normally with the budget goal. A source-bound work plan ranks individual investigations and leads progress reports with completed and remaining items, unresolved risks and unclassified areas. Cost is informational by default when rates are configured; a USD allowance applies only when explicitly requested. Coverage goals remain incomplete until the selected checks close. These are managed-work estimates and scoped completion targets, not invoice caps or whole-application safety guarantees. Existing native-only, explicitly mixed and workspace/hybrid workflows remain available.
+
+Optional [question delegation](skills/mehscan-security/references/work-goals.md#question-delegation) uses a cheaper worker for explicitly scoped source facts and keeps security decisions with a capable review owner. Purely factual items can finish without an owner-model call and are counted separately from security cases. Answers retain citations, conditions and missing facts; the controller records each phase separately.
+
+Saved reviews support [scoped correction](docs/review-worker.md#resolve-named-source-checks) of named unresolved checks, reusing evidence and the original allowance. Owner qualifications and rejections remain attributed; native verdict changes use the normal follow-up admission path.
+
+The first pass supports scan-assisted and AI-only review. Bounded source orientation selects additional discovery operations; it never falls back to reviewing all source. The review reports native candidate completion, source coverage, unresolved questions, budget deferrals and follow-up options, then stops unless another pass was requested.
+
+An opt-in [domain review](docs/review-worker.md#opt-in-domain-review) groups related cases under a reviewer that can reuse their shared source context. A bound domain plan separates concrete claims requiring verification, operation markers guiding flow coverage, and supporting facts. Exact candidate triage retains individual verdicts; coverage markers do not become safe decisions merely because their domain was reviewed.
+
+Seed/performance tooling and declaration-only C# interfaces/enums are available for cross-file lookups but omitted from standalone assignments by default. Use `--include-supporting-source` to include them explicitly; scope exclusions are reported separately from reviewed coverage.
+
+Schema-only migrations, generated migration snapshots and SQL files also remain available for targeted lookups. Reviewers follow relevant SQL definitions from their callers; file bodies are not preloaded as precautionary context. Executable migration logic remains eligible.
+
+Passive C# models, settings, constants and schema-only EF mappings use the same lookup approach. Custom validation, converters, executable accessors and other behavior stay eligible; model folders are not excluded wholesale.
+
+Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
+
+An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.
+
+For a named flow or coverage gap, request a [scoped threat review](skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up). It reuses cited source and follows the deciding cross-file relationships within the requested budget. Already requested follow-ups proceed without another confirmation.
 
 For manual bundle review:
 
@@ -102,7 +123,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [0.13.0 release notes](docs/release-notes-v0.13.0.md)
+- [0.14.0 release notes](docs/release-notes-v0.14.0.md)
 
 Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
 

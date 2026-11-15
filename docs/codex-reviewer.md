@@ -17,10 +17,12 @@ auxiliary tables. Changing this option requires a fresh conversation. Existing
 execution traces remain enabled in either mode.
 
 For another assessment, use the worker's optional [Fast or Full second pass](review-worker.md#optional-second-pass),
-independently of `boundary_checks`. Fast audits the supplied proof and lookup
-trace without research; Full makes a blind assessment and compares the proofs.
-The same configured model can run both passes. Scope can be limited to findings,
-dismissals or unresolved items. Leave second pass off for ordinary single-pass
+independently of `boundary_checks`. Fast automatically selects a bounded queue,
+audits supplied proof and lookup traces, and researches concrete gaps within its
+allowance. Full makes a blind assessment and compares proofs for every eligible
+claim. The same configured model can run both passes. Scope can be limited to
+findings, dismissals or unresolved items; Fast still narrows that pool automatically.
+Leave second pass off for ordinary single-pass
 review; it is not an adapter setting or a guarantee of correct training labels.
 
 The adapter defaults to `"schema_mode": "stable"` and

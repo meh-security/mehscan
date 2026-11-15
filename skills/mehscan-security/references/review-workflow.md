@@ -93,7 +93,9 @@ verdicts.
    not make disclosure of its sensitive fields safe.
    If another route lets a caller acquire a role or state required by this
    operation, review that bypass under its own operation; do not copy the
-   bypass verdict onto every action with the role or state guard.
+   bypass verdict onto every action with the role or state guard. Include its
+   supported influence when it changes this selected claim, while preserving
+   the separate root cause and any effective local predicate.
    If this same evidence walk exposes a distinct, consequential operation
    absent from the selected question, put one exact-source question in
    `reviewer_origin_leads`. Keep it separate from this ID's decision; do not
@@ -108,7 +110,10 @@ verdicts.
    queue that exact ID instead.
    - `issue`: show the unsafe operation and missing or ineffective control.
      Unsafe SQL, shell, or code construction can remain an issue with lower
-     confidence when reachability is uncertain; state that uncertainty.
+     confidence when reachability is uncertain; state that uncertainty and keep
+     deployed exposure separate. For invocation-dependent application claims,
+     follow the shared [runtime binding checks](runtime-review.md#effective-api-and-runtime-binding)
+     rather than assuming a legacy or optional registration is active.
    - `not_issue`: show how a concrete control constrains this value on the
      reachable branch and in the sink's interpretation context. A function
      name or fixed view name alone is not proof.

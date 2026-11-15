@@ -67,6 +67,20 @@ class SourceCoverageTests(unittest.TestCase):
 
 
 class SourceCitationTests(unittest.TestCase):
+    def test_claim_repair_locator_uses_the_same_bound_source_handles(self):
+        self.task["followup_selection"] = True
+        value={"root":{"source_ref":"f2","line":23},"property":"resource_bounds",
+            "applicability":"local_contract","basis":"The supplied implementation enforces this bound.",
+            "kind":"security_contract","impact":"conditional","conditions":"The supported optional decoder mode."}
+        for assessed in [self.reply["draft"]["results"][0],self.reply["draft"]["proposals"][0]["assessment"]]:
+            assessed.update(claim_context=copy.deepcopy(value),followup=None)
+        original=copy.deepcopy(self.reply)
+        Draft202012Validator(codex_protocol.build_schema(self.task)).validate(self.reply)
+        draft=source_review_protocol.envelope(self.reply,self.task)["draft"]
+        for assessed in [draft["results"][0],draft["proposals"][0]["assessment"]]:
+            self.assertEqual(assessed["claim_context"]["root"],{"path":"helper.cs","start_line":23,"end_line":23})
+        self.assertEqual(self.reply,original)
+
     def setUp(self):
         SourceCoverageTests.setUp(self)
         self.task["research"]["citation_windows"] = {

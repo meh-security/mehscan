@@ -58,6 +58,13 @@ Check these invariants:
   request-derived value already establishes the weakness.
 - Evidence and candidate counts are not presented as vulnerability totals.
   Markdown counts reconcile with canonical JSON when it is present.
+- Applicability distinguishes active registered paths, supported optional/library
+  contracts, dormant/incompatible integrations and unresolved bindings. Local
+  unsafe constructions and configuration exposure retain their actual reaching
+  conditions; a severe application exploit needs the claimed protected effect
+  and a compatible actor/path. Do not demand a deployed consumer for a supported
+  library security guarantee. First-pass annotations do not override a later
+  repaired proof.
 - Source availability describes conditional compilation/build inclusion, not
   runtime execution frequency. `availability.state: always` can coexist with
   a runtime `if` branch; it does not say that the operation executes on every
@@ -72,6 +79,9 @@ Check these invariants:
   and decision metadata.
   When canonical aggregation merges several source relationships at one sink,
   retain every affected operand in the narrative, not only the first summary.
+  Proposed finding-groups sidecars preserve every member and caller condition;
+  shared roots, file names or CWE labels do not certify sibling verdicts or a
+  unique vulnerability count. Flag contradictory conditions within a group.
 
 ## Report the quality result
 

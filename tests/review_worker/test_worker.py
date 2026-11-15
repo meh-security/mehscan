@@ -430,7 +430,8 @@ if task["kind"]=="source_review":
     packet=json.loads(Path(task["evidence_packet"]).read_text())
     print(json.dumps({"draft":{"results":[{"review_id":i,"decision":"issue","confidence":"medium",
         "summary":"Synthetic operation issue for controller acceptance.","reason":"The current code passes request.query.code into eval.",
-        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for i in task["review_ids"]],
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
+        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}} for i in task["review_ids"]],
         "proposals":[],"coverage":[{**{k:w[k] for k in ("path","start_line","end_line")},
             "status":"examined","summary":"Inspected assigned source."} for w in packet["primary"]["windows"]]}}))
     sys.exit()
@@ -441,7 +442,8 @@ if task["kind"]=="change_pass":
 else:
     print(json.dumps({"results":[{"review_id":review_id,"decision":"issue","confidence":"medium",
         "summary":"Synthetic operation issue for controller acceptance.","reason":"The current code passes request.query.code into eval.",
-        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for review_id in task["review_ids"]]}))
+        "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],
+        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}} for review_id in task["review_ids"]]}))
 ''')
         self.command = self.base / "reviewer-command.json"
         self.command.write_text(json.dumps([sys.executable, str(self.reviewer)]))
@@ -476,13 +478,13 @@ else:
         self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
             "--source-root", str(self.root), "--generation", str(claim["generation"]), "--owner", self.owner]
 
-    def invoke_native_component(self, name="worker"):
+    def invoke_native_component(self, name="worker", phase="all"):
         """Exercise Changed/native context sharing after the source-stage boundary."""
         from argparse import Namespace
         args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
             store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
             reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
-            output=str(self.base / name), provider_contract=None, artifact_root=None, phase="all",
+            output=str(self.base / name), provider_contract=None, artifact_root=None, phase=phase,
             supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
             research_rounds=None, research_queries=None, research_bytes=None, workers=3, query_workers=2,
             expert_command=None, expert_workers=1, expert_review_ids=None, resume_from=None)
@@ -539,6 +541,87 @@ print(json.dumps(value))
         audits=[j for j in jobs if j["binding"]["role"]=="second_pass_fast"]
         self.assertTrue(audits)
         self.assertTrue(all(j["calls"]==1 and j["queries"]==0 and j["fast_phase"]=="complete" for j in audits))
+
+    def prepare_auto_followup_claims(self):
+        (self.root / "app.js").write_text("function first(request) { eval(request.query.one); }\n"
+                                          "function second(request) { eval(request.query.two); }\n")
+        self.inventory, self.store, self.run = [self.base / name for name in ("auto-inventory", "auto-state", "auto-run")]
+        self.native("investigate", "review-inventory", str(self.root), "--repository-key", "evaluation:worker", "--output", str(self.inventory))
+        claim=self.native("state", "claim", "--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--attempt-id", "auto", "--expected-generation", "0", "--operation-key", "claim")
+        self.claim.write_text(json.dumps(claim))
+        self.common=["--store",str(self.store),"--stream","local-review","--inventory",str(self.inventory),
+            "--source-root",str(self.root),"--generation","1","--owner",claim["result"]["owner"]]
+        plan=self.native("state","plan-template","--inventory",str(self.inventory),"--source-root",str(self.root),
+            "--policy","comprehensive","--skill-root",str(ROOT/"skills/mehscan-security"))
+        self.ids=plan["selected_review_ids"]
+        self.assertEqual(len(self.ids),2)
+        path=self.base/"auto-plan.json";path.write_text(json.dumps(plan))
+        self.native("state","plan",*self.common,"--input",str(path),"--operation-key","plan")
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        self.native("investigate","review-bundles",str(self.root),"--inventory",str(self.inventory),
+            "--review-ids",",".join(self.ids),"--output",str(self.run))
+
+    def test_positive_context_selects_fast_without_a_followup_nomination(self):
+        metadata={"root":{"path":"app.js","start_line":1,"end_line":1},"property":"input_interpretation",
+            "applicability":"unresolved","basis":"The callable is shown but registration needs checking.",
+            "kind":"application_path","impact":"conditional","conditions":"An untrusted caller reaches the operation."}
+        original=',\n        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}'
+        self.assertIn(original,self.reviewer.read_text())
+        self.reviewer.write_text(self.reviewer.read_text().replace(original,',\n        "claim_context":'+json.dumps(metadata)))
+        self.second_pass_provider(objection=False)
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["checked"],1)
+        self.assertEqual(summary["selection"]["selected"][0]["selection_source"],"positive_proof_signal")
+        report=json.loads((output/"findings.json").read_text())
+        self.assertNotIn("claim_context",report["decision_records"][0]["response"])
+        grouped=json.loads((output/"finding-groups.json").read_text())
+        self.assertEqual(grouped["claim_count"],len(report["decision_records"]))
+        self.assertEqual(grouped["groups"][0]["members"][0]["first_pass_context"]["root"],metadata["root"])
+
+    def test_auto_fast_rebundles_only_selected_claim_and_preserves_capped_sibling(self):
+        self.prepare_auto_followup_claims()
+        self.second_pass_provider()
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual((summary["targeted"],summary["outside_scope"]),(1,1))
+        self.assertEqual(len(summary["selection"]["deferred"]),1)
+        unselected=next(r for r in summary["results"] if r.get("selection_reason")=="fast_cap")
+        self.assertEqual(unselected["first_decision"],unselected["final_decision"])
+        self.assertEqual(unselected["stages"],[])
+        jobs=[json.loads(p.read_text()) for p in (output/"jobs").glob("*.json")]
+        audited={rid for j in jobs if j["binding"]["role"]=="second_pass_fast" for rid in j["binding"]["review_ids"]}
+        self.assertEqual(len(audited),1)
+        self.assertNotIn(unselected["review_id"],audited)
+
+    def test_full_does_not_apply_automatic_fast_cap(self):
+        self.prepare_auto_followup_claims()
+        self.second_pass_provider()
+        value=self.invoke(extra=["--phase","native","--second-pass","full"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual((summary["targeted"],summary["checked"]),(2,2))
+        self.assertNotIn("selection",summary)
+        self.assertEqual(summary["outcomes"]["corrected"],2)
+
+    def test_no_nominations_stop_after_first_pass_even_when_fast_is_requested(self):
+        # A legacy adapter has no scheduling signal; it must not trigger an all-claim fallback.
+        self.reviewer.write_text(self.reviewer.read_text().replace(
+            ',\n        "followup":{"reason":"control_applicability","question":"Does the registered caller apply the global guard?"}', ''))
+        self.second_pass_provider(fail=True)
+        value=self.invoke(extra=["--phase","native","--second-pass","fast"])
+        self.assertEqual(value.returncode,0,value.stdout+value.stderr)
+        output=self.base/"worker"
+        summary=json.loads((output/"second-pass.json").read_text())
+        self.assertEqual(summary["targeted"],0)
+        self.assertEqual(summary["accounting"]["second_pass"]["calls"],0)
+        self.assertTrue((output/"review-options.md").is_file())
 
     def test_fast_audit_exhaustion_preserves_the_deciding_question(self):
         plan=self.native("state","plan-template","--inventory",str(self.inventory),
@@ -865,7 +948,7 @@ else:
 
     def tiered_provider(self, calls, conflict=False, reject_unverified=False):
         original = worker.execute
-        def execute(command, cwd, env, timeout, payload=None):
+        def execute(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 packet = json.loads(Path(task["evidence_packet"]).read_text())
@@ -891,7 +974,7 @@ else:
                 path.write_text(json.dumps(receipt))
                 try:
                     with self.assertRaises(worker.CommandFailure) as rejected:
-                        original(command, cwd, env, timeout, payload)
+                        original(command, cwd, env, timeout, payload, **kwargs)
                     self.assertIn("two independent", rejected.exception.stderr)
                 finally:
                     path.write_bytes(saved)
@@ -905,23 +988,23 @@ else:
                 path.write_text(json.dumps(receipt))
                 try:
                     with self.assertRaises(worker.CommandFailure):
-                        original(command, cwd, env, timeout, payload)
+                        original(command, cwd, env, timeout, payload, **kwargs)
                 finally:
                     path.write_bytes(saved)
                     stage.write_bytes(stage_bytes)
-            return original(command, cwd, env, timeout, payload)
+            return original(command, cwd, env, timeout, payload, **kwargs)
         return execute
 
     def quality_provider(self, calls, reopen=False, interrupt_qa=False):
         base = self.tiered_provider(calls, conflict=True)
         original, qa_turns, interrupted = worker.execute, [], []
         qa_id = worker.context.digest(["native_bundle", self.ids, "expert", "final_qa"])
-        def execute(command, cwd, env, timeout, payload=None):
+        def execute(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 role = task["review_role"]
                 if role in ("investigator", "verification"):
-                    return base(command, cwd, env, timeout, payload)
+                    return base(command, cwd, env, timeout, payload, **kwargs)
                 calls.append((task["profile"], role))
                 packet = json.loads(Path(task["evidence_packet"]).read_text())
                 self.assertIn(role, [s for row in packet["contract"]["sources"] for s in row["sections"]])
@@ -946,7 +1029,7 @@ else:
                     self.assertEqual(packet["stage_context"]["baseline"]["results"][0]["decision"], "issue")
                     self.assertIn("related_reviews", packet["stage_context"])
                 return response
-            result = original(command, cwd, env, timeout, payload)
+            result = original(command, cwd, env, timeout, payload, **kwargs)
             if interrupt_qa and command[1:3] == ["investigate", "review-bundle-finalize"] and not interrupted:
                 target = Path(command[command.index("--output") + 1])
                 if target.name == qa_id + ".json":
@@ -958,9 +1041,9 @@ else:
     def test_stage_exhaustion_reuses_source_and_expert_resolution_is_terminal(self):
         args = self.configure_tiered(run_calls=6, quality=True, research_rounds=1)
         original, calls = worker.execute, []
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command, cwd, env, timeout, payload)
+                return original(command, cwd, env, timeout, payload, **kwargs)
             task = json.loads(payload)
             role = task["review_role"]
             calls.append((task["profile"], role))
@@ -1033,9 +1116,9 @@ else:
         args.source_collector_profile = "routine"
         original, calls, interrupted = worker.execute, [], []
         first_caller, caller_lock, research_started = [], threading.Lock(), threading.Event()
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command,cwd,env,timeout,payload)
+                return original(command,cwd,env,timeout,payload,**kwargs)
             task = json.loads(payload)
             packet = json.loads(Path(task["evidence_packet"]).read_text())
             role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
@@ -1117,9 +1200,9 @@ else:
     def test_native_citation_feedback_repairs_once_without_an_expert_or_budget_reset(self):
         args = self.configure_tiered(run_calls=3,quality=True,research_rounds=2,audit_percent=0,final_qa=False)
         original, calls = worker.execute, []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
-                return original(command,cwd,env,timeout,payload)
+                return original(command,cwd,env,timeout,payload,**kwargs)
             task = json.loads(payload)
             calls.append(task["profile"])
             if len(calls) == 1:
@@ -1158,7 +1241,7 @@ else:
             research_bytes=262144,workers=1,query_workers=1,expert_command=None,expert_workers=1,
             expert_review_ids=None,resume_from=None,source_collector_profile=None)
         original, calls, interrupted = worker.execute, [], []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if command == [sys.executable,str(self.reviewer)]:
                 task=json.loads(payload);calls.append(task)
                 if len(calls)>1:
@@ -1188,7 +1271,7 @@ else:
             if interrupt and not interrupted and command[1:3]==["investigate","review-bundle-finalize"]:
                 interrupted.append(True)
                 raise worker.CommandFailure(1,"injected interruption after saving the candidate")
-            return original(command,cwd,env,timeout,payload)
+            return original(command,cwd,env,timeout,payload,**kwargs)
         with patch.object(worker,"execute",side_effect=provider):result=worker.run(args)
         if interrupt:
             self.assertEqual(result["status"],"incomplete",result)
@@ -1234,7 +1317,7 @@ else:
     def run_revalidation_case(self, reopening=False, interrupt=False):
         args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)
         original, calls, interrupted = worker.execute, [], []
-        def provider(command, cwd, env, timeout, payload=None):
+        def provider(command, cwd, env, timeout, payload=None, **kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload)
                 role, fresh = task["review_role"], task.get("assessment_cycle") == "revalidation"
@@ -1277,9 +1360,9 @@ else:
                     else:detail["reason"] = "new_source_verdict" if reopening else "quality_reopening"
                     path.write_text(json.dumps(receipt))
                     try:
-                        with self.assertRaises(worker.CommandFailure):original(command,cwd,env,timeout,payload)
+                        with self.assertRaises(worker.CommandFailure):original(command,cwd,env,timeout,payload,**kwargs)
                     finally:path.write_bytes(saved)
-            result = original(command,cwd,env,timeout,payload)
+            result = original(command,cwd,env,timeout,payload,**kwargs)
             if interrupt and not interrupted and command[1:3] == ["investigate","review-bundle-finalize"]:
                 expected = worker.context.digest(["native_bundle",self.ids,"expert","verification","revalidation"])
                 if Path(command[command.index("--output")+1]).name == expected+".json":
@@ -1314,7 +1397,7 @@ else:
     def test_pending_only_quality_skips_qa_without_fabricating_an_approval(self):
         args = self.configure_tiered(run_calls=4, quality=True)
         original, calls = worker.execute, []
-        def provider(command,cwd,env,timeout,payload=None):
+        def provider(command,cwd,env,timeout,payload=None,**kwargs):
             if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
                 task = json.loads(payload); calls.append(task["review_role"])
                 return {"draft":{"results":[{"review_id":identity,"decision":"needs_review","confidence":"low",
@@ -1322,7 +1405,7 @@ else:
                     "checks":["Confirm the external authority."],"blockers":[],
                     "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for identity in self.ids]},
                     "progress":[],"working_chain":"","routing":[{"review_id":identity,"reason":"external_required"} for identity in self.ids]}
-            return original(command,cwd,env,timeout,payload)
+            return original(command,cwd,env,timeout,payload,**kwargs)
         with patch.object(worker,"execute",side_effect=provider):result = worker.run(args)
         self.assertEqual(result["status"],"admitted",result)
         self.assertEqual(calls,["investigator"])
@@ -1336,7 +1419,7 @@ else:
         calls = []
         provider = self.quality_provider(calls)
         original = worker.execute
-        def guarded(command, cwd, env, timeout, payload=None):
+        def guarded(command, cwd, env, timeout, payload=None, **kwargs):
             if command[1:3] == ["state", "record"]:
                 path = Path(command[command.index("--review-execution") + 1])
                 saved = path.read_bytes()
@@ -1352,7 +1435,7 @@ else:
                     path.write_text(json.dumps(receipt))
                     try:
                         with self.assertRaises(worker.CommandFailure) as rejected:
-                            original(command, cwd, env, timeout, payload)
+                            original(command, cwd, env, timeout, payload, **kwargs)
                         self.assertIn(diagnostic, rejected.exception.stderr)
                     finally:
                         path.write_bytes(saved)
@@ -1899,6 +1982,17 @@ print(json.dumps({'results':results}))
         finally:
             worker._cancelled = False
 
+    def test_command_output_limit_allows_larger_trusted_native_json(self):
+        script = self.base / "large_output.py"
+        script.write_text('import json; print(json.dumps({"value": "x" * 64}))\n')
+        command = [sys.executable, str(script)]
+        self.assertEqual(worker.REVIEWER_OUTPUT_LIMIT, 8 * 1024 * 1024)
+        self.assertEqual(worker.NATIVE_OUTPUT_LIMIT, 64 * 1024 * 1024)
+        with self.assertRaisesRegex(ValueError, "bounded intake"):
+            worker.execute(command, self.base, dict(os.environ), 5, output_limit=32)
+        self.assertEqual(worker.execute(command, self.base, dict(os.environ), 5,
+                                        output_limit=128), {"value": "x" * 64})
+
     def test_pending_native_answers_are_registered_without_resolving_security(self):
         text = self.reviewer.read_text()
         text = text.replace('"decision":"issue"', '"decision":"needs_review"')
@@ -2059,6 +2153,33 @@ else:
         self.assertEqual(row["result"]["text_lookup"]["results"][0]["lines"],[205])
         self.assertEqual(row["reserved_query_units"],2)
         self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"],2)
+
+    def test_definition_followups_use_bound_catalog_with_relocated_controller(self):
+        for text_fallback in (False, True):
+            with self.subTest(text_fallback=text_fallback):
+                if text_fallback:
+                    self.extra_source_files = {"policy.txt":"# settings\n" * 204 + "decision_helper = enabled\n"}
+                    self.setUp()
+                name, path = ("decision_helper", "policy.txt") if text_fallback else ("handle", "app.js")
+                self.research_reviewer('[{"tool":"definition","review_id":task["review_ids"][0],'
+                    '"arguments":{"name":'+json.dumps(name)+',"path":'+json.dumps(path)+',"limit":10}}]')
+                if text_fallback:
+                    self.reviewer.write_text(self.reviewer.read_text().replace(
+                        'assert "eval" in json.dumps(task["research"]["results"])',
+                        'assert "text_lookup" in json.dumps(task["research"]["results"])'))
+                relocated = self.base / "isolated/scripts/review_worker.py"
+                relocated.parent.mkdir(parents=True)
+                shutil.copytree(ROOT / "scripts", relocated.parent, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__"))
+                self.assertFalse((relocated.parents[1] / "skills").exists())
+                with patch.object(worker, "__file__", str(relocated)):
+                    result = self.invoke_native_component(phase="native")
+                self.assertEqual(result["status"], "admitted", result)
+                audit = json.loads((self.base / "worker/research.jsonl").read_text().splitlines()[0])
+                self.assertEqual(audit["reserved_query_units"], 2)
+                self.assertEqual(audit["result"]["source_complete"], not text_fallback)
+                if text_fallback:
+                    self.assertEqual(audit["result"]["text_lookup"]["results"][0]["lines"], [205])
 
     def test_query_batch_uses_one_post_fence_including_cache_hits(self):
         self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'

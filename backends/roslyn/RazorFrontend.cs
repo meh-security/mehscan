@@ -14,7 +14,7 @@ using Microsoft.CodeAnalysis.Text;
 
 // A source frontend, not a project build or a taint backend. Only the explicitly
 // selected SDK's official generator and installed framework references are loaded.
-internal static class RazorFrontend
+internal static partial class RazorFrontend
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record Input(string Path, string Text);
@@ -24,7 +24,7 @@ internal static class RazorFrontend
     private sealed record SourceRange(int Start, int End);
     private sealed record Projection(string Path, string Code, Mapping[] Mappings, Navigation[] Facts, SourceRange[] NonCode);
 
-    internal static int Run()
+    internal static int Run(bool facetsOnly = false)
     {
         try
         {
@@ -61,6 +61,8 @@ internal static class RazorFrontend
                 .OrderByDescending(p => p.Directory.Length).Select(p => p.Full).FirstOrDefault();
             var warnings = new List<string>();
             var projections = new List<Projection>();
+            var renderSites = new List<RenderSite>();
+            var renderUses = new List<RenderUse>();
             var refs = FrameworkReferences(sdk, warnings);
             var razorFiles = inputs.Where(p => p.Key.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) || p.Key.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase));
             foreach (var group in razorFiles.GroupBy(p => Owner(p.Key)))
@@ -102,6 +104,20 @@ internal static class RazorFrontend
                     new RazorOptions(projectRoot, ns, properties.GetValueOrDefault("RazorLangVersion", "Latest")));
                 driver = driver.RunGenerators(compilation);
                 var result = driver.GetRunResult();
+                var semantic = facetsOnly ? compilation.AddSyntaxTrees(result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SyntaxTree)) : null;
+                var origins = new Dictionary<SyntaxTree, string>();
+                if (facetsOnly)
+                {
+                    foreach (var tree in trees) origins[tree] = inputs[tree.FilePath].Path;
+                    foreach (var generated in result.Results.SelectMany(r => r.GeneratedSources))
+                    {
+                        var origin = generated.SyntaxTree.GetRoot().DescendantTrivia(descendIntoTrivia: true).Select(t => t.GetStructure())
+                            .OfType<PragmaChecksumDirectiveTriviaSyntax>().Select(t => Path.GetFullPath(t.File.ValueText)).FirstOrDefault(inputs.ContainsKey);
+                        if (origin != null) origins[generated.SyntaxTree] = inputs[origin].Path;
+                    }
+                    foreach (var pair in origins)
+                        renderUses.AddRange(RenderUses(pair.Key.GetRoot(), semantic!.GetSemanticModel(pair.Key), pair.Value, origins));
+                }
                 foreach (var error in result.Results.Where(r => r.Exception != null)) warnings.Add("Razor generator failed: " + error.Exception!.Message);
                 foreach (var diagnostic in result.Diagnostics.Take(24))
                 {
@@ -165,6 +181,13 @@ internal static class RazorFrontend
                     }
                     // Keep maximal exact regions; these are the only admissible source anchors.
                     var ordered = mappings.OrderBy(m => m.GeneratedStart).ThenByDescending(m => m.GeneratedEnd).ToArray();
+                    if (facetsOnly)
+                    {
+                        renderSites.AddRange(RenderSites(syntax, semantic!.GetSemanticModel(generated.SyntaxTree),
+                            mappings, inputs[primary], generatedOffsets));
+                        produced.Add(primary);
+                        continue;
+                    }
                     var regions = new List<Mapping>();
                     foreach (var mapping in ordered)
                         if (regions.Count == 0 || regions[^1].GeneratedEnd < mapping.GeneratedEnd) regions.Add(mapping);
@@ -214,7 +237,9 @@ internal static class RazorFrontend
                 }
                 foreach (var missing in group.Where(p => !produced.Contains(p.Key))) warnings.Add(missing.Value.Path + ": no exact mapped C# regions; markup-only coverage retained");
             }
-            Console.Write(JsonSerializer.Serialize(new { schema_version = "1", projections, diagnostics = warnings.Distinct().Take(128) }, Json));
+            if (facetsOnly)
+                Console.Write(JsonSerializer.Serialize(new { schema_version = "1", producer = "razor-render-interpretation/v1", render_sites = renderSites, render_uses = renderUses.Distinct(), diagnostics = warnings.Distinct().Take(128) }, Json));
+            else Console.Write(JsonSerializer.Serialize(new { schema_version = "1", projections, diagnostics = warnings.Distinct().Take(128) }, Json));
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine("Razor frontend: " + error.Message); return 2; }

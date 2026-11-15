@@ -162,17 +162,38 @@ applicable operation was found, or that relevant source was outside recognition
 or scope. It is not an AI review or a clean bill of health. Similarly, a missing
 question cannot become a model dismissal.
 
-Value review prioritizes the admitted questions and preserves explicit deferrals.
-Comprehensive uses conservative eligibility: it retains uncertain security
+Value preserves the in-scope native Value candidate queue and adds bounded
+source-driven discovery in consequential areas the scanner does not represent.
+A compact application-aware plan identifies entry points, protected effects,
+candidate concentrations, shared implementation research and uncovered areas.
+New repository Value reviews use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
+with a ranked work ledger. Coverage targets close only with explicit check answers;
+unclassified native material and source without named owners retain unknown importance.
+The existing explicitly mixed scheduler starts with an adjustable 80% native / 20% AI-discovery allocation;
+candidate count alone does not determine investigation cost. When a queue finishes,
+its unused allocation can fund remaining authorized work. AI-only review uses the
+same bounded source selection; no candidates does not trigger an all-source pass.
+See [Value planning and selection](review-worker.md#bounded-value-selection).
+
+Budget limits stop execution without removing candidates from Value membership.
+Reports distinguish reviewed and reused decisions, investigated unresolved claims,
+unstarted budget-deferred candidates and policy exclusions. Report native
+candidate completion separately from source areas examined and investigation
+groups. Shared research never transfers a verdict across different caller conditions.
+
+Comprehensive is an explicit broader scope. It retains completed Value work in
+the matching scope and systematically adds admitted relationships. Conservative
+native eligibility retains uncertain security
 relationships but can exclude an ordinary read when native source facts establish
 its local provenance without an identified consequential relationship. Unresolved
 path provenance, observed runtime environment mutation or a connected
 security-sensitive effect keeps the question eligible. An exclusion does not
 establish content trust or deployment authority. Exclusions are visible scope
-decisions, not dismissals; raw scan evidence and Value IDs remain available. The
-two queues need not be strict subsets of one another.
+decisions, not dismissals; raw scan evidence and Value IDs remain available.
+Native profile hints can differ without discarding existing reviewed facts.
 
-Comprehensive reviews every admitted question; it does not add missing language
+Comprehensive reviews every admitted question within the authorized scope;
+ordinary API occurrences do not each require a verdict. It does not add missing language
 semantics or reopen excluded source. Findings, dismissals and unresolved checks
 are scoped to the exact operation and conditions reviewed. Keep a deciding
 missing caller, policy, helper or effect as a follow-up question rather than

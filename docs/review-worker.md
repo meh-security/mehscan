@@ -10,13 +10,48 @@ a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
 
-The default worker phase (`all`) reviews the requested production-source scope.
-It supplies bounded original-source assignments alongside relevant native questions,
-including files with no scanner candidates. The reviewer can assess known questions
-and propose additional consequential relationships in the same conversation.
+For a source-bound ranked backlog with a spending allowance or explicit checks to
+finish, use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
+and `--work-plan FILE`. Work goals preserve required check identities, distinguish
+potential-impact priority from verified severity, and report remaining work under
+`source-review/work-ledger.json` and `remaining-work.md`. The default instructions
+below describe the existing mixed source-selection path. Both paths retain native
+SQL/control facts and source-proof validation.
+
+Work plans support explicitly requested Fast/Full audits under their remaining
+allowance and recovery of saved source answers or native finalization.
+Later native audits inherit the bound parent allowance; they do not repeat source
+discovery. The work-goal guide describes the supported continuation boundaries.
+
+With question routing, an optional `--fact-audit-policy FILE` selects bounded
+factual-answer checks for the configured expert before owner review. It is off by
+default, protects owner completion capacity, and records audit usage separately.
+Source-backed challenges dispute the answer and reopen only recorded consumers;
+they do not automatically rewrite native verdicts. See the work-goal guide's
+[factual audit policy](../skills/mehscan-security/references/work-goals.md#optional-factual-audits).
+
+The default Value `all` phase requires a bound coverage plan before provider review.
+Without `--source-selection FILE`, it prepares a selection checkpoint and exits
+with `selection_required`, making zero AI calls. The host agent combines native
+candidate summaries with bounded source reads to prioritize native investigations
+and select a few additional AI-discovery operations. The full admitted native
+Value queue remains accounted for; a discovery-operation limit does not filter it.
+An explicit Comprehensive request reviews the broader admitted production-source
+scope. Within assigned operations, the reviewer can assess relevant native questions
+and propose additional consequential relationships in the same conversation,
+including operations with no scanner candidates.
 The controller validates original paths, hashes, ranges and inspected citations,
 assigns identities and applies the ordinary finalizer. Source validation establishes
 the cited bytes, not a vulnerability or a native flow proof.
+
+With zero selected scanner candidates, bounded source orientation can still
+select operations for an AI-only first pass. It never falls back to every source
+file. AI-discovered claims receive normal
+source-bound IDs and can enter automatic Fast or Full follow-up. The options
+report records `ai_source_only` origin and source-coverage context; scoped threat
+review can use those flows/gaps even when no AI claims are retained. No fake
+candidate is needed. An empty Fast queue makes no model call. Explicit native-only
+or candidate-scan requests retain their narrower scope.
 
 New questions and source assessments are retained under `source-review/`. The
 controller derives a new native state generation for the augmented inventory;
@@ -26,13 +61,58 @@ original source facts, keeping their attribution. Existing native local facts
 settle only their own relationship; they do not clear unrelated authority or
 workflow questions.
 
+Seed/performance tooling and declaration-only C# interfaces/enums are omitted
+from standalone source assignments by default, including their native questions.
+They remain available for targeted cross-file queries. `excluded_sources` records
+paths, reasons and affected native IDs separately from examined coverage. Add
+`--include-supporting-source` to explicitly review these files as assignments.
+Files with executable interface bodies or other implementation remain eligible.
+
+Schema-only database migrations, generated migration snapshots/designers and SQL
+files are queryable only. Custom SQL/resource calls and executable or uncertain
+migration bodies remain eligible; SQL definitions are read with the relevant
+callers rather than queued separately. The supporting-source opt-in above applies
+to seed/performance code and declaration-only C# contracts.
+
+Passive C# data shapes, default settings, constant containers and simple copy
+constructors are also omitted from standalone assignments and can be included by
+the supporting-source opt-in. Schema-only EF mappings remain lookup context.
+Classification inspects content: custom validation, converters, executable
+accessors, query filters, redaction and other behavioral implementations stay
+eligible. Reviewers inspect relevant data shapes, annotations and writable fields
+at the caller's input/output or persistence boundary; omission is not a safety verdict.
+
+The controller's `excluded_sources` registry contains only paths, reasons, affected
+native IDs, file hashes and line counts. It contains no file bodies and is not
+preloaded into reviewer packets. A scope check prevents these paths from becoming
+assignment windows. A reviewer can explicitly request a source range, definition
+or scoped search to settle a concrete question; only returned lookup evidence
+enters its context and counts against its research budget. Source reads are bounded
+to 400 lines and 64 KiB per range. Queryable-only source is not examined coverage.
+
 `source-review.json` records examined, context-limited and deferred ranges, failed
 assignments and source-stage call counts. Canonical report scope includes a coverage
 summary. Empty results do not certify a file safe. A failed assignment remains
 incomplete while successful siblings are retained; it does not trigger a replacement
 native model call. Source-stage usage contributes to total input, cache and output
-accounting. A source-stage interruption before handoff is retained for diagnosis;
-automatic continuation of those interrupted source conversations is not yet supported.
+accounting. For work plans, `--resume-from` with the unchanged original invocation
+and a new output directory retains completed factual/case results and finalizes
+saved final drafts without replaying inference. Unstarted cases or owners can use
+the original remaining allowance. Interrupted research stays incomplete with its
+saved facts; unknown dispatches fence new calls. Recovery retains the original
+budget ledger and deadlines, so the original attempt must remain available.
+Older attempts without a bound source checkpoint cannot recover before handoff.
+Resume from the latest attempt; recovery cannot fork from an already continued
+parent, and pre-handoff recovery requires the original native work to remain current.
+
+Use `--reuse-source-results PRIOR_OUTPUT` to reuse completed source assignments
+from a separate attempt after matching source, native selection, policy, provider
+and allowance bindings and revalidating their cited proofs. Reused results retain
+their prior provenance and usage; they are not new reviews under current guidance.
+Assignments overlapping interrupted or unknown-usage work remain deferred, with
+no automatic replacement call. Partial conversations are not resumed by this option.
+Repeat the option in chronological order to include multiple prior attempts.
+An exact completed recovery is revalidated before older partial status can defer it.
 
 The bundled reviewer reports coverage using controller-owned `window_ref` identities
 from `research.coverage_windows`. The adapter supplies their original paths and
@@ -51,11 +131,26 @@ missing guard. It avoids additional lookups solely to shorten quotations.
 
 Use `--phase native` for an explicitly bounded, exact-ID review without discovery,
 or `--phase change-pass` for only the existing Changed comparison. Experimental
-tiered orchestration currently requires `--phase native`. SDK-assisted Razor/Blazor
+bundle-level tiered orchestration uses `--phase native`. Source work goals also
+support optional [question delegation](../skills/mehscan-security/references/work-goals.md#question-delegation)
+with bound routine/expert profiles. SDK-assisted Razor/Blazor
 generation remains optional; ordinary AI source review needs no source generator.
 
-Use `--policy value --selection policy` for ordinary AI review. Comprehensive
-selects every admitted ID. Both use five research rounds (six total model calls),
+For an opt-in Python ORM operation pilot, add `--group-operations` with
+`--phase native`. Two to six selected IDs in the same exact native callable
+share its complete bounded source; the bundled adapter references duplicate
+excerpts instead of repeating them in the prompt. Each ID still requires its
+own result. Split jobs, ambiguous ranges and oversized callables keep ordinary
+review. Groups do not establish authorization, equivalent effects or complete
+caller coverage. The option is bound into recovery and cannot change on resume.
+This groups context within existing bundles; it does not defer candidates or
+guarantee fewer model calls or lower cost.
+
+Use `--policy value --selection policy --source-selection FILE` for ordinary
+Value review. Native priority hints define the admitted candidate queue; source
+selection identifies additional discovery operations and can rank native assignments.
+Comprehensive explicitly selects the broader admitted scope and retains applicable
+completed Value work. Both use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
 overrides available. Finish settled relationships early; deferrals remain unreviewed.
 
@@ -69,11 +164,207 @@ experimental. Manual skill use runs in the host agent and does not require this 
 See [Prepare review work](#prepare-review-work) for the ordinary setup.
 [Source preparation](#optional-source-preparation) is an optional experiment.
 
-Use one configured capable model with direct source lookups and native
+For explicitly requested domain review, use the separate
+[domain-plan path](#opt-in-domain-review). Ordinary source selection and exact-ID
+triage retain their existing membership and verdict requirements.
+
+By default, use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. Group claims only when they share the actual operation and implementation;
 a shared file or CWE alone is insufficient. The profile allowances are ceilings:
 finish settled relationships early and keep an essential unresolved fact pending.
+
+Source work goals can optionally delegate explicit factual questions through
+`--question-routing`; see [question delegation](../skills/mehscan-security/references/work-goals.md#question-delegation)
+for provider binding, check declarations and phase accounting. This is a bounded
+evidence layer, separate from native paired-verdict orchestration.
+
+When source tasks fail, successful native answers can still be finalized and
+exported. Comprehensive retains every admitted obligation; missing source answers
+remain unreviewed, with an incomplete execution status and no replacement model
+call. Partial exports validate present responses normally and do not fabricate
+verdicts for missing IDs. Source results and remaining obligations stay in the
+attempt even when later native validation fails.
+
+## Bounded Value selection
+
+Run Value's default `all` phase once without `--source-selection`. The output
+contains `source-review/plan.json`, `source-review/selection-options.json` and
+`source-review/checkpoint.json`; `worker.json` reports `selection_required`.
+This is a preparation checkpoint, not a failed provider review. An automatic
+Action Value run can stop here until a host supplies its plan, including when native
+candidates exist. The plan keeps all native Value candidates in the requested
+native/mixed queue and selects bounded additional AI discovery separately.
+
+In the host agent's current context, combine native summaries with bounded source
+reads of relevant routes, jobs, parsers or custom security controls. Record actors,
+protected effects, candidate concentrations, existing source-assignment groups,
+important uncovered areas and known scan/source limitations. Usually 4–8 focused
+reads/navigation actions suffice for initial orientation. Rank native assignments
+without treating shared source as a shared verdict. Native candidates already
+supply questions; they do not need to pass an additional discovery-signal gate.
+For additional AI discovery, select actual body evidence for a consequential question, preserving the actor,
+protected effect and suspected mismatch. Filenames, a generic question or an
+unread helper alone do not establish a signal. A clear unsafe construction or
+supported local security-contract defect can qualify without a known deployed
+actor. Sparse or empty native results still permit source-driven selection.
+If no additional useful lead emerges, the discovery list can be empty; retain the
+native queue and report the bounded source orientation. Do not preload supporting models, views or SQL, or
+build a larger backlog as a substitute for selection.
+
+Copy the exact binding and assignment IDs from the plan into JSON outside the
+source root, then supply it with `--source-selection FILE` in a new output attempt:
+
+```json
+{
+  "source_fingerprint": "EXACT_SOURCE_FINGERPRINT",
+  "source_plan_id": "EXACT_SOURCE_PLAN_ID",
+  "assignment_ids": ["EXACT_ASSIGNMENT_ID"],
+  "assignments": [{
+    "assignment_id": "EXACT_ASSIGNMENT_ID",
+    "owner_path": "src/handler.py",
+    "start_line": 20,
+    "end_line": 65,
+    "question": "Can the selected account change this protected record?",
+    "protected_effect": "Update the record's owner",
+    "area": "record authorization",
+    "reason": "The request-selected record reaches an ownership update",
+    "next_deciding_fact": "Whether the guard binds this actor to this record",
+    "signal": {
+      "kind": "source_relationship",
+      "evidence": [{"path": "src/handler.py", "start_line": 40, "end_line": 46}]
+    }
+  }]
+}
+```
+
+The ranked discovery list permits 0–6 distinct assignments; normally select a few
+source-backed operations, using fewer when no useful additional lead exists.
+Each row must match a listed assignment.
+Its owner range stays within an original assignment window. The nonempty
+`question`, `protected_effect`, `area`, `reason` and `next_deciding_fact` strings
+are bounded to 4,000 characters each. `signal.kind` is `native_candidate` or
+`source_relationship`, with 1–12 cited source ranges from the full plan.
+Bindings, ranges and structure are validated; this does not prove the signal's
+security interpretation. Give each operation one owner and reuse cited facts
+across related questions, checking caller/effect conditions separately. Optional
+`native_assignment_ids` ranks the native assignment queue and must retain all its
+assignments for native or mixed review. Omitting this field preserves native plan
+order. Discovery selection does not remove native IDs outside its owner ranges.
+If a selected discovery operation already has native questions in a mixed review,
+one native investigation handles those questions and the additional focus; it is
+not dispatched again as a separate discovery job. Every native assessment remains
+required, and its caller/effect conditions stay distinct.
+
+### Allocation and budget
+
+`--native-share 80` starts with 80% of the call allowance for native review and 20%
+for additional AI discovery. Any integer from 1 to 99 configures a mixed review;
+for example, `--native-share 33` favors AI discovery. Once a queue is empty or
+finishes, its unused allocation can fund the other queue. `--native-share 0`
+explicitly requests AI-only discovery and `--native-share 100` native-only review;
+these endpoints do not automatically schedule work from the other queue. A
+native-only plan can use empty `assignment_ids` and `assignments` lists. This
+allocation is independent of Value/Comprehensive admission and Fast/Full follow-up.
+Native evidence bundles are prepared only for investigations that start, using
+the existing native exporter and SQL/control facts. Deferred jobs do not incur
+that preparation work.
+
+Value defaults to 40 controller-managed provider calls across the planned review and
+its phases, including any provider discovery. It targets 1.5 million observed
+input tokens and reserves 100,000 input tokens for each in-flight call before
+dispatch. A separate per-call fence stops future dispatch after an observed call
+exceeds 250,000 input tokens; exceeding the reservation alone does not fence work.
+Existing ledgers retain their original per-call threshold.
+After 20 minutes it stops starting calls, drains active work and
+finalizes completed decisions. Unknown provider counters remain unknown; these
+are admission and observed-usage targets, not strict token/currency caps or
+performance guarantees. Host-agent orientation is outside the worker ledger and
+must stay bounded. Splitting operations or starting follow-up does not reset the
+shared allowance. Configure the allowance before the attempt with `--max-calls`,
+`--input-token-budget` and `--admission-seconds`. The allocation and budget schedule
+work without changing native Value membership. Reports distinguish reviewed and
+reused decisions, investigated unresolved questions, unstarted budget deferrals
+and source-policy exclusions; candidate completion and source coverage remain
+separate measures. Completed decisions retain finding groups and follow-up options
+even when the overall attempt is incomplete; those artifacts cover the completed
+subset. Explicit exact-ID work with `--phase native`, source profiles,
+compiler-assisted facts and opt-in operation grouping retain their existing paths.
+
+Comprehensive extends completed Value work within matching scope to the broader
+admitted relationships, reusing established facts and avoiding repeated template,
+model or helper discovery. It does not require a verdict for every ordinary API
+occurrence. Fast/Full second pass and scoped threat follow-up remain separate,
+explicit choices within the authorized scope and budget.
+
+## Opt-in domain review
+
+Use `--domain-plan FILE` for an application review organized into related cases.
+The plan binds the current native source plan and source fingerprint. It states
+the source-supported operation, protected effect and deciding question for each
+case, and assigns relevant native IDs to three roles:
+
+| Role | Use | Required result |
+| --- | --- | --- |
+| `verify` | A concrete possible failure supported by source evidence. Complete exploit proof is not required to investigate it. | An individual assessment for each selected verification ID, or an explicit unfinished status. |
+| `cover` | A consequential operation or security property without evidence of a specific failure. | Flow/property coverage and its limits; no automatic per-marker verdict. |
+| `context` | A supporting implementation, control or configuration fact. | Cited evidence available to the case; no standalone review job or verdict. |
+
+The initial domain path supports a fresh Value `all` phase. `--domain-plan` and
+`--source-selection` are mutually exclusive. It does not combine with source-result
+reuse, resume, `--first-pass`, a second pass, operation grouping or tiered review.
+The default native-share setting is not used as an allocation; a nondefault
+`--native-share` is rejected. Keep the ordinary source/native paths for those
+combinations. The domain manifest permits at most eight domains, eight cases per
+domain and 32 cases overall. One original source assignment belongs to one case.
+
+Unmentioned native IDs remain unclassified and unreviewed. Classification is a
+recorded planning decision, not a safety assessment. If a coverage investigation
+finds a concrete mismatch, the reviewer can propose a source-backed claim through
+ordinary validation and native finalization. A domain or shared fact never
+transfers a verdict between callers or configurations.
+
+Cases in a domain must share an actual implementation or control relationship;
+a filename, CWE or generic topic alone is insufficient. One case's result is
+sealed before the reviewer starts its next case. The domain session can retain
+its inspected evidence while case identities, source scope and citation handles
+remain independently bound. Independent domains can run in parallel under the
+existing worker limit. Exact-ID review, native SQL facts, compiler enrichment,
+source profiles and workspace-hybrid routing retain their existing paths.
+
+The controller preserves the common review contract and stable domain context,
+then appends the current case and newly obtained evidence. The Codex adapter
+resumes its bound thread; it does not expose direct Responses API cache-breakpoint
+controls. Prompt-cache reuse is measured from actual provider counters, not
+assumed from a shared topic or session. Cached input still consumes context and
+can incur provider charges. A higher cache fraction alone does not establish a
+cheaper or better review.
+
+`--domain-session-mode shared` is the default. Use `isolated` to start a separate
+provider thread for each case while retaining the same case order, evidence roles,
+controller-validated shared facts and overall budget. This option requires a
+domain plan. It permits comparing session reuse without changing the review plan;
+isolated cases can still use applicable evidence obtained by earlier cases.
+
+All domain cases and finalization use the same whole-review budget. Case changes
+do not reset it. A budget stop leaves explicit unfinished cases and coverage gaps.
+The ordinary native/AI allocation is not automatically applied to the ordered
+domain plan. Fast/Full audits remain separately requested follow-ups; an
+independent audit does not inherit the original domain conversation as its proof.
+
+See the [domain-review guide](../skills/mehscan-security/references/domain-review.md)
+for planning and the manifest format. This path is opt-in; it does not change the
+default Value/Comprehensive or candidate-triage workflow.
+
+Domain artifacts are retained under `source-review/`:
+
+| Artifact | Meaning |
+| --- | --- |
+| `domain-plan.json` | Validated domain/case membership and source bindings. |
+| `domain-progress.json` | Completed, running and unfinished cases. |
+| `lead-accounting.json` | Verification, coverage, context and unclassified native membership, separately from safe/unsafe verdicts. |
+| `domain-metrics.json` | Initial/resumed case/session usage and measured cache counters. |
+| `schedule.json` | The explicit domain schedule and shared allowance context. |
 
 ## Optional second pass
 
@@ -84,8 +375,8 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
-| `fast` | Records a proof audit, then resolves actionable objections with targeted lookups in the same conversation. Supported results finish in one call. | Keep or correct the verdict and proof, including resolving pending claims. A deciding fact that remains unavailable or beyond the allowance stays pending. |
-| `full` | A fresh source-backed assessment without the original verdict, using the normal research allowance, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
+| `fast` | Automatically selects a capped queue from first-pass proof questions, then audits and resolves actionable objections with targeted lookups. | Keep or correct selected claims; other first-pass results remain unchanged. |
+| `full` | Reviews every claim in the chosen scope through a fresh source-backed assessment without the original verdict, followed by a final-only comparison. | Keep or correct a result; unresolved disagreements stay pending. |
 
 Fast first records an audit checkpoint using the first investigation's evidence
 and trace. Supported proofs can finish in that call. Concrete objections move
@@ -118,12 +409,38 @@ results keep the deciding question alongside the reason work stopped.
 
 ### Choose which results to check
 
+During existing first-pass calls, the bundled adapter offers nullable `followup`
+metadata: a typed reason and one exact deciding question. The controller keeps
+it outside native verdict/evidence schemas. The same calls offer nullable
+`claim_context`: a cited repair point/property, applicability and binding basis,
+claim kind, impact basis and conditions. Its root must also be in the ordinary
+validated evidence. Metadata is retained in bound job checkpoints and never
+enters native verdict schemas. Source proposals receive the same metadata
+after their keys map to admitted IDs.
+An invalid advisory annotation is omitted and recorded in job checkpoints and
+the grouped report; it does not discard otherwise source-valid review work.
+
+Fast prioritizes positive proof signals from explicit activation/impact conflicts
+or severe conditional local/optional claims, then concrete conflicting-evidence,
+control-applicability and missing-local-evidence nominations, then assessed
+severity. These are targeted audit questions, not inferred false-positive labels.
+It selects one representative per explicit repair point before repeated claims;
+unselected siblings remain unaudited. Pending status or low confidence alone is insufficient. External/human
+blockers are excluded. These are scheduling hypotheses, not detected proof errors.
+
+Fast selects at most 25% of eligible claims, rounded up, with a maximum of 20.
+Lower the maximum with `--fast-max-claims N` (1–20). It makes no selection-model
+call, never expands an empty queue to all claims and records cap/shared-root deferrals.
+Full applies no automatic cap. Older/custom reviewers without nomination or claim-context metadata
+remain supported; they produce no automatic Fast targets.
+
 `--second-pass-scope` selects decisions from the first pass, within the chosen
-work package:
+work package. This defines Fast's eligible pool; automatic selection then narrows
+it. Full checks all members of the pool:
 
 | Scope | First-pass decision |
 | --- | --- |
-| `all` (default) | Every selected claim, including dismissals and unresolved items. |
+| `all` (default) | All verdict classes are eligible, including dismissals and unresolved items. |
 | `issues` | Reported findings (`issue`). |
 | `dismissals` | Dismissed candidates (`not_issue`). |
 | `pending` | Unresolved claims (`needs_review`). |
@@ -137,12 +454,28 @@ The summary separates all first-pass claims, targeted claims and checked claims.
 An empty target scope makes no second-pass model call. Completion applies to the
 requested scope, not every candidate in the application.
 
-For a first review followed immediately by a Fast check of findings, add these
+For a first review followed immediately by automatic Fast selection among findings, add these
 options to the [normal worker invocation](#run-the-worker):
 
 ```text
 --second-pass fast --second-pass-scope issues
 ```
+
+After first pass, `review-options.json` and `review-options.md` show label counts,
+the proposed Fast queue with reasons, deferrals and the broader Full scope.
+`finding-groups.md/json` presents proposed families by explicit shared repair
+locator/property and verdict, with every claim's conditions retained. Missing
+context stays singleton; grouping changes no native verdict and certifies no
+unique vulnerability count. First-pass metadata remains explicitly historical
+after a later proof repair. Scoped threat suggestions contain at most three
+named leads, preserve the total/deferred leads and use the remaining authorized
+budget; they do not start another model phase automatically.
+Selection itself costs no model call. With the default `--second-pass off`, the
+worker finishes first pass and exits; the calling agent presents results and asks
+which follow-up scope to run. Explicit Fast/Full requests execute directly. An
+explicit threat-model request is handled by the skill's scoped source-review
+workflow; it is not a new CLI second-pass mode. Follow-ups inherit the requested
+scope/budget; they do not create authorization for another full scan.
 
 ### Recheck a completed attempt
 
@@ -227,15 +560,61 @@ selection, but every other native ID must have an explicit reason in
 `deferred_review_ids`. Exclusions and deferrals are not dismissals; see
 [completion accounting](review-state.md#account-for-planned-review-and-pending-evidence).
 Every changed path starts `unassessed`; an empty native queue still needs a change
-pass. Admit the plan and export the work package:
+pass within the authorized Changed review. Native admission does not replace
+Value's separate source-selection checkpoint. Admit the plan and export the work package:
 
 For initial Value priority selection, use `--policy value --selection policy`
 on the template. Existing native hints become explicit unreviewed deferrals;
 they do not become safe decisions. Omitting `--selection` preserves the all-ID
-template default for Value manual/full-coverage audits. Comprehensive still
+template default for explicit native manual/full-coverage audits. It does not
+authorize a broad default Value source review. Comprehensive still
 applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
+
+For Python, Value can defer fixed SQL grammar questions and fixed Flask `.html`
+renders whose supplied bindings appear only as ordinary escaped text expressions
+in their discovered templates, or are unused there.
+Comprehensive retains these operations. Custom renderer settings, raw markup,
+script/style/attribute contexts and unresolved templates retain Value review.
+These scope hints do not certify application safety. Regenerate older inventories
+before reuse. ORM review packets can include bounded effect and import-bound
+caller excerpts; `review-inventory-list --group-by implementation` groups located
+Python ORM callables for source reading while preserving each review ID and its
+independent authorization decision. Value can defer additional selectors on the
+same direct Django filter chain to one retained review with the complete chain
+excerpt and an explicit dependency. Separate operations and nested queries keep
+their own questions; no safe verdict transfers between IDs. Fixed or empty,
+import-bound Django `HttpResponse` bodies can also be deferred when local uses
+only return the response or assign fixed content. Dynamic bodies, aliases,
+unknown response uses and unknown query transforms retain Value review.
+
+Python mutation packets can also include import-bound class/base declarations,
+`Meta.permissions`, permission helpers, `mutate` and `check_permissions`
+implementations, field construction and alternate direct callers. These are
+source contexts, not verified runtime dispatch, guard ordering or authorization
+controls. Missing policy, overrides and unresolved bases remain review work.
+
+For direct ORM receiver chains, packets can follow declared Django
+`Manager.from_queryset` and `QuerySet.as_manager` bindings to custom queryset
+methods, inherited delegates and supplied argument producers. A method may
+preserve, replace or clear filtering. These bounded source excerpts do not
+establish actor authority or effective scoping; dynamic managers and queries
+passed through local aliases still require source review.
+
+ORM packets can also show a selection's assigned name, direct local aliases,
+selector input bindings and later writes or helper calls that reference those
+names. Observed rebinding stops navigation of that name. Branch alternatives,
+record identity, batch membership, query correlation and transaction freshness
+remain unverified; these excerpts do not establish authorization or taint flow.
+
+For queries using directly imported Django `Exists`, `Subquery` and `OuterRef`,
+packets retain separate expression inputs, nested references, negation and
+bounded local query bindings. Separate existence predicates do not establish
+that one related row satisfies both. SQL scope and correlation still require
+review, including when no outer reference appears in the delivered excerpts.
+These Python excerpts also reach `review-card` and `review-sweep`, the compact
+views used by the ordinary worker, with their source-only qualification retained.
 
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
@@ -443,7 +822,10 @@ model authentication and session management belong to the trusted adapter.
 
 Native defaults per conversation for both Value and Comprehensive are five
 research rounds (six total model calls), 24 query units, 512 KiB and 900 seconds.
-Value uses policy selection; Comprehensive selects every admitted ID.
+Value retains its admitted native queue plus bounded additional source discovery;
+the chosen mix and shared budget govern scheduling. Comprehensive
+selects every admitted ID within the authorized broader scope. The default
+Value controller's shared run allowance also applies across its managed phases.
 Configure `--research-rounds`, `--research-queries`, `--research-bytes` and
 `--timeout` on `state plan-template --skill-root ...`; zero rounds disables research.
 The worker reads those admitted values. Explicit worker overrides must match exactly.
@@ -854,3 +1236,50 @@ drafts need no repeated model call. Native admission and canonical reports remai
 authoritative. The automatic Action setup still configures a single profile;
 automatic tiered Action configuration and live quality/efficiency acceptance
 remain separate.
+
+
+## Resolve named source checks
+
+To continue a saved work-plan review, keep its original source, work manifest,
+provider commands and resource options. Use a new output directory and add
+`--resume-from PREVIOUS --resolve-checks REQUEST.json`. This operation is separate
+from crash recovery: it authorizes owner work on explicitly named reopened or
+unresolved checks. It starts no additional factual workers or whole-app pass.
+
+```json
+{
+  "schema_version": "mehscanWorkResolution/v1",
+  "checks": [{"case_id": "account-update", "check_ids": ["authority"]}]
+}
+```
+
+The controller reuses saved source and factual answers, preserves independent
+sibling checks, and records each correction against the exact prior state.
+`--workers` bounds parallel cases. Calls, input, configured cost, elapsed time and
+unknown-usage fences continue under the original allowance, including per-case
+limits when question routing is enabled. A new output directory does not renew
+that allowance. Unresolved answers and failed attempts remain visible.
+
+If interrupted, resume from the latest correction attempt with the same request.
+Saved final responses are finalized without another inference call. Unknown paid
+turns remain fenced. Once all requested attempts finish successfully, another
+request can select different unresolved checks. Parent reports remain historical.
+
+A source-check correction does not rewrite native verdicts. A case with Verify IDs
+retains a native reconciliation gap. When the first pass has an admitted native
+baseline, the correction exports `source-review/resolution-handoff.json`. Use the
+correction directory as `--first-pass` for an explicitly requested native Fast or
+Full follow-up, with the normal current native work/claim arguments and
+`--supersede`. The controller binds the original native baseline and allowance.
+Fast selects affected native IDs up to its configured cap; deferred IDs remain
+visible. Full preserves independent verification before comparing corrected checks.
+
+The native follow-up writes `work-ledger.json` and `remaining-work.md` combining
+saved source checks with admitted native reconciliation. A missing, unresolved,
+unsupported or unexecuted native check cannot clear the gap. This projection does
+not modify earlier source records. For a coverage goal, remaining required gaps
+keep the target incomplete even when native export succeeds.
+
+Work ledgers distinguish factual items from security cases. `partial_fact_checks`
+preserves independently answered questions when an owner fails. Neither factual
+completion, delivered source nor a named source region establishes security coverage.

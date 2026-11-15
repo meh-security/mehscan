@@ -22,6 +22,7 @@ internal static partial class Program
     public static int Main(string[] args)
     {
         if (args is ["--razor"]) return RazorFrontend.Run();
+        if (args is ["--razor-facets"]) return RazorFrontend.Run(facetsOnly: true);
         try
         {
             var timed = Environment.GetEnvironmentVariable("MEHSCAN_ROSLYN_TIMING") == "1";

@@ -23,6 +23,89 @@ def check(identity="one", action="keep", proof="supported", claim=""):
 
 
 class SecondPass(unittest.TestCase):
+    def test_source_only_options_keep_threat_context_with_no_claims(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);first=root/"first";output=root/"followup"
+            first.mkdir();output.mkdir()
+            source={"origin":"ai_source_only", "native_selected_claims":0, "source_questions":0,
+                "assignments":1,"completed_assignments":1,"coverage":[{"status":"needs_review",
+                "path":"flow.ts","start_line":1,"end_line":10,"summary":"Trace the named external effect."}]}
+            (first/"source-review.json").write_text(json.dumps(source))
+            def write(path,value):path.write_text(json.dumps(value))
+            review.write_options(output,review.select_followups([],[]),[],write,source_directory=first)
+            options=json.loads((output/"review-options.json").read_text())
+            self.assertEqual(options["review_origin"],"ai_source_only")
+            self.assertEqual(options["fast"]["selected"],[])
+            self.assertFalse(options["threat_model"]["requires_claims"])
+            context=options["threat_model"]["source_context"]
+            self.assertEqual(context["native_selected_claims"],0)
+            self.assertEqual(context["coverage_counts"],{"needs_review":1})
+            self.assertTrue(Path(context["coverage_report"]).samefile(first/"source-review.json"))
+
+    def test_auto_fast_caps_ranked_exact_nominations_and_excludes_external_blockers(self):
+        rows = [result(str(i), "needs_review") for i in range(12)]
+        rows[0]["confidence"] = "low"  # Confidence alone never nominates a claim.
+        notes = [{"review_id":str(i), "reason":"missing_local_evidence", "question":"Read the named guard body."}
+                 for i in range(1, 8)]
+        notes += [{"review_id":"8", "reason":"conflicting_evidence", "question":"Resolve two incompatible owner bindings."},
+                  {"review_id":"9", "reason":"external_required", "question":"Obtain the external tenant policy."}]
+        before = copy.deepcopy(rows)
+        plan = review.select_followups(rows, notes)
+        self.assertEqual(plan["limits"]["effective_cap"], 3)
+        self.assertEqual([r["review_id"] for r in plan["selected"]], ["8", "1", "2"])
+        self.assertEqual(len(plan["deferred"]), 5)
+        excluded = {r["review_id"]:r["reason"] for r in plan["excluded"]}
+        self.assertEqual(excluded["9"], "unavailable_deciding_fact")
+        self.assertEqual(excluded["0"], "no_actionable_nomination")
+        self.assertEqual(plan["full_claims"], 12)
+        self.assertEqual(plan["selection_model_calls"], 0)
+        self.assertEqual(rows, before)
+        self.assertEqual(len(review.select_followups(rows, notes, max_claims=1)["selected"]), 1)
+
+    def test_auto_fast_never_falls_back_to_all_and_respects_scope(self):
+        rows = [result("one", "issue"), result("two", "not_issue"), result("three", "needs_review")]
+        self.assertEqual(review.select_followups(rows, [])["selected"], [])
+        note = {"review_id":"one", "reason":"control_applicability", "question":"Does this handler use the inspected policy?"}
+        plan = review.select_followups(rows, [note], scope=("needs_review",))
+        self.assertEqual(plan["selected"], [])
+        self.assertEqual(plan["full_claims"], 1)
+        self.assertEqual(plan["excluded"][0]["reason"], "outside_verdict_scope")
+        for limit in (0, 21, True):
+            with self.assertRaises(ValueError):review.select_followups(rows, [note], max_claims=limit)
+        with self.assertRaises(ValueError):review.select_followups(rows, [{**note,"review_id":"unassigned"}])
+
+    def test_resolved_first_pass_blocker_does_not_break_post_quality_options(self):
+        rows=[result("one", "issue")]
+        note={"review_id":"one", "reason":"external_required", "question":"Obtain the previously missing policy."}
+        plan=review.select_followups(rows,[note])
+        self.assertEqual(plan["selected"],[])
+        self.assertEqual(plan["excluded"][0]["reason"],"resolved_blocker_nomination")
+        self.assertEqual(plan["full_claims"],1)
+
+    def test_followup_metadata_is_removed_from_native_draft_without_changing_verdict(self):
+        row = result()
+        original = copy.deepcopy(row)
+        row["followup"] = {"reason":"control_applicability", "question":"Which registered caller supplies this object?"}
+        notes = review.take_followups({"results":[row]})
+        self.assertEqual(row, original)
+        self.assertEqual(notes[0]["review_id"], "one")
+        for note in ({"reason":"invented", "question":"x"}, {"reason":"missing_local_evidence", "question":" "},
+                     {"reason":"external_required", "question":"Unknown policy."}):
+            with self.assertRaises(ValueError):review.take_followups({"results":[{**original,"followup":note}]})
+
+    def test_nominations_are_exact_job_bound_and_do_not_import_second_pass_or_peer_labels(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);(root/"jobs").mkdir()
+            note={"review_id":"one", "reason":"conflicting_evidence", "question":"Resolve the exact binding."}
+            for key,cycle,ids,notes in [("first", None, ["one","two"], [note, {**note,"review_id":"two"}]),
+                                       ("second", "second_pass_fast_check", ["one"], [note])]:
+                (root/"jobs"/(key+".json")).write_text(json.dumps({"binding":{"review_ids":ids,
+                    "assessment_cycle":cycle, "role":"investigator"}, "followups":notes}))
+            self.assertEqual(review.followup_notes(root, ["one"]), [note])
+            path=root/"jobs/forged.json"
+            path.write_text(json.dumps({"binding":{"review_ids":["two"]}, "followups":[note]}))
+            with self.assertRaises(ValueError):review.followup_notes(root, ["one"])
+
     def test_scope_is_explicit_first_pass_decisions_not_truth(self):
         self.assertEqual(review.review_scope("issues,pending"),("issue","needs_review"))
         self.assertEqual(review.review_scope("tp,fp"),("issue","not_issue"))
@@ -183,6 +266,27 @@ class SecondPass(unittest.TestCase):
             self.assertEqual(summary["outcomes"]["not_checked"],1)
             self.assertEqual(summary["outcomes"]["confirmed"],1)
             self.assertEqual(saved["bad"],baselines["bad"])
+
+    def test_fast_receives_its_exact_deciding_questions_without_leaking_them_into_full(self):
+        for mode in ("fast","full"):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as name:
+                root=Path(name);tasks=[];baseline={"results":[result()]}
+                def write(path,value):path.write_text(json.dumps(value))
+                def stage(task):
+                    tasks.append(copy.deepcopy(task))
+                    return {"response":baseline,"checks":[check()],"receipt":{"job_id":"test"}}
+                selected={"review_id":"one","decision":"not_issue","selection_source":"first_pass_nomination",
+                    "reasons":[{"review_id":"one","reason":"control_applicability","question":"Does this exact guard reject?"}]}
+                selection={"selected":[selected,{**selected,"review_id":"peer"}],"excluded":[],"deferred":[]}
+                summary=review.run(mode=mode,requests=[("bundle",root/"request",{"review_ids":["one"]})],
+                    baselines={"bundle":baseline},first_directory=None,output=root,task_base={},execute_stage=stage,
+                    finalize=lambda *args:None,write=write,workers=1,byte_limit=1024,
+                    selection=selection if mode=="fast" else None)
+                self.assertEqual(summary["status"],"complete")
+                if mode=="fast":self.assertEqual(tasks[0]["stage_context"]["selection_questions"],[selected])
+                else:
+                    self.assertNotIn("stage_context",tasks[0])
+                    self.assertNotIn("selection_questions",tasks[1]["stage_context"])
 
     def test_empty_scope_is_complete_without_model_calls_and_preserves_labels(self):
         with tempfile.TemporaryDirectory() as name:

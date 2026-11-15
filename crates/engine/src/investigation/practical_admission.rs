@@ -156,9 +156,11 @@ pub(super) fn inventory_only(
         // payloads, public deployment or effective proxy protection.
         return true;
     }
-    if item.cwe_candidates == ["CWE-942"] {
+    if item.cwe_candidates == ["CWE-942"] && item.rule_id != "model-discovered-security-question" {
         // Header/credentialed-policy detectors can emit a connected origin
         // relationship rather than repeating a credentials tag on the sink.
+        // Source-validated model questions carry their own bounded mechanism
+        // and deciding gaps, rather than native detector credential tags.
         if connected {
             return false;
         }

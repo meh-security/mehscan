@@ -4,12 +4,67 @@ Use only when the user requests Fast or Full second-pass review. The default is
 off; this option is independent of Value/Comprehensive. Keep exact claim IDs and
 their actor, operand, branch, selected property and effect separate.
 
+A work-plan first pass can add `--second-pass fast|full` directly. Its prepared
+source and assessments enter this same audit pipeline under the remaining shared
+allowance. For a later audit, use the native-phase first-pass workflow below;
+the bound work-plan handoff preserves the parent allowance and reports the
+original case checks as historical coverage. See
+[work-goal continuation](work-goals.md#choose-the-goal) for compatibility and
+native-finalization recovery.
+
+Optional [factual audits](work-goals.md#optional-factual-audits) check selected
+question-worker answers before their owner review. They share the original
+allowance and preserve assertion versions; they do not perform Fast/Full claim
+review or count as security coverage.
+
+## Automatic Fast selection
+
+First-pass assessments can return a nullable `followup` scheduling note with a
+typed reason and one deciding question. Native and source-discovered claims use
+the same mechanism. These notes are hypotheses, separate from native verdicts.
+An AI-only source first pass needs no scanner candidate to enable follow-up:
+its admitted source-discovered claims carry the same scheduling notes and cited
+facts. With no claims, Fast has nothing to audit; scoped threat review can still
+examine a source-backed flow or coverage gap without inventing a claim.
+The controller selects exact nominations for conflicting evidence, uncertain
+control applicability or named missing local evidence. Explicit claim_context
+can also nominate a positive proof check: unresolved/dormant activation asserted
+as an application path, unresolved impact, or severe local/optional claims whose
+reaching conditions need checking. These signals question the proof, not the
+verdict; a conditional library defect can remain a valid severe finding.
+Positive proof signals rank first, then nomination reason and assessed severity.
+Prefer one representative per cited repair point to repeated checks of the same
+failure. Unselected siblings remain unaudited; no verdict is propagated.
+Confidence or a pending label alone does not select a claim. External/human-only
+blockers do not enter Fast without changed evidence.
+
+Fast selects at most 25% of the eligible claim pool (rounded up), capped at 20
+claims. `--fast-max-claims N` can lower that cap. These are workload limits, not
+coverage guarantees. Every selected claim has its question/reason and selection
+source in `review-options.json`; cap/shared-root deferred and unselected claims
+retain their first results. Selection makes no additional model call. Legacy results without notes or context
+produce an empty Fast queue; never fall back to all claims. Full has no automatic
+narrowing and retains its independent-assessment/comparison behavior.
+
+Fast checks the selected claim's proof and repairs actionable gaps. It can
+follow a relevant cross-file producer, guard or consumer; it does not perform
+fresh application-wide threat discovery. Use ordinary source/lead review for a
+distinct new mechanism. Keep a locally effective control separate from an
+upstream weakness and group effects under their actual repair point.
+Fast has a bounded research allowance, not a guaranteed latency or cost saving.
+The user or calling agent chooses Fast/Full and the eligible work package; the
+controller owns Fast's exact selected subset. Use Full for an all-claim audit.
+
 ## Run with the local worker
 
 Add `--second-pass fast` or `--second-pass full` to the normal worker command.
 The worker retains the first source-validated responses before reviewing them.
+Choose the eligible IDs with the normal work package/bundles, then optionally
+narrow their verdict classes with the scope filter below. Fast still applies
+automatic selection inside that pool; Full checks every member of it.
 Use `--second-pass-scope issues|dismissals|pending` or comma-separated combinations
-to narrow the first-pass decisions checked. Default: `all`. Scope filters before
+to narrow eligible first-pass decisions. Default: `all` eligible verdict classes,
+not an all-claim Fast audit. Scope and automatic selection filter before
 rebundling, so other claims consume no second-pass calls and retain their original
 result marked outside scope. TP/FP aliases refer to the first labels, not truth.
 To check an already admitted attempt, refresh `state work` for the chosen IDs,
@@ -28,7 +83,11 @@ evaluation and training-data review. Neither mode approves training labels.
 
 Read `second-pass.md` and `second-pass.json`: first/final decisions, confirmed,
 corrected, reopened, unresolved and not-checked outcomes, objections and receipts.
-`findings.json` is the native final report. First responses remain in `first-pass/`;
+`findings.json` is the native final report. `finding-groups.md/json` proposes
+causal families while retaining every claim and its conditions; it does not
+deduplicate native decisions or certify unique vulnerability totals. First-pass
+annotations remain explicitly historical after a later proof change.
+First responses remain in `first-pass/`;
 original completed attempts are unchanged. A failed check retains the original
 decision marked not checked. Native state is authoritative after admission.
 
@@ -136,3 +195,13 @@ uncertainty. Preserve supported adjacent mechanisms as source leads without
 changing the selected question. Byte-exact source and agreement do not make
 training labels ground truth. Return concise claims, not investigation narratives.
 <!-- /runtime:second_pass_compare -->
+
+
+A scoped source correction may export a bound resolution handoff. Native
+`--first-pass` can point to that correction directory: the controller uses its
+original native baseline and shared allowance. Corrected owner checks are
+interpretations to test against original source, not mandatory replacement verdicts.
+Fast selects pending correction IDs within its cap; Full keeps its independent
+stage before comparing them. The new work ledger retains source gaps and any native
+reconciliation that remains unresolved or unexecuted. See
+[scoped correction](work-goals.md#scoped-correction-of-saved-checks).

@@ -114,11 +114,20 @@ State the root, selected-source limits and whether every manifest ID was reviewe
 Only confirmed issues are findings; retain unresolved reviews.
 
 For reports covering multiple operations or revisions, give the issue verdict
-count and the distinct defect count separately. Group confirmed rows only when
+count and the proposed causal-family count separately; use a distinct defect
+count only after source adjudication supports it. Group confirmed rows only when
 they show the same failed control at the same repair point. Keep review IDs,
 affected revisions, entry points and authority boundaries with the group. Two
 callers of the same faulty dependency can share a defect while exposing
 different effects. Similar effects with independent fixes count separately.
+For worker output, start with `finding-groups.md/json`; every member retains its
+ID, decision, applicability, impact conditions and original finding. The shared
+locator is a model proposal, not certification of one defect or every caller.
+Keep active application effects, supported optional/library guarantees and
+conditional local constructions distinguishable in the handoff and severity.
+First-pass annotations remain historical after later repairs; inspect the final
+proof before carrying those conditions forward. No extra pass is needed merely
+to format groups, and a group never grants permission to drop unresolved work.
 
 When an inventory ledger is requested, run `mehscan investigate review-ledger
 --inventory RUN/inventory --history CHUNK --output RUN/review-ledger.json`.
@@ -127,3 +136,22 @@ Use the actual ledger's `reviewed` map to count reviewed IDs and check `conflict
 do not print the whole queue or guess coverage from response filenames. For
 cross-run reuse and reopened dependencies, follow [review planning](review-planning.md).
 Keep separately discovered existing IDs unreviewed until their own evidence check.
+
+## First-pass checkpoint
+
+After completing the requested first-pass scope, present the actual findings and
+grouped defects, pending questions, coverage and recorded tokens/time/cost when
+available. The worker emits `review-options.json` and `review-options.md` without
+buying another model pass. Show the proposed Fast claim count and deciding
+questions, any cap-deferred work, the broader Full scope and a specific useful
+flow for threat review when one is supported. Do not invent price estimates.
+
+If no follow-up was requested, stop here and ask which concrete next scope the
+user wants. This checkpoint is after the authorized first pass, not between
+ordinary bundles. If Fast, Full or threat modeling was already requested,
+continue directly within that authorization and budget. Fast uses automatic
+selection; Full checks the whole chosen claim pool. A requested threat review
+uses the [scoped flow follow-up](review-planning.md#scoped-flow-follow-up) when its
+scope is an identified concern; honor an explicitly broader threat-model scope.
+Reusing a first pass requires the current source/runtime binding. Scheduling
+notes are navigation, not source evidence or vulnerability proof.
