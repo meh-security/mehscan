@@ -10,6 +10,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use turso::{Builder, Connection, transaction::TransactionBehavior};
 
+mod assessments;
+
 const SCHEMA: &str = "
     CREATE TABLE review_memory_schema (
         version INTEGER PRIMARY KEY
@@ -64,16 +66,30 @@ struct Snapshot {
     files: BTreeMap<String, String>,
 }
 
+enum Operation {
+    Snapshot {
+        base: Option<String>,
+    },
+    Retain {
+        stream: String,
+        admission: super::review_state::MemoryAdmission,
+    },
+    Assessments {
+        stream: String,
+    },
+}
+
 pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
-    match arguments.next().as_deref() {
+    let command = arguments.next();
+    match command.as_deref() {
         None | Some("--help" | "help" | "-h") => {
             help();
             return Ok(());
         }
-        Some("snapshot") => {}
+        Some("snapshot" | "retain" | "assessments") => {}
         Some(other) => {
             return Err(format!(
-                "unknown memory operation {other:?}; expected snapshot"
+                "unknown memory operation {other:?}; expected snapshot, retain or assessments"
             ));
         }
     }
@@ -83,14 +99,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return Ok(());
     }
     if args.root != Path::new(".") {
-        return Err("memory snapshot accepts named options only".into());
+        return Err("memory operations accept named options only".into());
     }
     let store = std::path::absolute(args.required("--store")?).map_err(|e| e.to_string())?;
     let root = PathBuf::from(args.required("--source-root")?);
     let inventory = PathBuf::from(args.required("--inventory")?);
-    let base = args.optional("--base");
-    args.finish()?;
-
     super::review_state::outside_source(&store, &root)?;
     check_store_file(&store)?;
     let (cache, inventory) = super::review_state::load_inventory(&inventory)?;
@@ -107,6 +120,41 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         source: catalog.source_fingerprint.clone(),
         inventory,
     };
+    let operation = match command.as_deref() {
+        Some("snapshot") => Operation::Snapshot {
+            base: args.optional("--base"),
+        },
+        Some("retain") => {
+            let stream = args.required("--stream")?;
+            let state = PathBuf::from(args.required("--state-store")?);
+            let generation = args
+                .required("--generation")?
+                .parse::<u64>()
+                .map_err(|_| "--generation requires a native generation number")?;
+            super::review_state::outside_source(&state, &root)?;
+            Operation::Retain {
+                admission: super::review_state::memory_admission(
+                    &state,
+                    &stream,
+                    generation,
+                    &snapshot.repository,
+                    &snapshot.source,
+                    &snapshot.inventory,
+                )?,
+                stream,
+            }
+        }
+        Some("assessments") => Operation::Assessments {
+            stream: args.required("--stream")?,
+        },
+        _ => unreachable!(),
+    };
+    args.finish()?;
+    if let Operation::Assessments { .. } = operation
+        && !store.is_file()
+    {
+        return super::print_json(&assessments::empty(&snapshot)?);
+    }
     if let Some(parent) = store.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -129,7 +177,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|e| e.to_string())?;
-    runtime.block_on(capture(&store, &snapshot, base.as_deref()))
+    runtime.block_on(run_local(&store, &snapshot, operation))
 }
 
 fn check_store_file(path: &Path) -> Result<(), String> {
@@ -145,7 +193,7 @@ fn check_store_file(path: &Path) -> Result<(), String> {
 
 fn help() {
     println!(
-        "USAGE:\n  mehscan memory snapshot --store FILE --source-root ROOT --inventory DIR [--base SNAPSHOT]\n\nRecords the current native inventory's source hashes in a local Turso database outside the source root. With --base, also reports added, modified and removed inputs relative to a saved snapshot."
+        "USAGE:\n  mehscan memory snapshot --store FILE --source-root ROOT --inventory DIR [--base SNAPSHOT]\n  mehscan memory retain --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N\n  mehscan memory assessments --store FILE --source-root ROOT --inventory DIR --stream STREAM\n\nRecords validated source inputs and native assessments in a local Turso database outside the source root."
     );
 }
 
@@ -158,7 +206,7 @@ fn db_error(error: turso::Error) -> String {
     format!("local review memory: {error}")
 }
 
-async fn prepare_schema(conn: &Connection) -> Result<(), String> {
+async fn schema_version(conn: &Connection) -> Result<i64, String> {
     let mut tables = conn
         .query("SELECT name FROM sqlite_schema WHERE type = 'table'", ())
         .await
@@ -171,7 +219,7 @@ async fn prepare_schema(conn: &Connection) -> Result<(), String> {
     }
     drop(tables);
     if !has_tables {
-        return conn.execute_batch(SCHEMA).await.map_err(db_error);
+        return Ok(0);
     }
     if !has_memory_schema {
         return Err("unrecognized memory store; use a new local database".into());
@@ -180,14 +228,29 @@ async fn prepare_schema(conn: &Connection) -> Result<(), String> {
         .query("SELECT version FROM review_memory_schema", ())
         .await
         .map_err(db_error)?;
-    let version = versions.next().await.map_err(db_error)?;
-    if matches!(version, Some(row) if row.get::<i64>(0).map_err(db_error)? == 1)
-        && versions.next().await.map_err(db_error)?.is_none()
-    {
-        Ok(())
-    } else {
-        Err("unsupported local review memory schema".into())
+    if let Some(row) = versions.next().await.map_err(db_error)? {
+        let version = row.get::<i64>(0).map_err(db_error)?;
+        if matches!(version, 1 | 2) && versions.next().await.map_err(db_error)?.is_none() {
+            return Ok(version);
+        }
     }
+    Err("unsupported local review memory schema".into())
+}
+
+async fn prepare_schema(conn: &Connection) -> Result<(), String> {
+    let version = schema_version(conn).await?;
+    if version == 0 {
+        conn.execute_batch(SCHEMA).await.map_err(db_error)?;
+    }
+    if version < 2 {
+        conn.execute_batch(assessments::SCHEMA)
+            .await
+            .map_err(db_error)?;
+        conn.execute("UPDATE review_memory_schema SET version = 2", ())
+            .await
+            .map_err(db_error)?;
+    }
+    Ok(())
 }
 
 async fn previous_files(
@@ -244,9 +307,20 @@ fn compare<'a>(
     result
 }
 
-async fn capture(path: &Path, snapshot: &Snapshot, base: Option<&str>) -> Result<(), String> {
+impl Snapshot {
+    fn id(&self, repository: &str) -> Result<String, String> {
+        fingerprint(&(repository, &self.source, &self.files))
+    }
+}
+
+async fn run_local(path: &Path, snapshot: &Snapshot, operation: Operation) -> Result<(), String> {
     let path = path.to_str().ok_or("memory store path must be UTF-8")?;
-    let database = Builder::new_local(path).build().await.map_err(db_error)?;
+    let read_only = matches!(operation, Operation::Assessments { .. });
+    let database = Builder::new_local(path)
+        .read_only(read_only)
+        .build()
+        .await
+        .map_err(db_error)?;
     let mut connection = database.connect().map_err(db_error)?;
     connection
         .busy_timeout(Duration::from_secs(10))
@@ -255,60 +329,31 @@ async fn capture(path: &Path, snapshot: &Snapshot, base: Option<&str>) -> Result
         .execute("PRAGMA foreign_keys = ON", ())
         .await
         .map_err(db_error)?;
+    if let Operation::Assessments { stream } = operation {
+        return super::print_json(&assessments::lookup(&connection, snapshot, &stream).await?);
+    }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .await
         .map_err(db_error)?;
     prepare_schema(&tx).await?;
     let repository = fingerprint(&snapshot.repository)?;
-    let id = fingerprint(&(&repository, &snapshot.source, &snapshot.files))?;
+    let id = snapshot.id(&repository)?;
+    let base = match &operation {
+        Operation::Snapshot { base } => base.as_deref(),
+        _ => None,
+    };
     let previous = match base {
         Some(base) => previous_files(&tx, base, &repository, &id).await?,
         None => None,
     };
 
-    let repository_key = snapshot
-        .repository
-        .repository_key
-        .as_deref()
-        .ok_or("memory requires a repository key")?;
-    tx.execute(
-        "INSERT INTO repositories VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO NOTHING",
-        (
-            &*repository,
-            repository_key,
-            snapshot.repository.source_repository_key.as_deref(),
-            &*snapshot.repository.path_prefix,
-        ),
-    )
-    .await
-    .map_err(db_error)?;
-    let created = tx
-        .execute(
-            "INSERT INTO snapshots VALUES (?1, ?2, ?3) ON CONFLICT(id) DO NOTHING",
-            (&*id, &*repository, &*snapshot.source),
-        )
-        .await
-        .map_err(db_error)?
-        > 0;
-    if created {
-        let mut insert = tx
-            .prepare("INSERT INTO snapshot_inputs VALUES (?1, ?2, ?3)")
-            .await
-            .map_err(db_error)?;
-        for (path, hash) in &snapshot.files {
-            insert
-                .execute((&*id, path.as_str(), hash.as_str()))
-                .await
-                .map_err(db_error)?;
-        }
+    let created = persist_snapshot(&tx, snapshot, &repository, &id).await?;
+    if let Operation::Retain { admission, stream } = &operation {
+        let result = assessments::retain(&tx, &id, &snapshot.inventory, stream, admission).await?;
+        tx.commit().await.map_err(db_error)?;
+        return super::print_json(&result);
     }
-    tx.execute(
-        "INSERT INTO inventory_bindings VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-        (&*id, &*snapshot.inventory),
-    )
-    .await
-    .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
     let changes = base.map(|_| match previous.as_ref() {
         Some(previous) => compare(previous, &snapshot.files),
@@ -323,4 +368,82 @@ async fn capture(path: &Path, snapshot: &Snapshot, base: Option<&str>) -> Result
         base,
         changes,
     })
+}
+
+async fn persist_snapshot(
+    tx: &Connection,
+    snapshot: &Snapshot,
+    repository: &str,
+    id: &str,
+) -> Result<bool, String> {
+    let repository_key = snapshot
+        .repository
+        .repository_key
+        .as_deref()
+        .ok_or("memory requires a repository key")?;
+    tx.execute(
+        "INSERT INTO repositories VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO NOTHING",
+        (
+            repository,
+            repository_key,
+            snapshot.repository.source_repository_key.as_deref(),
+            &*snapshot.repository.path_prefix,
+        ),
+    )
+    .await
+    .map_err(db_error)?;
+    let created = tx
+        .execute(
+            "INSERT INTO snapshots VALUES (?1, ?2, ?3) ON CONFLICT(id) DO NOTHING",
+            (id, repository, &*snapshot.source),
+        )
+        .await
+        .map_err(db_error)?
+        > 0;
+    if created {
+        let mut insert = tx
+            .prepare("INSERT INTO snapshot_inputs VALUES (?1, ?2, ?3)")
+            .await
+            .map_err(db_error)?;
+        for (path, hash) in &snapshot.files {
+            insert
+                .execute((id, path.as_str(), hash.as_str()))
+                .await
+                .map_err(db_error)?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO inventory_bindings VALUES (?1, ?2) ON CONFLICT DO NOTHING",
+        (id, &*snapshot.inventory),
+    )
+    .await
+    .map_err(db_error)?;
+    Ok(created)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assessment_schema_upgrade_preserves_existing_inventory_bindings() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let db = Builder::new_local(":memory:").build().await.unwrap();
+            let mut conn = db.connect().unwrap();
+            conn.execute_batch(SCHEMA).await.unwrap();
+            conn.execute("INSERT INTO repositories VALUES ('repo', 'example:app', NULL, '')", ()).await.unwrap();
+            conn.execute("INSERT INTO snapshots VALUES ('snapshot', 'repo', 'source')", ()).await.unwrap();
+            conn.execute("INSERT INTO inventory_bindings VALUES ('snapshot', 'inventory')", ()).await.unwrap();
+            assert_eq!(schema_version(&conn).await.unwrap(), 1);
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).await.unwrap();
+            prepare_schema(&tx).await.unwrap();
+            tx.commit().await.unwrap();
+            assert_eq!(schema_version(&conn).await.unwrap(), 2);
+            let mut rows = conn.query("SELECT inventory_fingerprint FROM inventory_bindings WHERE snapshot_id = 'snapshot'", ()).await.unwrap();
+            assert_eq!(rows.next().await.unwrap().unwrap().get::<String>(0).unwrap(), "inventory");
+        });
+    }
 }

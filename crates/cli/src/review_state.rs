@@ -1177,6 +1177,79 @@ fn sync_journal(file: &File, _store: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn read_store(store: &Path) -> Result<State, String> {
+    let path = store.join("transactions.jsonl");
+    if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("state journal must not be a symlink".into());
+    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
+    read_state(&mut file)
+}
+
+#[derive(Serialize)]
+pub(super) struct MemoryAdmission {
+    pub generation: u64,
+    pub attempt: String,
+    pub status: ReviewAttemptStatus,
+    pub records: Vec<ReviewDecisionRecord>,
+}
+
+pub(super) fn memory_admission(
+    store: &Path,
+    stream: &str,
+    generation: u64,
+    repository: &mehscan_core::ReviewRepositoryIdentity,
+    source: &str,
+    inventory: &str,
+) -> Result<MemoryAdmission, String> {
+    let state = read_store(store)?;
+    let key = stream_key(
+        repository
+            .repository_key
+            .as_deref()
+            .ok_or("missing repository key")?,
+        stream,
+    )?;
+    let stream = state.streams.get(&key).ok_or("unknown state stream")?;
+    let attempt = stream
+        .attempts
+        .last()
+        .ok_or("state stream has no attempt")?;
+    if attempt.generation != generation
+        || &attempt.binding.repository != repository
+        || attempt.binding.source_fingerprint != source
+        || attempt.binding.inventory_input_fingerprint != inventory
+    {
+        return Err(
+            "memory admission does not match the current state generation and inventory".into(),
+        );
+    }
+    if !matches!(
+        attempt.status,
+        ReviewAttemptStatus::Finished | ReviewAttemptStatus::Incomplete
+    ) {
+        return Err("memory retention requires a finished or incomplete native attempt".into());
+    }
+    let mut records = Vec::new();
+    for heads in stream.heads.values().filter(|heads| heads.len() == 1) {
+        if let Some(id) = heads.first()
+            && attempt.admissions.contains(id)
+        {
+            records.push(stream.decisions[id].clone());
+        }
+    }
+    Ok(MemoryAdmission {
+        generation,
+        attempt: attempt.attempt_id.clone(),
+        status: attempt.status,
+        records,
+    })
+}
+
 pub(super) fn outside_source(store: &Path, root: &Path) -> Result<(), String> {
     let source = fs::canonicalize(root).map_err(|error| error.to_string())?;
     let mut ancestor = std::path::absolute(store).map_err(|error| error.to_string())?;
@@ -1474,16 +1547,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     if matches!(operation.as_str(), "status" | "history") {
         let repository_key = args.required("--repository-key")?;
         args.finish()?;
-        let path = store.join("transactions.jsonl");
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err("state journal must not be a symlink".into());
-        }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(path)
-            .map_err(|error| error.to_string())?;
-        fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
-        let state = read_state(&mut file)?;
+        let state = read_store(&store)?;
         return super::print_json(&state.view(
             &stream_key(&repository_key, &stream)?,
             operation == "history",

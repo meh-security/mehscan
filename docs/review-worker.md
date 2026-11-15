@@ -558,6 +558,22 @@ The inventory fingerprint records the native assessment inputs for each capture.
 The skill uses these paths for deciding which source to inspect. Review outcomes
 and review coverage still come from the ordinary review worker.
 
+After ending a native attempt as finished or incomplete, retain its admitted,
+unambiguous assessments:
+
+```text
+mehscan memory retain --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
+mehscan memory assessments --store STATE/review-memory.turso --source-root ROOT --inventory RUN/inventory --stream STREAM
+```
+
+Retention reads the native journal for the specified generation and inventory.
+Each saved batch links verdicts to their check text and source references.
+Repeated retention of the same batch is idempotent. A lookup verifies the
+current source and returns the latest retained generation for the exact
+inventory and stream.
+Use the returned batches as historical context. Native state remains the
+authority for supersession, unresolved checks, and the current verdict.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create

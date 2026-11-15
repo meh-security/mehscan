@@ -37,7 +37,10 @@ When the user requests local review memory, use the controller's
 after preparing the native inventory. Keep the database with durable review
 artifacts outside the source root. Save the returned snapshot ID for later
 comparison and treat the reported paths as source changes, with review coverage
-and verdicts tracked by the ordinary work plan.
+and verdicts tracked by the ordinary work plan. Once native state ends, use
+`mehscan memory retain` with the exact inventory and generation. Use
+`mehscan memory assessments` to retrieve matching historical context for the
+next review. The current work plan still determines which checks to execute.
 
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security

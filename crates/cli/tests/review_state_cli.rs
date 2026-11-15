@@ -40,6 +40,150 @@ fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
+#[test]
+fn turso_retains_native_pending_decisions_only_for_exact_current_inputs() {
+    let mut fixture = Fixture::new("memory-admission");
+    let db = fixture.base.join("memory.turso");
+    let memory = |fixture: &Fixture, operation, generation| {
+        let mut args = vec![
+            "memory",
+            operation,
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+        ];
+        if operation == "retain" {
+            args.extend([
+                "--state-store",
+                fixture.store.to_str().unwrap(),
+                "--generation",
+                generation,
+            ]);
+        }
+        invoke(&args)
+    };
+    let check = |output: Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    let empty = check(memory(&fixture, "assessments", ""));
+    assert_eq!(empty["batches"], json!([]));
+    assert!(!db.exists());
+    let claim = fixture.claim("before", "0", "memory-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let decisions = fixture.answers("needs_review", "The exact caller still needs confirmation.");
+    ok(&fixture.record_args("1", owner, "memory-record"));
+    let premature = memory(&fixture, "retain", "1");
+    assert!(!premature.status.success());
+    assert!(String::from_utf8_lossy(&premature.stderr).contains("finished or incomplete"));
+    assert!(!db.exists());
+    ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--status",
+        "incomplete",
+        "--operation-key",
+        "memory-end",
+    ]);
+    let retained = check(memory(&fixture, "retain", "1"));
+    assert_eq!(retained["assessments"], decisions.len());
+    let repeated = check(memory(&fixture, "retain", "1"));
+    assert_eq!(repeated["batch"], retained["batch"]);
+    assert_eq!(repeated["reused"], true);
+    let saved = check(memory(&fixture, "assessments", ""));
+    assert_eq!(saved["authority"], "retained_context");
+    assert_eq!(saved["batches"].as_array().unwrap().len(), 1);
+    let batch = &saved["batches"][0];
+    assert_eq!(batch["attempt_status"], "incomplete");
+    for decision in decisions {
+        let row = batch["assessments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["decision_id"] == decision["decision_id"])
+            .unwrap();
+        assert_eq!(row["verdict"], "needs_review");
+        assert_eq!(
+            row["response_fingerprint"],
+            decision["response_fingerprint"]
+        );
+        assert_eq!(
+            row["questions"][0]["text"],
+            decision["response"]["checks"][0]
+        );
+        assert_eq!(row["evidence"][0]["path"], "app.js");
+    }
+    let wrong_generation = memory(&fixture, "retain", "2");
+    assert!(!wrong_generation.status.success());
+    assert!(String::from_utf8_lossy(&wrong_generation.stderr).contains("current state generation"));
+
+    let retry = fixture.claim("recheck", "1", "memory-claim-recheck", true);
+    let retry_owner = retry["result"]["owner"].as_str().unwrap();
+    fixture.answers("not_issue", "Conflicting verdict without supersession.");
+    ok(&fixture.record_args("2", retry_owner, "memory-record-conflict"));
+    ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "2",
+        "--owner",
+        retry_owner,
+        "--status",
+        "incomplete",
+        "--operation-key",
+        "memory-end-conflict",
+    ]);
+    assert_eq!(check(memory(&fixture, "retain", "2"))["assessments"], 0);
+    let latest = check(memory(&fixture, "assessments", ""));
+    assert_eq!(latest["batches"].as_array().unwrap().len(), 1);
+    assert_eq!(latest["batches"][0]["generation"], 2);
+    assert_eq!(latest["batches"][0]["assessments"], json!([]));
+
+    let path = fixture.source.join("app.js");
+    let original = fs::read_to_string(&path).unwrap();
+    fs::write(path, original + "\n// Change the source snapshot.\n").unwrap();
+    assert!(!memory(&fixture, "assessments", "").status.success());
+    fixture.prepare("changed-memory");
+    assert_eq!(
+        check(memory(&fixture, "assessments", ""))["batches"],
+        json!([])
+    );
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
 impl Fixture {
     fn new(label: &str) -> Self {
         let nonce = SystemTime::now()
