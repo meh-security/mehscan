@@ -623,6 +623,23 @@ native review IDs have been accounted for. Broader source coverage and scoped
 threat-model work use their own checks. If the batch or work contract differs,
 continue ordinary review under the current work package.
 
+### Import normalized legacy history
+
+The controller accepts a normalized version 7 review-memory archive:
+
+```text
+mehscan memory import-legacy --store STATE/review-memory.turso --legacy ARCHIVE.sqlite --origin ARCHIVE_NAME
+mehscan memory legacy-history --store STATE/review-memory.turso --origin ARCHIVE_NAME [--assessment ID]
+```
+
+The importer reads the old database through the Rust Turso SDK and retains its
+typed snapshot, assessment, question, evidence-reference, and dependency rows
+as historical context. Use a stable origin name for the archive. Repeating the
+same import is idempotent. A changed archive requires a distinct origin so
+earlier history remains available. Keep the original database and object pack
+for evidence bodies and opaque attachments. Native reuse still requires a
+validated native admission.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create

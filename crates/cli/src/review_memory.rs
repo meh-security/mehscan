@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use turso::{Builder, Connection, transaction::TransactionBehavior};
 
 mod assessments;
+mod legacy;
 
 const SCHEMA: &str = "
     CREATE TABLE review_memory_schema (
@@ -136,9 +137,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             return Ok(());
         }
         Some("snapshot" | "retain" | "assessments" | "reuse" | "prepare") => {}
+        Some("import-legacy" | "legacy-history") => {
+            return legacy::run(command.as_deref().unwrap(), arguments);
+        }
         Some(other) => {
             return Err(format!(
-                "unknown memory operation {other:?}; expected snapshot, retain, assessments, reuse or prepare"
+                "unknown memory operation {other:?}; use 'mehscan memory --help'"
             ));
         }
     }
@@ -362,6 +366,7 @@ fn help() {
     println!(
         "  mehscan memory prepare --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root DIR [--provider-contract FILE] [--review-ids ID,ID]"
     );
+    legacy::help();
     println!(
         "\n  mehscan memory reuse --store FILE --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY"
     );
@@ -404,7 +409,7 @@ async fn schema_version(conn: &Connection) -> Result<i64, String> {
         .map_err(db_error)?;
     if let Some(row) = versions.next().await.map_err(db_error)? {
         let version = row.get::<i64>(0).map_err(db_error)?;
-        if matches!(version, 1 | 2) && versions.next().await.map_err(db_error)?.is_none() {
+        if matches!(version, 1..=3) && versions.next().await.map_err(db_error)?.is_none() {
             return Ok(version);
         }
     }
@@ -421,6 +426,17 @@ async fn prepare_schema(conn: &Connection) -> Result<(), String> {
             .await
             .map_err(db_error)?;
         conn.execute("UPDATE review_memory_schema SET version = 2", ())
+            .await
+            .map_err(db_error)?;
+    }
+    Ok(())
+}
+
+async fn prepare_legacy_schema(conn: &Connection) -> Result<(), String> {
+    prepare_schema(conn).await?;
+    if schema_version(conn).await? == 2 {
+        legacy::install(conn).await?;
+        conn.execute("UPDATE review_memory_schema SET version = 3", ())
             .await
             .map_err(db_error)?;
     }
