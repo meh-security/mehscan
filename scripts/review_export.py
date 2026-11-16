@@ -78,7 +78,8 @@ def export_review(plan, directory, record, reviewer, execute, env):
     directory = Path(directory)
     root = Path(plan["checkout"]) / plan["scan_root"]
     worker = json.loads((directory / "review/worker.json").read_text(encoding="utf-8"))
-    if worker["status"] != "admitted" or worker["runtime"] != plan["review"]["runtime"]:
+    partial = worker["status"] == "incomplete" and worker.get("native_admission") is True
+    if (worker["status"] != "admitted" and not partial) or worker["runtime"] != plan["review"]["runtime"]:
         raise ValueError("only native-admitted review work can be exported")
     files = ["usage.json", "completion.json"]
     source=directory/"review/source-review.json"
@@ -108,6 +109,8 @@ def export_review(plan, directory, record, reviewer, execute, env):
         args = [plan["scanner"], "report", "--run", str(run), "--source-root", str(root),
             "--reviewer", reviewer, "--revision", plan["endpoints"]["target_commit"],
             "--sarif-category", category, "--sarif-run-id", attempt]
+        if partial:
+            args += ["--allow-partial", "true"]
         canonical = json.loads(execute([*args, "--format", "json"], env=env))
         sarif = json.loads(execute([*args, "--format", "sarif"], env=env))
         if sarif["version"] != "2.1.0" or len(sarif["runs"]) != 1:

@@ -18,7 +18,7 @@ internal static partial class RazorFrontend
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record Input(string Path, string Text);
-    private sealed record Request(string SchemaVersion, string Root, string SdkPath, Input[] Files, Input[] Projects);
+    private sealed record Request(string SchemaVersion, string Root, string SdkPath, Input[] Files, Input[] Projects, bool IncludeRenderUses = false);
     private sealed record Mapping(int GeneratedStart, int GeneratedEnd, string Path, int OriginalStart);
     private sealed record Navigation(string Path, int Start, int End, string Value);
     private sealed record SourceRange(int Start, int End);
@@ -35,6 +35,7 @@ internal static partial class RazorFrontend
             if (request.SchemaVersion != "1" || request.Files.Length > 4096
                 || request.Files.Sum(f => (long)Encoding.UTF8.GetByteCount(f.Text)) > 32 * 1024 * 1024)
                 throw new InvalidDataException("Unsupported or oversized Razor request");
+            var collectRenderUses = facetsOnly || request.IncludeRenderUses;
             var sdk = Path.GetFullPath(request.SdkPath);
             var generatorDirectory = Path.Combine(sdk, "Sdks", "Microsoft.NET.Sdk.Razor", "source-generators");
             var generatorPath = new[] { "Microsoft.CodeAnalysis.Razor.Compiler.dll", "Microsoft.NET.Sdk.Razor.SourceGenerators.dll" }
@@ -104,9 +105,9 @@ internal static partial class RazorFrontend
                     new RazorOptions(projectRoot, ns, properties.GetValueOrDefault("RazorLangVersion", "Latest")));
                 driver = driver.RunGenerators(compilation);
                 var result = driver.GetRunResult();
-                var semantic = facetsOnly ? compilation.AddSyntaxTrees(result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SyntaxTree)) : null;
+                var semantic = collectRenderUses ? compilation.AddSyntaxTrees(result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SyntaxTree)) : null;
                 var origins = new Dictionary<SyntaxTree, string>();
-                if (facetsOnly)
+                if (semantic != null)
                 {
                     foreach (var tree in trees) origins[tree] = inputs[tree.FilePath].Path;
                     foreach (var generated in result.Results.SelectMany(r => r.GeneratedSources))
@@ -116,7 +117,7 @@ internal static partial class RazorFrontend
                         if (origin != null) origins[generated.SyntaxTree] = inputs[origin].Path;
                     }
                     foreach (var pair in origins)
-                        renderUses.AddRange(RenderUses(pair.Key.GetRoot(), semantic!.GetSemanticModel(pair.Key), pair.Value, origins));
+                        renderUses.AddRange(RenderUses(pair.Key.GetRoot(), semantic.GetSemanticModel(pair.Key), pair.Value, origins));
                 }
                 foreach (var error in result.Results.Where(r => r.Exception != null)) warnings.Add("Razor generator failed: " + error.Exception!.Message);
                 foreach (var diagnostic in result.Diagnostics.Take(24))
@@ -239,6 +240,8 @@ internal static partial class RazorFrontend
             }
             if (facetsOnly)
                 Console.Write(JsonSerializer.Serialize(new { schema_version = "1", producer = "razor-render-interpretation/v1", render_sites = renderSites, render_uses = renderUses.Distinct(), diagnostics = warnings.Distinct().Take(128) }, Json));
+            else if (collectRenderUses)
+                Console.Write(JsonSerializer.Serialize(new { schema_version = "1", projections, render_uses = renderUses.Distinct(), diagnostics = warnings.Distinct().Take(128) }, Json));
             else Console.Write(JsonSerializer.Serialize(new { schema_version = "1", projections, diagnostics = warnings.Distinct().Take(128) }, Json));
             return 0;
         }

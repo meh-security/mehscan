@@ -564,7 +564,7 @@ class NativeWrites:
         "plan": ({"--input", "--work-package", "--expected-plan-id"}, set()),
         "pending": ({"--input"}, set()),
         "pending-batch": ({"--input"}, set()),
-        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution", "--allow-partial"}),
+        "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution", "--allow-partial", "--assignment"}),
     }
     PATHS = {"--input", "--work-package", "--run", "--supersessions", "--review-execution"}
 
@@ -909,6 +909,9 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    assignment = getattr(args, "assignment", None)
+    if assignment and args.phase != "native":
+        raise ValueError("local assignments require --phase native")
     if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
         raise ValueError("question routing requires all-phase work goals")
     work_path = getattr(args, "work_plan", None)
@@ -935,7 +938,7 @@ def run(args):
         raise ValueError("operation grouping pilot requires --phase native")
     root = Path(args.source_root).resolve(strict=True)
     store = outside(args.store, root)
-    key = context.digest([str(root), args.stream])
+    key = context.digest(["assignment", assignment] if assignment else [str(root), args.stream])
     with controller_lock(store / ("review-controller-" + key + ".lock")):
         if args.phase == "all":
             import review_source
@@ -957,6 +960,7 @@ def run(args):
 
 
 def run_locked(args):
+    assignment = getattr(args, "assignment", None)
     group_operations = getattr(args, "group_operations", False)
     if type(group_operations) is not bool or group_operations and args.phase != "native":
         raise ValueError("operation grouping pilot requires --phase native")
@@ -1174,8 +1178,11 @@ def run_locked(args):
         write(output / "source-facts.json", {"schema_version": "1", "scanner_sha256": scanner_hash,
               "snapshot_id": package["payload"]["snapshot_id"], "facts": shared_facts})
 
-    def fresh_work():
-        return native(["state", "work", *common, "--review-ids", ",".join(requested)])
+    def fresh_work(read_completed=False, timeout=None):
+        options = ["--assignment", assignment] if assignment else []
+        if assignment and read_completed:
+            options += ["--read-completed-assignment", "true"]
+        return native(["state", "work", *common, "--review-ids", ",".join(requested), *options], timeout)
 
     def job_for(task):
         identity_parts = [task["kind"], task.get("review_ids", []),
@@ -1327,7 +1334,9 @@ def run_locked(args):
         packet = {"schema_version": "1", "package_id": expected["package_id"],
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
                   "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role, tiered=bool(tiered_policy)),
-                  "work": context.compact_work(payload, ids or requested), "native_questions": entries,
+                  "work": context.compact_work(payload, ids or requested,
+                      include_active_gaps=role == "investigator" and task["kind"] == "native_bundle"),
+                  "native_questions": entries,
                   "primary": prepared_changes}
         if tiered_policy:
             packet["job_binding"] = {"profile": profile, "role": role,
@@ -1455,7 +1464,7 @@ def run_locked(args):
 
         def check_fresh():
             remaining()
-            current = native(["state", "work", *common, "--review-ids", ",".join(requested)], remaining())
+            current = fresh_work(timeout=remaining())
             if current != expected:
                 raise ValueError("work changed during reviewer research")
 
@@ -1959,7 +1968,7 @@ def run_locked(args):
 
     query_pool = ThreadPoolExecutor(max_workers=query_workers, thread_name_prefix="mehscan-source")
     try:
-        current_work = fresh_work()  # Native source/runtime/ownership fence, even on replay.
+        current_work = fresh_work(read_completed=bool(recovery and (recovery / "native-writes/admission.json").is_file()))
         recovering_writes = bool(recovery and (recovery / "native-writes").is_dir()
                                  and list((recovery / "native-writes").glob("*.json")))
         prior_work = read(recovery / "recovery.json").get("work_file", "work.json") if recovery else None
@@ -1997,6 +2006,15 @@ def run_locked(args):
         validate_provider_command(command, bound_runtime.get("provider"), skill_root, root, artifact_root)
         tiered_policy = bound_runtime.get("orchestration")
         if tiered_policy:
+            if assignment:
+                view = native(["state", "status", "--store", str(store), "--stream", args.stream,
+                               "--repository-key", payload["repository"]["repository_key"]])
+                reserved = next((item.get("reserved_model_calls") for item in view["assignments"]
+                                 if item["assignment_id"] == assignment), None)
+                if type(reserved) is not int or reserved < 1:
+                    raise ValueError("tiered assignment lacks a native call reservation")
+                tiered_policy = {**tiered_policy,
+                                 "run_limits": {**tiered_policy["run_limits"], "model_calls": reserved}}
             if not getattr(args, "expert_command", None):
                 raise ValueError("tiered review requires --expert-command")
             expert_path = outside(args.expert_command, root)
@@ -2041,6 +2059,8 @@ def run_locked(args):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if assignment:
+            recovery_binding["assignment"] = assignment
         if group_operations:
             recovery_binding["operation_groups"] = "v1"
         if second_mode != "off":
@@ -2652,6 +2672,8 @@ def run_locked(args):
                 copy_bundle_run(run_dir, admitted_run, response_dir)
                 record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
                                   "--reviewer": args.reviewer_label}
+                if assignment:
+                    record_options["--assignment"] = assignment
                 if source_prepared:
                     record_options["--allow-partial"] = "true"
                 if links:
@@ -2677,7 +2699,7 @@ def run_locked(args):
                 if not validate_only:
                     receipts = mutations.apply("admission", entries)
                     record["admission_sequence"] = receipts[0]["sequence"]
-        final_work = fresh_work()
+        final_work = fresh_work(read_completed=True)
         if any(final_work["payload"][key] != payload[key] for key in ("generation", "snapshot_id", "plan_id")):
             raise ValueError("worker ownership or plan changed before result emission")
         state = native(["state", "status", "--store", str(store), "--stream", args.stream,
@@ -2796,6 +2818,7 @@ def main():
     for option in ("scanner", "source-root", "inventory", "store", "stream", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
         parser.add_argument("--" + option, required=True)
     parser.add_argument("--run")
+    parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")

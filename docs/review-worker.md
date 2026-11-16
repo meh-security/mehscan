@@ -539,6 +539,209 @@ unavailable. Provider elapsed totals are sums of calls, not parallel wall time;
 the second-pass summary records its own wall time separately. See
 [usage and cache accounting](#usage-and-cache-accounting) for receipt handling.
 
+## Capture local review memory
+
+Persistent repository reviews use a local Turso database by default. Prepare
+the native inventory with a stable `--repository-key` and keep run artifacts
+outside the source checkout.
+
+```text
+mehscan investigate review-inventory ROOT --repository-key KEY --output RUN/inventory
+mehscan memory location --source-root ROOT --inventory RUN/inventory
+```
+
+Use the returned `state_store` for native `state` commands and `--state-store`
+for memory commands that read the journal. Use a stable stream for successive
+reviews of the same branch and scope. The locations are shared by worktrees
+with matching repository identity, source repository identity and scan prefix.
+
+The default state home is `%LOCALAPPDATA%/mehscan` on Windows,
+`~/Library/Application Support/mehscan` on macOS, and `$XDG_STATE_HOME/mehscan`
+or `~/.local/state/mehscan` on Linux. Set `MEHSCAN_STATE_HOME` to an absolute
+directory outside the source root to choose a different state home. The
+controller creates the repository directory on location lookup and initializes
+the Turso database on the first write. Use `--store FILE` for a specific database
+with `memory` commands and `--memory-store FILE` with `state end`.
+
+[Claim a generation](review-state.md#claim-a-generation) with that journal and
+bind the review plan. Use `memory prepare` for native-only work and `state work`
+for a source-first plan. At close, supply the inventory that was actually
+admitted, including an augmented inventory if the source pass created one.
+Keep the journal and database together for subsequent reviews. An unchanged
+claim may coalesce with an existing attempt. To start a new generation for the
+same inputs, use `--retry true` with the current generation and a fresh attempt ID.
+
+To capture or compare source snapshots directly, run:
+
+```text
+mehscan memory snapshot --source-root ROOT --inventory RUN/inventory
+```
+
+Keep the Turso database outside the source root. Save the returned `snapshot`
+with the review attempt. After preparing an inventory for a later revision, run
+the same command with `--base SNAPSHOT` to get its added, modified and removed
+inputs. File membership follows native inventory discovery, including its normal
+exclusions. Repeated captures with the same source inputs share a snapshot.
+The inventory fingerprint records the native assessment inputs for each capture.
+
+The skill uses these paths for deciding which source to inspect. Review outcomes
+and review coverage still come from the ordinary review worker.
+
+To retain admitted, unambiguous assessments as part of ending a native attempt,
+use the effective inventory of the generation being closed:
+
+```text
+mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
+```
+
+The result reports `memory.status=retained` for a finished or incomplete attempt.
+If the database or source validation fails, the native attempt stays closed and
+the result reports `memory.status=pending` with the reason. Correct the cause
+and retry with the same end operation key, effective inventory, source snapshot,
+and state home. The controller retains the original terminal generation even if
+another attempt has since started. Cancelled attempts report skipped retention.
+For a one-shot run, use a temporary journal and pass `--memory-mode temporary`
+to `state end` to skip Turso retention. Use `state work` or pass the same mode
+to `memory prepare` to skip Turso lookup.
+
+For an attempt already ended without memory, retain its current terminal
+generation explicitly:
+
+```text
+mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
+mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
+```
+
+Retention reads the native journal for the specified generation and inventory.
+Each saved batch links verdicts to their check text and source references.
+Repeated retention of the same batch is idempotent. A lookup verifies the
+current source and returns the latest retained generation for the exact
+inventory and stream.
+Use the returned batches as historical context. Native state remains the
+authority for supersession, unresolved checks, and the current verdict.
+
+To inspect a retained batch after an edit, compare it against an inventory
+created from the current source in the same repository and stream.
+
+```text
+mehscan memory compare --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH
+```
+
+The read-only comparison reports changes to primary files, cited evidence,
+and captured control or configuration files. It also checks the set of files
+that contain watched identifiers, including Razor component names. This search
+covers captured text, where matches can include comments and declarations.
+`decisive_ranges` compares cited bytes at their original offsets. An edit
+elsewhere in a cited file can leave the cited range unchanged.
+`membership_changed` marks a different set of matching files.
+`member_file_changed` marks a content change within the same set. An
+`unavailable` file lacked a baseline hash. Use these observations to choose
+what to recheck. Verdict reuse still requires current native admission.
+
+For Razor components, create both inventories with `--razor-backend` and
+`--razor-sdk` to compare SDK-observed render callers. Use a current helper that
+reports render-use edges. `razor_render_uses.callers` lists added, removed,
+modified and unchanged caller files for the exact component path.
+`unresolved_callers` includes matching unresolved tags and dynamic render calls
+whose targets still need review. Project manifest changes are reported separately.
+The comparison reads the saved inventory observations and requires current
+project inputs. A missing capture is reported as unavailable. The SDK observes
+source bindings within its supplied project context. Runtime dispatch and
+effective deployment configuration still require their own checks.
+
+For an unchanged full-source review, the controller can reuse settled decisions
+from a finished batch in the same native journal and stream. Start the new
+native generation and bind its plan and single-model runtime. For the
+native-only first pass, ask the controller to prepare the work:
+
+```text
+mehscan memory prepare --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security
+```
+
+Save the returned `work_package` as the worker input. The controller checks the
+latest retained batch and records eligible reuse from a matching finished
+generation in native state. An empty list means the requested native work
+has already been accounted for. Remaining IDs still require review. If memory
+is unavailable or incompatible, the controller reports that status and returns
+the native work still outstanding.
+Retrying preparation recovers already admitted reuse. Include the bound
+`--provider-contract` when required and use `--review-ids` for an explicit
+subset. Source-first work plans continue to use their full `state work`
+handoff so they can account for source coverage and AI-only checks.
+
+After a source edit, preparation can include `memory.prior_dependencies` for
+assigned reviews with exact native parents in the retained baseline. It lists
+changed or unavailable evidence files and reference observations. Keep these
+reviews in the current work package and use the observations to guide source
+checks.
+
+To select a specific retained batch, request the current `state work` package
+and pass its saved file to the explicit reuse command:
+
+```text
+mehscan memory reuse --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --owner OWNER --work-package RUN/work.json --skill-root TRUSTED/mehscan-security --batch BATCH --operation-key reuse-BATCH
+```
+
+Include the current `--provider-contract` if the work package binds one. The
+controller checks the current source and plan, the original native admission,
+and the exact current parent of every reused decision. Reviews with pending
+questions or evidence updates remain assigned for review. Other settled reviews
+in the same package can be reused. After reuse,
+obtain a fresh work package for `result.remaining_review_ids`. Only the listed
+native review IDs have been accounted for. Broader source coverage and scoped
+threat-model work use their own checks. If the batch or work contract differs,
+continue ordinary review under the current work package.
+
+### Share retained context with Turso sync
+
+Use a dedicated upstream database for one repository and one sharing boundary.
+Each installation uses a separate replica file outside the checkout. Supply
+`MEHSCAN_TURSO_AUTH_TOKEN` through the environment for authenticated HTTPS or
+Turso endpoints. The official local sync server also supports HTTP on localhost.
+
+```text
+mehscan memory sync pull --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+mehscan memory sync stage --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH --publisher-label LABEL
+mehscan memory sync push --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+mehscan memory sync context --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM
+```
+
+Stage an explicitly selected local batch after the first pull. Staging commits
+its assessments, questions, cited evidence metadata and file dependencies to
+the replica. Review
+summaries and questions travel with the publication. Push sends the staged
+records upstream. Retry the same stage and label to keep the publication ID.
+Use `status` and `checkpoint` with the same replica, endpoint and repository
+arguments to inspect sync counters and checkpoint the replica.
+
+Pull before reading shared context on another installation. Exact repository,
+snapshot, inventory and stream scope the lookup. Conflicting verdicts remain
+visible with their publications. Publisher labels are attribution supplied by
+the publisher. Shared rows are advisory context. Native local admission still
+determines verdict reuse and completion.
+
+### Import legacy review history
+
+The controller accepts versioned review-memory archives through version 7:
+
+```text
+mehscan memory import-legacy --store MEMORY_DB --legacy ARCHIVE.sqlite --origin ARCHIVE_NAME [--legacy-objects OBJECTS.sqlite]
+mehscan memory legacy-history --store MEMORY_DB --origin ARCHIVE_NAME [--assessment ID]
+```
+
+The importer reads the archive through the Rust Turso SDK and retains snapshot,
+assessment, question, evidence-reference, and dependency rows as historical
+context. For older stores, it verifies the content hashes of the case objects
+and extracts their review decisions and evidence locations. Pass `--legacy-objects`
+if the archive's object pack has moved. Keep the original database and its
+object files for evidence excerpts and attachments.
+
+Use the `memory_store` path from `mehscan memory location` as `MEMORY_DB`, or
+choose a separate local Turso file. Give the archive a stable origin name.
+Repeating the same import reuses the saved result. Give a changed archive
+a distinct origin to preserve earlier
+history. Native reuse requires a validated native admission.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create
@@ -908,6 +1111,12 @@ use attempt start/end times for wall time instead of summing call durations.
 The controller does not turn these counters into a provider invoice.
 
 ## Resume missing facts
+
+When a revised inventory maps an assigned native question to an earlier
+`needs_review` decision, the worker supplies its saved deciding questions and
+prior locations. The bundled reviewer uses those locations to guide fresh
+source reads. Questions already registered in the current generation retain
+their current IDs and any bound evidence updates.
 
 Register a question against an exact current needs_review decision/check or a
 current needs_review change-pass question with `state pending`. Use a typed kind

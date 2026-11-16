@@ -123,7 +123,10 @@ else:
         self.assertLess(counts["value"], counts["comprehensive"])
 
     def test_real_worker_finishes_native_admission_without_workflow_secrets_or_replay(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
         directory, plan, record = self.ready("comprehensive")
+        self.assertEqual(record["delta_coverage"]["status"], "pending")
+        self.assertFalse(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
         calls = []
         def execute(argv, **kwargs):
             if str(argv[1]).endswith("review_worker.py"):
@@ -138,13 +141,29 @@ else:
         self.assertEqual(history["attempt_status"], "finished")
         self.assertTrue(history["decisions"])
         self.assertTrue((directory / "review/findings.json").exists())
+        coverage = json.loads((directory / "delta-coverage.json").read_text())
+        self.assertEqual(coverage["status"], "complete", coverage)
+        self.assertEqual(coverage["comparison"]["merge_base_commit"], self.base)
+        self.assertEqual(coverage["endpoints"]["target_commit"], self.head)
+        self.assertEqual(coverage["paths"][0]["status"], "reviewed")
+        self.assertTrue(coverage["paths"][0]["change_pass"]["evidence"])
+        exports = json.loads((directory / "artifacts.json").read_text())
+        self.assertIn("delta-coverage.json", {entry["path"] for entry in exports["files"]})
+        self.assertTrue(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+        self.assertEqual(json.loads((directory / "delta-coverage.json").read_text())["gate"], "passed")
         self.assertEqual(len(calls), 1)
         self.assertFalse(any(key in calls[0] for key in ("GH_TOKEN","GITHUB_TOKEN","OPENAI_API_KEY","WORKFLOW_SECRET","PYTHONPATH")))
         with self.assertRaises(ValueError):
             self.consume(record, execute)
         self.assertEqual(len(calls), 1)
+        self.delivery.base = fixtures.B
+        self.assertFalse(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+        coverage = json.loads((directory / "delta-coverage.json").read_text())
+        self.assertEqual((coverage["status"], coverage["paths"][0]["status"]), ("stale", "stale"))
+        self.assertTrue((directory / "findings.sarif").is_file())
 
     def test_pending_native_answer_does_not_become_security_clearance(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
         self.reviewer.write_text(self.reviewer.read_text().replace('"decision":"issue"', '"decision":"needs_review"')
             .replace('"checks":[]', '"checks":["Requires additional deployment proof."]'))
         directory, plan, record = self.ready()
@@ -152,9 +171,13 @@ else:
         self.assertEqual(result["status"], "reviewed", result)
         self.assertEqual(result["completion"]["security_resolution"], "not_established")
         self.assertTrue(result["completion"]["pending_review_ids"])
+        self.assertEqual(result["delta_coverage"]["status"], "incomplete")
+        self.assertFalse(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+        self.assertTrue((directory / "findings.sarif").is_file())
         self.assertEqual(self.view(directory, plan)["attempt_status"], "finished")
 
     def test_zero_native_queue_still_runs_the_changed_effect_pass(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
         (self.checkout / "app.js").write_text("const current = true;\n")
         self.git("add", ".")
         self.git("commit", "--quiet", "-m", "safe source-only change")
@@ -169,6 +192,32 @@ else:
         self.assertEqual(state["attempt_status"], "finished")
         self.assertEqual(state["completion"]["security_resolution"], "not_established")
         self.assertEqual(json.loads((directory / "review/worker.json").read_text())["status"], "admitted")
+        self.assertEqual(result["delta_coverage"]["counts"]["reviewed"], 1)
+        self.assertTrue(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+
+    def test_incomplete_worker_keeps_native_admission_and_blocks_coverage_gate(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
+        directory, plan, record = self.ready()
+
+        def execute(argv, **kwargs):
+            result = self.execute(argv, **kwargs)
+            if str(argv[1]).endswith("review_worker.py"):
+                path = directory / "review/worker.json"
+                saved = json.loads(path.read_text())
+                self.assertTrue(saved["native_admission"])
+                saved["status"] = "incomplete"
+                path.write_text(json.dumps(saved))
+                raise RuntimeError("synthetic interruption after native admission")
+            return result
+
+        result = self.consume(record, execute)
+        self.assertEqual(result["review_execution"], "partially_admitted", result)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertTrue(result["completion"]["issue_review_ids"])
+        self.assertTrue((directory / "findings.sarif").is_file())
+        self.assertTrue((directory / "artifacts.json").is_file())
+        self.assertFalse(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+        self.assertEqual(self.view(directory, plan)["attempt_status"], "incomplete")
 
     def test_endpoint_drift_before_consumer_prevents_any_worker_launch(self):
         directory, plan, record = self.ready()

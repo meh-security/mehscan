@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 mod review_completion;
 mod review_facts;
+mod review_memory;
 mod review_state;
 mod review_sweep;
 
@@ -42,11 +43,12 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         "scan" => run_scan(arguments),
         "report" => run_report(arguments),
         "state" => review_state::run(arguments),
+        "memory" => review_memory::run(arguments),
         "benchmark" => run_benchmark(arguments),
         "evaluate" => run_evaluation(arguments),
         "investigate" => run_investigation(arguments),
         _ => Err(format!(
-            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', or 'state'"
+            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', 'state', or 'memory'"
         )),
     }
 }
@@ -325,11 +327,13 @@ fn resolve_change_scope(
 fn razor_options(
     backend: Option<PathBuf>,
     sdk: Option<PathBuf>,
+    include_render_uses: bool,
 ) -> Result<Option<mehscan_engine::razor_frontend::RazorOptions>, String> {
     match (backend, sdk) {
         (Some(backend), Some(sdk)) => Ok(Some(mehscan_engine::razor_frontend::RazorOptions {
             backend,
             sdk,
+            include_render_uses,
         })),
         (None, None) => Ok(None),
         _ => Err("--razor-backend and --razor-sdk must be supplied together".into()),
@@ -461,7 +465,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
-    let razor = razor_options(razor_backend, razor_sdk)?;
+    let razor = razor_options(razor_backend, razor_sdk, false)?;
     if typescript_semantic.is_some() != typescript_context.is_some() {
         return Err(
             "--typescript-semantic and --typescript-context must be supplied together".into(),
@@ -819,6 +823,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let razor = razor_options(
                 parsed.optional("--razor-backend").map(PathBuf::from),
                 parsed.optional("--razor-sdk").map(PathBuf::from),
+                true,
             )?;
             let ts_semantic = parsed.optional("--typescript-semantic").map(PathBuf::from);
             let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);
@@ -4592,6 +4597,7 @@ fn print_help() {
     println!(
         "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
     );
+    println!("\nRepository memory: mehscan memory --help");
 }
 
 fn print_report_help() {

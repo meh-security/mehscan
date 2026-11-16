@@ -76,7 +76,10 @@ plus component render-use edges. This separates output interpretation from the
 code and bindings that produce the value. Attribute/event output, active-content
 contexts and unsupported bindings do not supply this HTML-text fact. These records
 are dependency metadata, not vulnerability decisions or general program-equivalence
-certificates. The ordinary `--razor` projection response remains unchanged.
+certificates. An ordinary `--razor` request with `include_render_uses: true`
+adds render-use edges to the projection response using the same generator run.
+Mehscan retains these edges for memory comparison. Dynamic component targets
+and unresolved tags appear as separate observations.
 
 Mapped evidence includes source navigation for directives and framework event
 wiring. Reviewers must establish the effective render mode (Server, WebAssembly,

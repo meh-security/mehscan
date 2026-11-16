@@ -5,6 +5,11 @@ keeps generation ownership and immutable native decisions across processes. The 
 Action can optionally call them on one configured persistent host. Independent
 ephemeral runners do not share a store; see [Action coordination](github-action.md#persistent-host-coordination).
 
+For persistent local reviews, the native journal owns attempts and admissions.
+The paired local Turso database retains eligible decisions and source
+fingerprints for later reviews. One-shot reviews can use a temporary journal
+and close with `--memory-mode temporary`.
+
 ## Claim a generation
 
 Source-bound work-goal reviews also retain `source-review/case-state.sqlite`.
@@ -21,8 +26,13 @@ source provenance. Keep inventory, bundles and state outside the source root.
 
 ```text
 mehscan investigate review-inventory ROOT --repository-key repo:123 --output RUN/inventory
+mehscan memory location --source-root ROOT --inventory RUN/inventory
 mehscan state claim --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --attempt-id run-1 --expected-generation 0 --operation-key claim-run-1
 ```
+
+For persistent local reviews, use the returned `state_store` as `STATE`. See
+[local review memory](review-worker.md#capture-local-review-memory) for the
+database location and one-shot setup.
 
 For Changed review, use the [pinned comparison](../skills/mehscan-security/references/changed-review.md)
 when creating the inventory. The claim validates the saved inventory against the
@@ -45,6 +55,10 @@ or finished snapshots coalesce without returning an owner. Cancelled/incomplete
 snapshots can start a fresh attempt. Attempt IDs cannot be reused for a new
 generation.
 
+Git worktrees can share a state store outside both checkouts. Identical
+inventories on the same stream coalesce across worktree paths. Use different
+streams for independently active branch reviews.
+
 Every mutation requires an `--operation-key`, unique within the entire store.
 Use a stable key for one logical request: retrying identical input returns its
 original receipt; reusing the key for different input fails. `replayed` identifies
@@ -52,6 +66,39 @@ that acknowledgement and `currently_owned` reports whether the original command
 still belongs to the active running attempt. An old receipt can contain an old
 owner and is not current authority. Source-bound claim/record retries still
 validate their inventory and artifacts before returning a receipt.
+
+## Assign reviews to local workers
+
+The generation owner can reserve a distinct set of review IDs for each worker.
+Create a `state work --review-ids ID,ID` package for that set and save it outside
+the checkout. Reserve the package before the worker starts.
+
+```text
+mehscan state allocate --store STATE --stream STREAM --generation N --owner OWNER --source-root ROOT --inventory RUN/inventory --work-package PACKAGE --worker LABEL --operation-key OP
+```
+
+The receipt includes `result.assignment_id`. Work preparation excludes active
+assignments. Submit the complete assigned response with `state record`, using
+the same `--work-package` and the returned `--assignment`. A runtime-bound
+package also requires its skill and provider arguments. The controller records
+the allocation and the validated decisions in the local journal. Repeating
+the same operation key recovers the receipt. Check `currently_owned` on an
+allocation receipt before recovering outstanding work and reconcile any provider
+call whose outcome is unknown.
+
+For the bundled worker, pass `--phase native --assignment ID` with the same
+work package and its exact bundle run.
+
+For a tiered plan, `state allocate --reserve-calls N` reserves model calls
+against the generation's bound run limit. Assign all tiered workers in that
+generation through the controller. The worker uses its own reservation.
+Released assignments remain charged at their reserved limit because the
+provider outcome can be unknown.
+
+Release unfinished work with `state release --store STATE --stream STREAM
+--repository-key KEY --generation N --owner OWNER --assignment ID --operation-key OP`.
+A late response from a released or expired assignment fails admission. Review
+`state history` for completed, released and expired allocations.
 
 ## Admit validated decisions
 
@@ -163,7 +210,7 @@ source or generation; fresh adjudication uses the existing supersession rules.
 ## End execution and preserve the store
 
 ```text
-mehscan state end --store STATE --stream pr:24 --repository-key repo:123 --generation 1 --owner OWNER --status finished --operation-key end-run-1
+mehscan state end --store STATE --stream pr:24 --repository-key repo:123 --generation 1 --owner OWNER --status finished --operation-key end-run-1 --source-root ROOT --inventory RUN/inventory
 ```
 
 Terminal status is `finished`, `cancelled` or `incomplete`. It blocks later writes
@@ -172,7 +219,7 @@ subjects, conflicts or security coverage. Every view retains
 `alert_disposition: "not_established"`. No GHAS dismissal, alert closure, waiver,
 thread resolution or merge gate is inferred from it.
 
-The store is one versioned, hash-chained `transactions.jsonl`. Mutations hold an
+The native journal is one versioned, hash-chained `transactions.jsonl`. Mutations hold an
 exclusive OS file lock through replay, precondition checks, append and `sync_all`;
 reads hold a shared lock. A receipt follows file synchronization. Torn tails,
 unknown schemas, altered hashes, reordered transactions and replay mismatches

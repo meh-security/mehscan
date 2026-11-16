@@ -81,7 +81,8 @@ pub use investigation::{
 pub use location::{Capture, Location, Position};
 pub use protocol::{
     ChangeComparison, ChangedFile, ChangedFileStatus, ChangedLineRange, Diagnostic,
-    DiagnosticLevel, ImpactScanScope, ImpactScopeFile, ScanRequest, ScanResult,
+    DiagnosticLevel, ImpactScanScope, ImpactScopeFile, RazorRenderBindings, RazorRenderUse,
+    ScanRequest, ScanResult,
 };
 pub use relation::{
     ProtectionApplication, RelationContract, RelationProtection, RelationSink, RelationSource,

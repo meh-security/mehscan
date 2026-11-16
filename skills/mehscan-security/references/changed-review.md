@@ -47,8 +47,8 @@ when it exceeds the user's requested work.
 
 ## Change pass and selected questions
 
-For a V11 stateful workflow, use the [local worker guide](../../../docs/review-worker.md).
-Register the selected/deferred native partition and every changed path with
+For a stateful workflow, use the [local worker guide](../../../docs/review-worker.md).
+Register selected and deferred native IDs and every changed path with
 `state plan`. Keep source-only leads when no native ID represents a changed
 effect. Reviewed entries have no questions; unresolved effects use needs_review
 with specific questions and actual pinned old/current evidence. A complete
@@ -96,26 +96,24 @@ or pretend the bundle manifest accounts for them.
 
 Keep a compact run note with comparison, policy, change-pass conclusions,
 selected/deferred IDs, context reads, unresolved questions and coverage gaps.
-An empty scope is different from a deletion-only, unsupported, ignored or
-unparseable change. Zero admitted IDs never clears those changes. The CLI
-validates bundle work; it does not yet verify completion of the skill's change
-pass or issue a PR merge verdict.
+Account for deletion-only, unsupported, ignored and unparseable changes even
+when there are zero native IDs. Use native completion to confirm the recorded
+change pass, then report open effects, deferred work and missing evidence.
+For the Action, read the separate delta coverage result before reporting that
+the pinned change is covered.
 
 Changed bundles must retain their `requests/`, manifest and `input-binding.json`.
 Pass `--source-root ROOT` to finalization, triage, summary and report. Moved refs,
 different changed paths or changed source/context bytes make the run stale.
 The changed-content snapshot also binds unsupported and non-UTF-8 file bytes.
-Regenerate the inventory. On each PR push or base change, review the whole current
-PR comparison, not only the last push. Do not reuse `not_issue` or `needs_review`
-across revisions as an automatic dismissal. Native identity is a matching aid;
-dependency-based revalidation and GitHub publication are later work. Canonical
-JSON preserves all-verdict decision records. Optional [local state](../../../docs/review-state.md)
-retains generation ownership and those records across processes, requires fresh
-validated admission and explicit exact-parent supersession, and exposes missing
-or conflicting work. Use the coordinator's supplied store, stream and ownership;
-do not invent a current PR generation. Its `finished` status does not complete
-the change pass or establish security coverage. The Action optionally uses it on
-one persistent host; native-only execution still leaves AI questions unassessed.
+Regenerate the inventory and review the whole current PR comparison on each
+push or base change. Use native identities to locate history and recheck the
+deciding evidence after a revision changes. For persistent local work, use the
+controller's [journal and Turso memory](../../../docs/review-worker.md#capture-local-review-memory).
+Keep the stream and ownership supplied by the coordinator. Canonical JSON and
+the journal preserve verdicts, exact-parent supersession, and missing or
+conflicting work. Exact memory reuse applies to eligible settled native
+decisions on unchanged full-source inputs.
 
 Keep Changed output advisory. Confirmed SARIF defaults to the stable
 `mehscan/triaged/changed` category; an explicit `--sarif-category` selects a
@@ -125,8 +123,15 @@ leaves alert disposition unestablished; GitHub ignores that custom metadata and
 may close absent alerts if a partial artifact is uploaded. Keep the artifact
 downloadable until the integration's baseline and closure behavior is verified.
 
-The [advisory native Action](../../../docs/github-action.md) can prepare the pinned
-inventory and source contract. Its `native_only` status does not complete this
-skill's change pass or the selected AI work. Use its original bound inventory
-and source endpoint; stale or incomplete artifacts need a fresh run. Source-fork
-provenance remains separate from the base product's repository namespace.
+## One-shot GitHub Action
+
+Use the [Action guide](../../../docs/github-action.md#delta-coverage) for pinned
+PR review with temporary state. `native_only` means inventory preparation
+finished and reviewer work is still outstanding. When a workflow requires
+complete delta coverage, use Comprehensive with an authorized reviewer.
+
+Read `delta-coverage.json` alongside the findings. Check the base tip, merge
+base, head and scan root, then report pending, deferred or unavailable work.
+Cite the pinned base for modified, removed or renamed source and cite the
+changed current ranges when marking a path reviewed. An admitted issue can coexist with a
+passing coverage gate. A stale result belongs to its original revision.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only GitHub adapter for native Changed inventory; never a merge gate."""
+"""Pinned GitHub delta review and advisory coverage accounting."""
 import base64
 from contextlib import contextmanager
 import hashlib
@@ -176,6 +176,8 @@ def contract(plan, comparison=None, inventory=None):
     result = {"schema_version": SCHEMA, "endpoints": plan["endpoints"], "policy": policy(plan),
               "scan_root": plan["scan_root"], "scanner_sha256": plan["scanner_sha256"],
               "adapter_sha256": plan["adapter_sha256"]}
+    if plan.get("require_complete_delta_coverage"):
+        result["require_complete_delta_coverage"] = True
     if plan.get("review"):
         result["review_runtime"] = {key: value for key, value in plan["review"].items() if key not in ("skill_root", "provider_contract")}
     if comparison is not None:
@@ -338,6 +340,9 @@ def prepare(get=None, execute=run_command):
     mode = os.environ.get("MEHSCAN_REVIEW_MODE", "native")
     if mode not in ("native", "value", "comprehensive"):
         raise ValueError("review mode must be native, value or comprehensive")
+    require_coverage = os.environ.get("MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE", "false")
+    if require_coverage not in ("true", "false"):
+        raise ValueError("require-complete-delta-coverage must be true or false")
     if mode != "native" and os.environ.get("MEHSCAN_STATE_STORE", ""):
         raise ValueError("review handoff currently requires fresh one-run state; persistent review is unsupported")
     endpoints, skip = resolve_delivery(get)
@@ -354,6 +359,8 @@ def prepare(get=None, execute=run_command):
             "scanner_sha256": file_digest(scanner),
             "adapter_sha256": file_digest(__file__)}
     plan["state"] = state_options()
+    if require_coverage == "true":
+        plan["require_complete_delta_coverage"] = True
     if ai_skip:
         plan["ai_skip_reason"] = ai_skip
     if mode != "native":
@@ -400,7 +407,7 @@ def prepare(get=None, execute=run_command):
     plan["should_scan"] = reason is None
     plan["skip_reason"] = reason
     write_json(directory / "plan.json", plan)
-    write_json(directory / "run.json", {"schema_version": SCHEMA, "status": "prepared" if plan["should_scan"] else "skipped",
+    persist_result(directory, {"schema_version": SCHEMA, "status": "prepared" if plan["should_scan"] else "skipped",
                "reason": reason, "snapshot_id": digest(contract(plan)), "run_id": run_id,
                "run_attempt": attempt, "contract": contract(plan), "policy": policy(plan)})
     outputs({"directory": directory, "plan": directory / "plan.json", "should-scan": str(plan["should_scan"]).lower(),
@@ -554,15 +561,154 @@ def export_module():
     return module
 
 
+def uncovered_current_ranges(file, entry):
+    citations = [item["source"] for item in entry.get("evidence", [])]
+    ranges = sorted((source["start_line"], source["end_line"]) for source in citations
+                    if source["side"] == "current" and source["path"] == file["path"])
+    uncovered = []
+    for hunk in file.get("changed_lines", []):
+        next_line = hunk["start"]
+        for first, last in ranges:
+            if last < next_line:
+                continue
+            if first > next_line:
+                break
+            next_line = last + 1
+            if next_line > hunk["end"]:
+                break
+        if next_line <= hunk["end"]:
+            uncovered.append(hunk)
+    return uncovered
+
+
+def delta_coverage(record):
+    contract_data = record["contract"]
+    endpoints = contract_data["endpoints"]
+    comparison = contract_data.get("comparison") or {}
+    scope = record.get("native_inventory", {}).get("impact_scope") or {}
+    execution = record["status"]
+    completion = record.get("completion", {})
+    changed = scope.get("changed_files", [])
+    reviewed = completion.get("changed_paths")
+    entries = {} if reviewed is None else {entry["path"]: entry for entry in reviewed}
+    path_set_matches = ("changed_files" in scope and scope.get("comparison") == comparison
+                        and reviewed is not None and len(entries) == len(reviewed) == len(changed)
+                        and entries.keys() == {entry["path"] for entry in changed})
+    statuses = {
+        "reviewed": ("reviewed", "source_effect_reviewed"),
+        "needs_review": ("pending", "open_changed_effect"),
+        "unassessed": ("unavailable", "change_pass_not_completed"),
+        "coverage_gap": ("unavailable", "change_pass_coverage_gap"),
+        "deferred": ("deferred", "change_pass_deferred"),
+    }
+    paths = []
+    for file in changed:
+        entry = entries.get(file["path"]) if path_set_matches else None
+        native_status = entry["status"] if entry is not None else None
+        status, reason = statuses.get(native_status, ("unavailable", "change_pass_not_completed"))
+        uncovered = uncovered_current_ranges(file, entry) if status == "reviewed" else []
+        if uncovered:
+            status, reason = "unavailable", "changed_ranges_uncovered"
+        if execution in ("review_ready", "prepared"):
+            status, reason = "pending", "awaiting_review"
+        elif execution in ("stale", "cancelled"):
+            status, reason = execution, record["reason"]
+        row = {"path":file["path"], "change":file["status"], "status":status, "reason":reason}
+        if file.get("previous_path"):
+            row["previous_path"] = file["previous_path"]
+        if uncovered:
+            row["uncovered_current_ranges"] = uncovered
+        if entry is not None:
+            row["change_pass"] = {key: value for key, value in entry.items() if key != "path"}
+        paths.append(row)
+    counts = dict.fromkeys(("reviewed", "pending", "deferred", "unavailable", "stale", "cancelled"), 0)
+    for row in paths:
+        counts[row["status"]] += 1
+    native_work = {key: completion.get(key, default) for key, default in (
+        ("pending_review_ids", []), ("missing_or_conflicting_review_ids", []), ("deferred_review_ids", {}),
+    )}
+    if execution in ("skipped", "stale", "cancelled"):
+        status, reason = execution, record["reason"]
+    elif execution in ("prepared", "review_ready"):
+        status, reason = "pending", "awaiting_review"
+    elif execution == "selection_required":
+        status, reason = "incomplete", "review_selection_required"
+    elif execution == "native_only":
+        status, reason = "unavailable", record["reason"]
+    elif execution != "reviewed":
+        status, reason = "incomplete", record["reason"]
+    elif not comparison or not path_set_matches:
+        status, reason = "unavailable", "pinned_change_pass_accounting_unavailable"
+    elif not completion.get("review_work_complete") or counts["reviewed"] != len(paths) or any(native_work.values()):
+        status, reason = "incomplete", "required_review_work_remains"
+    else:
+        status, reason = "complete", "pinned_delta_reviewed"
+    required = contract_data.get("require_complete_delta_coverage", False)
+    if not required:
+        gate = "disabled"
+    elif status == "skipped":
+        gate = "not_applicable"
+    elif status == "complete":
+        gate = "passed" if record.get("delta_gate_snapshot") == record["snapshot_id"] else "pending"
+    else:
+        gate = "blocked"
+    return {"schema_version":"1", "snapshot_id":record["snapshot_id"], "execution_status":execution,
+            "endpoints":endpoints, "comparison":comparison or None, "scan_root":contract_data["scan_root"],
+            "policy":contract_data["policy"], "status":status, "reason":reason, "gate":gate,
+            "counts":counts, "paths":paths, "native_work":native_work}
+
+
 def save_result(directory, record):
-    write_json(directory / "run.json", record)
+    if "exports" in record and "delta-coverage.json" not in record["exports"]["files"]:
+        record["exports"]["files"].append("delta-coverage.json")
+    persist_result(directory, record)
     if "completion" in record:
         write_json(directory / "completion.json", {"schema_version":"1", "snapshot_id":record["snapshot_id"],
-            "endpoints":record["contract"]["endpoints"], "execution_status":record["status"], "completion":record["completion"]})
+            "endpoints":record["contract"]["endpoints"], "execution_status":record["status"],
+            "completion":record["completion"], "delta_coverage":record["delta_coverage"]})
     if "exports" in record:
         export_module().manifest(directory, record["exports"])
     summary(directory, record)
     return record
+
+
+def persist_result(directory, record):
+    coverage = delta_coverage(record)
+    write_json(directory / "delta-coverage.json", coverage)
+    record["delta_coverage"] = {key: coverage[key] for key in ("status", "reason", "counts", "gate")}
+    write_json(directory / "run.json", record)
+
+
+def coverage_gate(plan_path, get=None):
+    plan_path = Path(plan_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if not plan.get("require_complete_delta_coverage"):
+        return True
+    record = json.loads((plan_path.parent / "run.json").read_text(encoding="utf-8"))
+    saved_contract = record["contract"]
+    if (digest(saved_contract) != record["snapshot_id"] or
+            saved_contract != contract(plan, saved_contract.get("comparison"), saved_contract.get("inventory_inputs"))):
+        raise ValueError("coverage gate requires the pinned review result")
+    coverage = delta_coverage(record)
+    if coverage["status"] == "complete":
+        get = get or GitHub(os.environ.get("GITHUB_API_URL", "https://api.github.com"), os.environ.get("GH_TOKEN", "")).get
+        try:
+            current = is_current(plan["endpoints"], observe(plan, get))
+        except (OSError, ValueError, KeyError, RuntimeError, urllib.error.URLError):
+            record.update(status="incomplete", reason="endpoints_unavailable_at_coverage_gate")
+        else:
+            if current:
+                record["delta_gate_snapshot"] = record["snapshot_id"]
+                save_result(plan_path.parent, record)
+                return True
+            record.update(status="stale", reason="endpoints_changed_before_coverage_gate")
+        record.pop("delta_gate_snapshot", None)
+        save_result(plan_path.parent, record)
+        coverage = record["delta_coverage"]
+    elif coverage["gate"] == "not_applicable":
+        return True
+    print(f"Mehscan required delta coverage is {coverage['status']} ({coverage['reason']}).", file=sys.stderr)
+    return False
 
 
 def coordinate(plan, directory, record, get, execute, cancelled):
@@ -818,14 +964,16 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
             if (directory / "bundles").exists():
                 argv += ["--run", str(directory / "bundles")]
             # The native worker owns finalization/report validation and admission.
-            worker_error=None
+            worker_error = None
             try:
                 execute(argv, cwd=control, env=review_environment())
-            except (RuntimeError,subprocess.SubprocessError) as error:
-                worker_error=error
-                if not (directory/"review/worker.json").is_file():raise
-            worker_record = json.loads((directory / "review/worker.json").read_text(encoding="utf-8"))
-            if worker_record["status"] == "selection_required":
+            except (RuntimeError, subprocess.SubprocessError) as error:
+                worker_error = error
+            worker_path = directory / "review/worker.json"
+            worker_record = json.loads(worker_path.read_text(encoding="utf-8")) if worker_path.is_file() else {}
+            admitted = worker_record.get("status") == "admitted"
+            native_admission = admitted or worker_record.get("native_admission") is True
+            if worker_record.get("status") == "selection_required" and worker_error is None:
                 record.update(status="selection_required", reason="bounded_value_selection_required",
                               review_execution="selection_required",
                               source_selection=str(directory / "review/source-review/selection-options.json"))
@@ -850,36 +998,45 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 if owned["generation"]!=derived["generation"] or owned["snapshot_id"]!=derived["snapshot_id"]:
                     raise ValueError("source review generation changed before result")
                 receipt=derived
-                if worker_record["status"]=="admitted":
+                if admitted:
                     state_json(plan,execute,"work",[*common,"--inventory",str(augmented),"--source-root",str(Path(plan["checkout"])/plan["scan_root"]),
                         "--generation",str(derived["generation"]),"--owner",derived["owner"],"--skill-root",plan["review"]["skill_root"],*provider_arguments(plan)])
                 record["coordination"].update(generation=receipt["generation"],native_snapshot_id=receipt["snapshot_id"])
                 record["source_review"]=worker_record.get("source_review")
-            if worker_error:raise worker_error
-            if worker_record["status"] != "admitted":
-                raise ValueError("review worker did not admit a result")
-            record["review_execution"] = "admitted"
             review_tools(plan, execute)
             review_source(plan, execute)
             current = state_json(plan, execute, "status", [*common, "--repository-key", key])
             if current["generation"] != receipt["generation"] or current["snapshot_id"] != receipt["snapshot_id"]:
                 raise ValueError("review generation changed before result")
-            record["completion"] = current["completion"]
+            completion = current["completion"]
+            # The initial plan lists missing work even before a reviewer can
+            # start. Publish completion accounting once there is review progress.
+            if (native_admission
+                    or any(subject["current_decision_ids"] for subject in current.get("subjects", ()))
+                    or any(path["status"] != "unassessed" for path in completion.get("changed_paths", ()))):
+                record["completion"] = completion
             if cancelled():
                 raise CancelledRun()
             if not is_current(plan["endpoints"], observe(plan, get)):
                 record.update(status="stale", reason="endpoints_changed_during_review")
+            elif worker_error is not None or not admitted:
+                record.update(status="incomplete", reason="review_worker_incomplete")
             else:
-                record.update(status="reviewed", reason="advisory_review_finished")
+                record.update(status="reviewed", reason="advisory_review_finished", review_execution="admitted")
                 terminal = "finished"
-            record["exports"] = export_module().export_review(plan, directory, record, reviewer_label, execute, native_environment())
-            review_tools(plan, execute)
-            review_source(plan, execute)
-            if cancelled():
-                raise CancelledRun()
-            if not is_current(plan["endpoints"], observe(plan, get)):
-                record.update(status="stale", reason="endpoints_changed_during_export")
-                terminal = "incomplete"
+            if native_admission:
+                if record["status"] == "incomplete":
+                    record["review_execution"] = "partially_admitted"
+                elif record["status"] == "stale":
+                    record["review_execution"] = "admitted" if admitted else "partially_admitted"
+                record["exports"] = export_module().export_review(plan, directory, record, reviewer_label, execute, native_environment())
+                review_tools(plan, execute)
+                review_source(plan, execute)
+                if cancelled():
+                    raise CancelledRun()
+                if not is_current(plan["endpoints"], observe(plan, get)):
+                    record.update(status="stale", reason="endpoints_changed_during_export")
+                    terminal = "incomplete"
     except CancelledRun:
         record.update(status="cancelled", reason="attempt_cancelled")
         terminal = "cancelled"
@@ -903,8 +1060,7 @@ def finish(plan_path, get=None, execute=run_command, cancelled=is_cancelled):
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     record = json.loads((directory / "run.json").read_text(encoding="utf-8"))
     if not plan["should_scan"]:
-        summary(directory, record)
-        return record
+        return save_result(directory, record)
     get = get or GitHub(os.environ.get("GITHUB_API_URL", "https://api.github.com"), os.environ.get("GH_TOKEN", "")).get
     try:
         if file_digest(__file__) != plan["adapter_sha256"]:
@@ -963,6 +1119,8 @@ def summary(directory, record):
             text += f"\nReview work complete: `{str(record['completion']['review_work_complete']).lower()}`. Security resolution: `{record['completion']['security_resolution']}`.\n"
     if record.get("reason"):
         text += f"\nReason: `{record['reason']}`.\n"
+    coverage = record["delta_coverage"]
+    text += f"\nDelta coverage: **{coverage['status']}** (`{coverage['reason']}`). Gate: `{coverage['gate']}`.\n"
     if "native_inventory" in record:
         text += f"\nNative questions admitted: {record['native_inventory']['review_count']}.\n"
     coordination = record.get("coordination", {"mode": "none", "state": "disabled"})
@@ -990,6 +1148,8 @@ def summary(directory, record):
                 handle.write(text_counts)
     outputs({key:value if completion else "" for key,value in counts.items()})
     outputs({"review-work-complete":str(completion["review_work_complete"]).lower() if completion else ""})
+    outputs({"delta-coverage-status":coverage["status"], "delta-coverage-reason":coverage["reason"],
+             "delta-coverage-gate":coverage["gate"]})
     outputs({"status": record["status"], "snapshot-id": record["snapshot_id"],
              "coordination-status": coordination["state"], "generation": coordination.get("generation", ""),
              "review-handoff": record.get("review_handoff", "")})
@@ -1007,6 +1167,9 @@ if __name__ == "__main__":
             print(json.dumps(lane))
         elif len(sys.argv) == 3 and sys.argv[1] == "finish":
             finish(sys.argv[2])
+        elif len(sys.argv) == 3 and sys.argv[1] == "require-coverage":
+            if not coverage_gate(sys.argv[2]):
+                sys.exit(1)
         elif len(sys.argv) == 3 and sys.argv[1] == "run-model":
             result = run_model(sys.argv[2])
             if result["status"] not in ("reviewed", "selection_required"):
@@ -1016,7 +1179,7 @@ if __name__ == "__main__":
             if result["status"] not in ("reviewed", "selection_required"):
                 sys.exit(2)
         else:
-            raise ValueError("expected prepare, finish PLAN, run-model PLAN or review HANDOFF --reviewer-command FILE --reviewer-label LABEL")
+            raise ValueError("expected prepare, finish PLAN, require-coverage PLAN, run-model PLAN or review HANDOFF --reviewer-command FILE --reviewer-label LABEL")
     except Exception as error:
         print(f"Mehscan advisory adapter could not prepare artifacts ({type(error).__name__}).", file=sys.stderr)
         sys.exit(2)

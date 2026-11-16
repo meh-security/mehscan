@@ -32,6 +32,19 @@ information; do not impose a monetary cap unless the user requests one.
 Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 
+Use [local review memory](../../docs/review-worker.md#capture-local-review-memory)
+by default for persistent repository reviews. After preparing the inventory with
+a stable `--repository-key`, use `mehscan memory location` to get the journal
+path and keep the same stream for successive reviews of the same branch and
+scope. For native-only work, use `mehscan memory prepare` after binding the plan
+and pass its returned `work_package` to the worker. Skip model dispatch when
+the native selection is already accounted for. Review remaining IDs, including
+pending checks. For source-first plans, use `state work` so all declared source
+checks reach the worker. End the generation with its effective `--inventory`
+and `--source-root` to retain native decisions. If retention reports pending,
+retry the same end operation after correcting the cause. For one-shot work,
+use a temporary journal and `--memory-mode temporary` at close.
+
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security
 decisions default to the review owner. Do not assign a general first pass,
@@ -234,6 +247,7 @@ Comprehensive scope alone does not request a Full second-pass audit.
 | Candidate scan | `mehscan scan ROOT --format candidates` (or `json`) |
 | Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
 | Local changes, PR or release review | [Changed review](references/changed-review.md) |
+| Read or configure a PR CI coverage result | [GitHub Action coverage](references/changed-review.md#one-shot-github-action) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
 Candidates are leads, not confirmed vulnerabilities. Value keeps admitted native

@@ -400,6 +400,16 @@ fn walk_directory(
         .follow_links(false)
         .sort_by_file_name(|left, right| left.cmp(right))
         .filter_entry(move |entry| {
+            if entry.depth() > 0
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(".git"))
+            {
+                // A linked worktree has a .git pointer file in place of the
+                // metadata directory. Neither is an inventory input.
+                return false;
+            }
             let ignored = entry.depth() > 0
                 && entry.file_type().is_some_and(|kind| kind.is_dir())
                 && ignored_directory(entry.path(), &filter_root);
@@ -1013,6 +1023,8 @@ mod tests {
         )
         .expect("gitignore fixture");
         fs::write(root.join(".ignore"), "scratch.py\n").expect("ignore fixture");
+        fs::write(root.join(".git"), "gitdir: ../git/worktrees/fixture\n")
+            .expect("worktree pointer");
         fs::write(root.join("keep.js"), "eval(input);\n").expect("kept source");
         fs::write(root.join(".hidden.js"), "eval(input);\n").expect("hidden source");
         fs::write(root.join("ignored/bad.js"), "eval(input);\n").expect("ignored source");
@@ -1035,6 +1047,7 @@ mod tests {
         assert!(!paths.contains(&"ignored/bad.js"));
         assert!(!paths.contains(&"ordinary.generated.js"));
         assert!(!paths.contains(&"scratch.py"));
+        assert!(!paths.contains(&".git"));
         assert!(!paths.contains(&"target/keep.rs"));
         assert!(discovery.ignored_subtrees.contains(&"target/".to_string()));
 

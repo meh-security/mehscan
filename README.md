@@ -13,6 +13,8 @@ It runs locally without building or executing your application. Use the CLI on i
 - Investigate serializer, deserializer and XML parser implementations with language-specific source checks.
 - Match a Rust lockfile against a local copy of the RustSec advisory database.
 - Keep findings, dismissals and unresolved questions with their supporting evidence.
+- Retain local review history in Turso and reuse eligible decisions on unchanged source.
+- Review a pinned pull-request diff in GitHub Actions with an optional coverage gate.
 - Group related findings while preserving affected callers and conditions.
 - Automatically select a bounded Fast follow-up, or audit all eligible results with Full.
 - Export JSON, SARIF and Markdown reports.
@@ -62,13 +64,46 @@ mehscan scan path/to/repository --format sarif-candidates > candidates.sarif
 
 Candidates are starting points for investigation. Review them before treating them as confirmed vulnerabilities.
 
-Review changed files:
+Scan changed files for candidates:
 
 ```sh
 mehscan scan path/to/repository --changed-from HEAD --diff-mode files --format candidates
 ```
 
 See the [Changed review guide](skills/mehscan-security/references/changed-review.md) for local changes, pull requests and release comparisons.
+
+## Local review memory
+
+Persistent reviews through the security skill use a local Turso database and a
+review journal outside the checkout. Reuse the same repository key and stream
+for successive reviews of the same branch and scope. An unchanged native-only
+review can reuse eligible settled decisions without another model call. Source
+edits, pending checks and additional source-first work still need review.
+
+For manual setup, prepare an inventory with `--repository-key`, then run
+`mehscan memory location --source-root ROOT --inventory RUN/inventory` to find
+the journal and database. Set `MEHSCAN_STATE_HOME` to an absolute directory
+outside the checkout to change their location. For one-shot work, use a
+temporary journal and close with `state end --memory-mode temporary`.
+The [local memory guide](docs/review-worker.md#capture-local-review-memory)
+covers preparation, retention and importing older history.
+Use [local worker assignments](docs/review-state.md#assign-reviews-to-local-workers)
+to reserve distinct reviews, or [Turso sync](docs/review-worker.md#share-retained-context-with-turso-sync)
+to share retained context between installations.
+
+## Pull-request review in GitHub Actions
+
+The [GitHub Action](docs/github-action.md) prepares an inventory for the full
+current PR diff within the configured scan root. With an authorized reviewer,
+it assesses changed source even when the scanner finds zero candidates.
+`delta-coverage.json` records the pinned revisions, reviewed paths and remaining
+work separately from findings.
+
+For one-shot review with an enforced coverage check, configure the trusted
+reviewer, choose `review-mode: comprehensive` and set
+`require-complete-delta-coverage: 'true'`. Keep the artifact upload enabled after
+failures so incomplete runs can still deliver findings and coverage. See the
+[coverage gate setup](docs/github-action.md#delta-coverage).
 
 ## AI-assisted review
 
@@ -110,7 +145,7 @@ After your agent has reviewed the bundles, generate a report:
 mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id
 ```
 
-For scripted use, the [local AI worker](docs/review-worker.md) runs a configured reviewer, tracks progress, and records token usage, cached input and timing. The [Codex adapter guide](docs/codex-reviewer.md) covers model setup, dependencies and optional flow diagnostics. The [advisory GitHub Action](docs/github-action.md) supports pull-request and release review.
+For scripted use, the [local AI worker](docs/review-worker.md) runs a configured reviewer, tracks progress, and records token usage, cached input and timing. The [Codex adapter guide](docs/codex-reviewer.md) covers model setup, dependencies and optional flow diagnostics.
 
 ## Documentation
 
@@ -119,6 +154,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Rust security coverage](docs/rust-security-coverage.md)
 - [Review and report formats](docs/output-contract.md)
 - [Local AI worker](docs/review-worker.md)
+- [Local review memory](docs/review-worker.md#capture-local-review-memory)
 - [Codex reviewer setup](docs/codex-reviewer.md)
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)

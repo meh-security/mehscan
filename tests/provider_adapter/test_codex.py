@@ -23,6 +23,27 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_saved_deciding_questions_reach_native_and_source_prompts_without_old_source(self):
+        packet = copy.deepcopy(self.body)
+        packet["work"]["active_gaps"] = [{"review_id":"current", "prior_decision_id":"prior",
+            "prior_summary":"Caller scope remained open.", "questions":[{"text":"Which caller binds the role?"}],
+            "prior_locations":[{"path":"caller.js", "start_line":3, "end_line":5}]}]
+        packet["work"]["parent_decisions"] = [
+            {"decision_id":"prior", "evidence":"old source excerpt"},
+        ]
+        for kind in ("native_bundle", "source_review"):
+            with self.subTest(kind=kind):
+                task = {**self.task, "kind":kind}
+                if kind == "source_review":
+                    packet["contract"] = "Trusted source contract"
+                prompt = protocol.build_prompt(task, packet, [], None)
+                self.assertIn("Which caller binds the role?", prompt)
+                self.assertIn("historical leads", prompt)
+                self.assertIn("caller.js", prompt)
+                self.assertNotIn("old source excerpt", prompt)
+                self.assertEqual(prompt.count("Which caller binds the role?"), 1)
+        self.assertEqual(packet["work"]["parent_decisions"][0]["evidence"], "old source excerpt")
+
     def test_first_pass_scheduling_field_is_typed_and_absent_from_quality_roles(self):
         self.task.update(kind="native_bundle", review_ids=["one"], followup_selection=True)
         schema=protocol.build_schema(self.task)

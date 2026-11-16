@@ -95,6 +95,20 @@ pub struct Diagnostic {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RazorRenderUse {
+    pub path: String,
+    /// Captured declaration path, `*` for dynamic dispatch, or `component:NAME`
+    /// for an unresolved component tag.
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RazorRenderBindings {
+    pub uses: Vec<RazorRenderUse>,
+    pub project_inputs: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScanResult {
     pub schema_version: String,
     pub root: String,
@@ -104,6 +118,8 @@ pub struct ScanResult {
     pub coverage: Coverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub impact_scope: Option<ImpactScanScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub razor_render_bindings: Option<RazorRenderBindings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
 }

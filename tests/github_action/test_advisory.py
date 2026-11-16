@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -64,6 +65,7 @@ class FixtureBase(unittest.TestCase):
                     "MEHSCAN_STATE_STORE": "", "MEHSCAN_STATE_RETRY": "false",
                     "MEHSCAN_REVIEW_MODE": "native", "MEHSCAN_SKILL_ROOT": "", "MEHSCAN_PROVIDER_CONTRACT": "",
                     "MEHSCAN_PROVIDER_CONFIG": "", "MEHSCAN_ALLOW_FORK_REVIEW": "false",
+                    "MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE": "false",
                     "GITHUB_OUTPUT": str(self.workspace / "outputs"), "GITHUB_STEP_SUMMARY": str(self.workspace / "summary")}
         self.patch = patch.dict(os.environ, self.env)
         self.patch.start()
@@ -86,6 +88,38 @@ class FixtureBase(unittest.TestCase):
             return adapter.finish(directory / "plan.json", self.delivery.get, **kwargs)
 
 class Lifecycle(FixtureBase):
+    def test_required_coverage_preserves_uncited_hunks_and_work_on_failed_execution(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
+        directory, _ = self.prepare()
+        record = self.finish(directory)
+        scope = record["native_inventory"]["impact_scope"]
+        scope["changed_files"] = [
+            {"path":"app.js", "status":"modified", "changed_lines":[{"start":3, "end":4}, {"start":18, "end":18}]},
+            {"path":"removed.js", "status":"deleted"},
+        ]
+        def proof(start, end, path="app.js", side="current"):
+            return {"artifact_id":"fixture", "source":{"path":path, "side":side, "start_line":start, "end_line":end}}
+
+        record["status"] = "reviewed"
+        record["completion"] = {"review_work_complete":True, "changed_paths":[
+            {"path":"app.js", "status":"reviewed", "evidence":[proof(3, 3), proof(4, 4), proof(18, 18, "caller.js")]},
+            {"path":"removed.js", "status":"reviewed", "evidence":[proof(1, 5, "removed.js", "base")]},
+        ]}
+        coverage = adapter.delta_coverage(record)
+        self.assertEqual(coverage["gate"], "blocked")
+        self.assertEqual(coverage["paths"][0]["uncovered_current_ranges"], [{"start":18, "end":18}])
+        record["completion"]["changed_paths"][0]["evidence"].append(proof(18, 18))
+        self.assertEqual(adapter.delta_coverage(record)["status"], "complete")
+        record.update(status="incomplete", reason="review_worker_incomplete")
+        adapter.save_result(directory, record)
+        self.assertFalse(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
+        gate = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/github_action.py"),
+                               "require-coverage", str(directory / "plan.json")], capture_output=True)
+        self.assertEqual(gate.returncode, 1, gate.stderr)
+        coverage = json.loads((directory / "delta-coverage.json").read_text())
+        self.assertEqual(coverage["counts"]["reviewed"], 2)
+        self.assertEqual(coverage["status"], "incomplete")
+
     def test_authoritative_head_base_branch_tip_and_fork_namespace(self):
         self.delivery.pr = pr(fork=True)
         self.delivery.base = B
@@ -159,10 +193,12 @@ class Lifecycle(FixtureBase):
             self.assertEqual(result["policy"]["integration_review"], "not_run")
 
     def test_missing_metadata_history_and_cancellation_stay_incomplete_or_cancelled(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
         directory, _ = self.prepare()
         with patch.object(adapter, "scan", side_effect=RuntimeError("untrusted ::error:: do not print")):
             result = adapter.finish(directory / "plan.json", self.delivery.get)
         self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["delta_coverage"]["gate"], "blocked")
         self.assertNotIn("::error::", (directory / "summary.md").read_text())
         self.assertEqual(self.finish(directory, cancelled=lambda: True)["status"], "cancelled")
         directory, _ = self.prepare()
@@ -428,6 +464,9 @@ class NativeSmoke(NativeFixture):
         self.assertGreater(result["native_inventory"]["review_count"], 0)
         names = {entry["path"] for entry in result["native_inventory"]["impact_scope"]["changed_files"]}
         self.assertEqual(names, {"app.js", "notes.txt"})
+        coverage = json.loads((directory / "delta-coverage.json").read_text())
+        self.assertEqual(coverage["status"], "unavailable")
+        self.assertEqual({entry["path"] for entry in coverage["paths"]}, names)
         self.assertEqual(result["contract"]["comparison"]["merge_base_commit"], self.base)
         overview = json.loads((directory / "inventory/overview.json").read_text())
         self.assertEqual(overview["native_identity"]["repository"]["repository_key"], "github.com/repositories/123")

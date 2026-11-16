@@ -409,6 +409,9 @@ pub struct ReviewInventory {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_catalog: Option<mehscan_core::ReviewIdentityCatalog>,
     pub schema_version: String,
+    /// New inventories bind the input contents independently of checkout location.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    portable_input_fingerprint: bool,
     /// Invalidates cached Rust facts without expiring unrelated language work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rust_configuration_revision: Option<String>,
@@ -434,7 +437,14 @@ pub struct ReviewInventory {
 impl ReviewInventory {
     /// Bind review reuse to facts, admission policy and native inputs, not ID count.
     pub fn input_fingerprint(&self) -> Result<String, EngineError> {
-        let bytes = serde_json::to_vec(self).map_err(|e| EngineError(e.to_string()))?;
+        let bytes = if self.portable_input_fingerprint {
+            let mut input = serde_json::to_value(self).map_err(|e| EngineError(e.to_string()))?;
+            input["scan"]["root"] = serde_json::Value::String(".".into());
+            serde_json::to_vec(&input)
+        } else {
+            serde_json::to_vec(self)
+        }
+        .map_err(|e| EngineError(e.to_string()))?;
         Ok(crate::csharp_semantic::digest(&bytes))
     }
 }
@@ -448,6 +458,91 @@ pub fn validate_review_inventory(
     inventory: &ReviewInventory,
 ) -> Result<(), EngineError> {
     validate_review_inventory_sources(root, inventory, &RepositorySources::load_snapshot(root)?)
+}
+
+/// Captured text used to validate a native review inventory.
+pub struct ReviewMemorySources(RepositorySources);
+
+pub fn review_memory_sources(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<ReviewMemorySources, EngineError> {
+    let discovery = discover(root)?;
+    if let Some(bindings) = &inventory.scan.razor_render_bindings {
+        let projects = crate::razor_frontend::project_files(&discovery);
+        if crate::razor_frontend::project_fingerprints(&projects) != bindings.project_inputs {
+            return Err(EngineError(
+                "review inventory is stale: Razor project inputs changed; regenerate it".into(),
+            ));
+        }
+    }
+    let sources = RepositorySources::from_discovery(discovery, true, false)?;
+    validate_review_inventory_sources(root, inventory, &sources)?;
+    if inventory
+        .identity_catalog
+        .as_ref()
+        .is_some_and(|catalog| catalog.source_fingerprint != identity::source_fingerprint(&sources))
+    {
+        return Err(EngineError(
+            "inventory identity does not match its source fingerprint".into(),
+        ));
+    }
+    Ok(ReviewMemorySources(sources))
+}
+
+impl ReviewMemorySources {
+    pub fn range_hash(&self, path: &str, start: usize, end: usize) -> Option<String> {
+        let text = self.0.files.get(path)?.source.get(start..end)?;
+        Some(review_content_fingerprint(text.as_bytes()))
+    }
+
+    pub fn hashes(&self) -> BTreeMap<String, String> {
+        self.0
+            .files
+            .iter()
+            .map(|(path, file)| {
+                (
+                    path.clone(),
+                    review_content_fingerprint(file.source.as_bytes()),
+                )
+            })
+            .collect()
+    }
+
+    /// Observe exact identifier occurrences in the captured text. This includes
+    /// definitions, markup and comments, and makes no semantic dispatch claim.
+    pub fn reference_files<'a, 'b>(
+        &'a self,
+        names: &'b BTreeSet<String>,
+    ) -> std::collections::HashMap<&'b str, Vec<&'a str>> {
+        let mut matches: std::collections::HashMap<_, Vec<_>> = names
+            .iter()
+            .map(|name| (name.as_str(), Vec::new()))
+            .collect();
+        if !matches.is_empty() {
+            for (path, file) in &self.0.files {
+                for token in file
+                    .source
+                    .split(|ch| !is_identifier_character(ch) && ch != '$')
+                {
+                    if let Some(paths) = matches.get_mut(token)
+                        && paths.last() != Some(&path.as_str())
+                    {
+                        paths.push(path.as_str());
+                    }
+                }
+            }
+        }
+        matches
+    }
+}
+
+/// Hash the same discovered inputs used to validate the native inventory.
+pub fn review_inventory_source_hashes(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<BTreeMap<String, String>, EngineError> {
+    Ok(review_memory_sources(root, inventory)?.hashes())
 }
 
 /// Validate the raw source snapshot for fresh compiler collection only.
@@ -790,6 +885,7 @@ pub fn build_review_inventory_scoped_with_native_backends(
     Ok(ReviewInventory {
         identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
+        portable_input_fingerprint: true,
         cpp_effect_revision: scan
             .coverage
             .languages

@@ -45,7 +45,8 @@ class Routing(fixtures.FixtureBase):
         directory = self.workspace / "artifacts"
         directory.mkdir()
         record = {"schema_version":"1", "status":"reviewed", "snapshot_id":"test-snapshot", "reason":"advisory_review_finished",
-            "contract":{"endpoints":{"base_commit":fixtures.A,"target_commit":fixtures.H}}}
+            "contract":{"endpoints":{"base_commit":fixtures.A,"target_commit":fixtures.H},
+                        "scan_root":".", "policy":adapter.POLICY}}
         adapter.save_result(directory,record)
         self.assertIn("issue-count=\n",(self.workspace / "outputs").read_text())
         record["completion"] = {"review_work_complete":False,"security_resolution":"not_established",
@@ -200,12 +201,17 @@ else:
         self.assertTrue(json.loads((directory / "findings.json").read_text())["review_required"])
 
     def test_missing_auth_and_changed_config_close_owned_attempt_incomplete(self):
+        os.environ["MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE"] = "true"
         directory,plan,record = self.ready()
         self.auth.unlink()
         result = adapter.run_model(directory / "plan.json",self.delivery.get,self.execute)
         self.assertEqual(result["status"],"incomplete",result)
         self.assertEqual(result["coordination"]["state"],"owned_incomplete")
         self.assertNotIn("completion",result)
+        self.assertFalse((directory / "completion.json").exists())
+        coverage = json.loads((directory / "delta-coverage.json").read_text())
+        self.assertEqual((coverage["status"], coverage["gate"]), ("incomplete", "blocked"))
+        self.assertEqual(coverage["counts"]["unavailable"], 1)
         self.assertNotIn("review_handoff",result)
         self.assertIn("review-work-complete=\n",(self.workspace / "outputs").read_text())
 

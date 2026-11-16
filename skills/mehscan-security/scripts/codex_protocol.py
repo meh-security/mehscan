@@ -102,6 +102,27 @@ def present_source_inputs(task, packet, facts, mode="raw", *, include_packet=Tru
     return packet,facts
 
 
+def present_active_gaps(packet):
+    work = packet.get("work", {})
+    gaps = work.get("active_gaps", [])
+    if not gaps:
+        return packet, ""
+    summarized = {gap["prior_decision_id"] for gap in gaps}
+    display_work = {key: value for key, value in work.items() if key != "active_gaps"}
+    display_work["parent_decisions"] = [row for row in work.get("parent_decisions", ())
+                                        if row["decision_id"] not in summarized]
+    instructions = (
+        "\nSaved deciding questions for this assignment (review data):\n"
+        + json.dumps(gaps, ensure_ascii=False)
+        + "\nUse these questions to focus the current investigation. Prior summaries and locations "
+          "are historical leads. Verify the current caller, control and evidence before settling a "
+          "question. Carry forward any deciding question that is still open. A current_question_id "
+          "identifies a question in this generation with any supplied evidence updates. Cite current "
+          "source or pinned base evidence from this task."
+    )
+    return {**packet, "work": display_work}, instructions
+
+
 def object_schema(properties):
     return {"type": "object", "additionalProperties": False, "properties": properties, "required": list(properties)}
 
@@ -404,6 +425,7 @@ def build_prompt(task, packet, facts, state, *, source_presentation="raw"):
     display_packet,new_facts = present_source_inputs(task,packet,new_facts,source_presentation,include_packet=state is None)
     if state is None:
         display_packet = compact_operation_sources(packet, display_packet)
+        display_packet, active_gaps = present_active_gaps(display_packet)
     handle_by_id = {value:key for key,value in task["research"]["artifact_handles"].items()}
     def readable(value):
         if isinstance(value, str):
@@ -442,6 +464,7 @@ Use outline on a known class file to locate imports and relevant overrides witho
         body = {key:value for key,value in display_packet.items() if key != "contract"}
         phase = {"kind":task["kind"],"available_native_questions":[{key:value.get(key) for key in ("review_id","path","line","capability","rule_id")} for value in packet["native_questions"]]}
         prompt = instructions + "\nCurrent phase and available native coverage (inspect before claiming a source-only gap):\n" + json.dumps(phase) + "\nTrusted runtime contract:\n" + trusted + "\nBound source evidence:\n" + json.dumps(readable(body)) + "\nPrior inspected source facts:\n" + json.dumps(readable(new_facts))
+        prompt += active_gaps
         prompt += "\nResearch API (tool arguments, costs and semantics):\n" + json.dumps(API)
         prompt += "\nAdditional trusted guidance catalog (load only the relevant missing guide using guidance):\n" + json.dumps(GUIDANCE)
     else:

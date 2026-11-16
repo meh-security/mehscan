@@ -246,7 +246,9 @@ IDs from native_questions when they cover the effect. Inspect that supplied list
 before claiming no native ID exists. Native IDs are not the boundary of the change pass.
 Reviewed requires questions=[]; unresolved work uses needs_review with a specific
 question. Assessed modifications/renames need base primary evidence and current
-primary evidence; deletions need base evidence. Keep clipping/unsupported coverage
+primary evidence; deletions need base evidence. Cite bounded primary-source
+ranges covering the changed current lines when marking a path reviewed. Use
+multiple citations when needed and keep clipping and unsupported coverage
 visible. A consequential source-only effect stays needs_review for tracking when
 no native ID exists. Describe the established effect honestly and identify the
 remaining coverage/representation task; do not invent uncertainty in proven code.

@@ -19,7 +19,9 @@ fn invoke(args: &[&str]) -> Output {
         .unwrap()
 }
 fn ok(args: &[&str]) -> Value {
-    let output = invoke(args);
+    successful_json(invoke(args), args)
+}
+fn successful_json(output: Output, args: &[&str]) -> Value {
     assert!(
         output.status.success(),
         "{args:?}: {}",
@@ -38,6 +40,1262 @@ fn reject(args: &[&str], message: &str) {
 }
 fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn turso_retains_native_pending_decisions_only_for_exact_current_inputs() {
+    let mut fixture = Fixture::new("memory-admission");
+    let db = fixture.base.join("memory.turso");
+    let memory = |fixture: &Fixture, operation, generation| {
+        let mut args = vec![
+            "memory",
+            operation,
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+        ];
+        if operation == "retain" {
+            args.extend([
+                "--state-store",
+                fixture.store.to_str().unwrap(),
+                "--generation",
+                generation,
+            ]);
+        }
+        invoke(&args)
+    };
+    let check = |output: Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    let empty = check(memory(&fixture, "assessments", ""));
+    assert_eq!(empty["batches"], json!([]));
+    assert!(!db.exists());
+    let claim = fixture.claim("before", "0", "memory-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let decisions = fixture.answers("needs_review", "The exact caller still needs confirmation.");
+    ok(&fixture.record_args("1", owner, "memory-record"));
+    let premature = memory(&fixture, "retain", "1");
+    assert!(!premature.status.success());
+    assert!(String::from_utf8_lossy(&premature.stderr).contains("finished or incomplete"));
+    assert!(!db.exists());
+    ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--status",
+        "incomplete",
+        "--operation-key",
+        "memory-end",
+    ]);
+    let retained = check(memory(&fixture, "retain", "1"));
+    assert_eq!(retained["assessments"], decisions.len());
+    let repeated = check(memory(&fixture, "retain", "1"));
+    assert_eq!(repeated["batch"], retained["batch"]);
+    assert_eq!(repeated["reused"], true);
+    let saved = check(memory(&fixture, "assessments", ""));
+    assert_eq!(saved["authority"], "retained_context");
+    assert_eq!(saved["batches"].as_array().unwrap().len(), 1);
+    let batch = &saved["batches"][0];
+    assert_eq!(batch["attempt_status"], "incomplete");
+    for decision in decisions {
+        let row = batch["assessments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["decision_id"] == decision["decision_id"])
+            .unwrap();
+        assert_eq!(row["verdict"], "needs_review");
+        assert_eq!(
+            row["response_fingerprint"],
+            decision["response_fingerprint"]
+        );
+        assert_eq!(
+            row["questions"][0]["text"],
+            decision["response"]["checks"][0]
+        );
+        assert_eq!(row["evidence"][0]["path"], "app.js");
+    }
+    let wrong_generation = memory(&fixture, "retain", "2");
+    assert!(!wrong_generation.status.success());
+    assert!(String::from_utf8_lossy(&wrong_generation.stderr).contains("current state generation"));
+
+    let retry = fixture.claim("recheck", "1", "memory-claim-recheck", true);
+    let retry_owner = retry["result"]["owner"].as_str().unwrap();
+    fixture.answers("not_issue", "Conflicting verdict without supersession.");
+    ok(&fixture.record_args("2", retry_owner, "memory-record-conflict"));
+    ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "2",
+        "--owner",
+        retry_owner,
+        "--status",
+        "incomplete",
+        "--operation-key",
+        "memory-end-conflict",
+    ]);
+    assert_eq!(check(memory(&fixture, "retain", "2"))["assessments"], 0);
+    let latest = check(memory(&fixture, "assessments", ""));
+    assert_eq!(latest["batches"].as_array().unwrap().len(), 1);
+    assert_eq!(latest["batches"][0]["generation"], 2);
+    assert_eq!(latest["batches"][0]["assessments"], json!([]));
+
+    let path = fixture.source.join("app.js");
+    let original = fs::read_to_string(&path).unwrap();
+    fs::write(path, original + "\n// Change the source snapshot.\n").unwrap();
+    assert!(!memory(&fixture, "assessments", "").status.success());
+    fixture.prepare("changed-memory");
+    assert_eq!(
+        check(memory(&fixture, "assessments", ""))["batches"],
+        json!([])
+    );
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
+#[test]
+fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
+    let mut fixture = Fixture::new("memory-replay");
+    fs::write(
+        fixture.source.join("other.js"),
+        "function other(request) { eval(request.query.code); }\n",
+    )
+    .unwrap();
+    fixture.prepare("two-reviews");
+    let state_home = fixture.base.join("controller-state");
+    let controller = |args: &[&str]| {
+        successful_json(
+            Command::new(env!("CARGO_BIN_EXE_mehscan"))
+                .env("MEHSCAN_STATE_HOME", &state_home)
+                .args(args)
+                .output()
+                .unwrap(),
+            args,
+        )
+    };
+    let location_args = [
+        "memory",
+        "location",
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+    ];
+    let locations = controller(&location_args);
+    let db = PathBuf::from(locations["memory_store"].as_str().unwrap());
+    fixture.store = PathBuf::from(locations["state_store"].as_str().unwrap());
+    assert!(db.starts_with(&state_home));
+    assert_eq!(db.parent(), fixture.store.parent());
+    assert_eq!(controller(&location_args), locations);
+    let invalid_state_home = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .env("MEHSCAN_STATE_HOME", fixture.source.join("state"))
+        .args(location_args)
+        .output()
+        .unwrap();
+    assert!(!invalid_state_home.status.success());
+    assert!(!fixture.source.join("state").exists());
+    let skill = fixture.base.join("skill");
+    fs::create_dir(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "Trusted local review policy.").unwrap();
+    let skill = skill.to_str().unwrap();
+    let mut plan = fixture.plan_template("value");
+    plan["runtime"] = ok(&["state", "runtime-template", "--skill-root", skill]);
+    let plan_file = fixture.base.join("plan.json");
+    let work_file = fixture.base.join("work.json");
+    let work = work_file.to_str().unwrap();
+    let startup = |generation: &str, owner: &str, extra: &[&str]| {
+        let mut args = vec![
+            "memory",
+            "prepare",
+            "--state-store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--generation",
+            generation,
+            "--owner",
+            owner,
+            "--skill-root",
+            skill,
+        ];
+        args.extend_from_slice(extra);
+        controller(&args)
+    };
+    let end = |generation: &str, owner: &str, status: &str, key: &str, mode: Option<&str>| {
+        let mut args = vec![
+            "state",
+            "end",
+            "--store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--repository-key",
+            "repo:123",
+            "--generation",
+            generation,
+            "--owner",
+            owner,
+            "--status",
+            status,
+            "--operation-key",
+            key,
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+        ];
+        if let Some(mode) = mode {
+            args.extend(["--memory-mode", mode]);
+        }
+        controller(&args)
+    };
+    let prepare = |generation: &str, owner: &str, draft: &Value, key: &str| {
+        fs::write(&plan_file, draft.to_string()).unwrap();
+        let mut plan_args = fixture.plan_args(owner, &plan_file, key);
+        let index = plan_args
+            .iter()
+            .position(|value| *value == "--generation")
+            .unwrap();
+        plan_args[index + 1] = generation;
+        plan_args.extend(["--skill-root", skill]);
+        ok(&plan_args);
+        let mut work_args = fixture.work_args(owner, false);
+        let index = work_args
+            .iter()
+            .position(|value| *value == "--generation")
+            .unwrap();
+        work_args[index + 1] = generation;
+        work_args.extend(["--skill-root", skill]);
+        let package = ok(&work_args);
+        fs::write(&work_file, package.to_string()).unwrap();
+        package
+    };
+
+    let first = fixture.claim("initial", "0", "reuse-claim-1", false);
+    let owner = first["result"]["owner"].as_str().unwrap();
+    let first_work = prepare("1", owner, &plan, "reuse-plan-1");
+    let skipped = startup("1", owner, &["--memory-mode", "temporary"]);
+    assert_eq!(skipped["memory"]["reason"], "temporary_mode");
+    assert_eq!(skipped["work_package"], first_work);
+    let cold = startup("1", owner, &[]);
+    assert_eq!(cold["memory"]["status"], "no_batch");
+    assert_eq!(cold["work_package"], first_work);
+    assert!(!db.exists());
+    let decisions = fixture.answers("not_issue", "Synthetic source assessment.");
+    assert_eq!(decisions.len(), 2);
+    let mut record = fixture.record_args("1", owner, "original-record");
+    record.extend(["--skill-root", skill, "--work-package", work]);
+    ok(&record);
+    let retained = end("1", owner, "finished", "reuse-end-1", None);
+    assert_eq!(retained["memory"]["status"], "retained");
+    assert!(db.is_file());
+    let common = [
+        "--store",
+        db.to_str().unwrap(),
+        "--state-store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ];
+    let mut retain = vec!["memory", "retain", "--generation", "1"];
+    retain.extend(common);
+    let saved = ok(&retain);
+    assert_eq!(saved["assessments"], decisions.len());
+    assert_eq!(saved["reused"], true);
+    assert_eq!(saved["batch"], retained["memory"]["batch"]);
+    let batch = saved["batch"].as_str().unwrap();
+    let reuse = |owner, operation| {
+        let mut args = vec![
+            "memory",
+            "reuse",
+            "--batch",
+            batch,
+            "--owner",
+            owner,
+            "--work-package",
+            work,
+            "--skill-root",
+            skill,
+            "--operation-key",
+            operation,
+        ];
+        args.extend(common);
+        args
+    };
+
+    let second = fixture.claim("different-runtime", "1", "reuse-claim-2", true);
+    let owner = second["result"]["owner"].as_str().unwrap();
+    let mut different = plan.clone();
+    different["runtime"]["limits"]["queries"] = json!(7);
+    let different_work = prepare("2", owner, &different, "reuse-plan-2");
+    reject(
+        &reuse(owner, "reuse-admission"),
+        "same native plan and review runtime",
+    );
+    let fallback = startup("2", owner, &[]);
+    assert_eq!(fallback["memory"]["status"], "incompatible");
+    assert_eq!(fallback["work_package"], different_work);
+    assert!(
+        !fixture.view(false)["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["state"] == "recorded")
+    );
+    let skipped = end("2", owner, "incomplete", "reuse-end-2", Some("temporary"));
+    assert_eq!(skipped["memory"]["reason"], "temporary_mode");
+
+    let third = fixture.claim("matching-runtime", "2", "reuse-claim-3", true);
+    let owner = third["result"]["owner"].as_str().unwrap();
+    let package = prepare("3", owner, &plan, "reuse-plan-3");
+    let receipt = startup("3", owner, &[]);
+    assert_eq!(receipt["memory"]["model_calls"], 0);
+    assert_eq!(
+        receipt["memory"]["reused_review_ids"],
+        package["payload"]["review_ids"]
+    );
+    assert_eq!(receipt["work_package"]["payload"]["review_ids"], json!([]));
+    let repeat = startup("3", owner, &[]);
+    assert_eq!(repeat["memory"]["replayed"], true);
+    assert_eq!(repeat["work_package"], receipt["work_package"]);
+    let no_access = fixture.base.join("not-a-database");
+    fs::create_dir(&no_access).unwrap();
+    let fallback = startup("3", owner, &["--store", no_access.to_str().unwrap()]);
+    assert_eq!(fallback["memory"]["status"], "unavailable");
+    assert_eq!(fallback["work_package"], receipt["work_package"]);
+    let history = fixture.view(true);
+    assert_eq!(
+        history["decisions"].as_object().unwrap().len(),
+        decisions.len()
+    );
+    assert_eq!(
+        history["admission_provenance"]["3"][0]["kind"],
+        "exact_memory_reuse"
+    );
+    assert_eq!(
+        history["admission_provenance"]["3"][0]["previous_generation"],
+        1
+    );
+    assert!(
+        history["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["state"] == "recorded")
+    );
+
+    let pending = fixture.answers("needs_review", "The caller still needs a deciding fact.");
+    let pending = &pending[0];
+    let pending_id = &pending["response"]["review_id"];
+    let response_dir = fixture.run.join("responses");
+    for response in fs::read_dir(response_dir).unwrap() {
+        let path = response.unwrap().path();
+        if read(&path)["results"][0]["review_id"] != *pending_id {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    let links = fixture.supersessions(
+        std::slice::from_ref(pending),
+        &history,
+        "reuse-supersessions.json",
+    );
+    let mut record = fixture.record_args("3", owner, "reopen-after-reuse");
+    record.extend([
+        "--skill-root",
+        skill,
+        "--work-package",
+        work,
+        "--supersessions",
+        links.to_str().unwrap(),
+        "--allow-partial",
+        "true",
+    ]);
+    ok(&record);
+    end("3", owner, "finished", "reuse-end-3", Some("temporary"));
+
+    let fourth = fixture.claim("pending-parent", "3", "reuse-claim-4", true);
+    let owner = fourth["result"]["owner"].as_str().unwrap();
+    prepare("4", owner, &plan, "reuse-plan-4");
+    let mut record = fixture.record_args("4", owner, "repeat-open-check");
+    record.extend([
+        "--skill-root",
+        skill,
+        "--work-package",
+        work,
+        "--allow-partial",
+        "true",
+    ]);
+    ok(&record);
+    let question_file = fixture.base.join("active-question.json");
+    fs::write(
+        &question_file,
+        json!({"schema_version":"1", "kind":"control_coverage",
+        "origin":{"kind":"decision","decision_id":pending["decision_id"]},
+        "question":pending["response"]["checks"][0]})
+        .to_string(),
+    )
+    .unwrap();
+    let mut args = fixture.typed_args("pending", owner, &question_file, "register-active-question");
+    let generation = args.iter().position(|arg| *arg == "--generation").unwrap();
+    args[generation + 1] = "4";
+    ok(&args);
+    let pending_work = startup("4", owner, &[]);
+    assert_eq!(pending_work["memory"]["status"], "memory_reuse");
+    assert_eq!(
+        pending_work["memory"]["reused_review_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        pending_work["work_package"]["payload"]["review_ids"],
+        json!([pending_id])
+    );
+    assert_eq!(
+        pending_work["work_package"]["payload"]["pending_questions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        startup("4", owner, &[])["work_package"],
+        pending_work["work_package"]
+    );
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
+#[test]
+fn native_assignments_fence_overlapping_workers_and_recover_receipts() {
+    let mut fixture = Fixture::new("worker-assignments");
+    fs::write(
+        fixture.source.join("other.js"),
+        "function other(request) { eval(request.query.code); }\n",
+    )
+    .unwrap();
+    fixture.prepare("two-reviews");
+    let claim = fixture.claim("parallel", "0", "parallel-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let plan = fixture.plan_template("value");
+    let plan_path = fixture.base.join("plan.json");
+    fs::write(&plan_path, plan.to_string()).unwrap();
+    ok(&fixture.plan_args(owner, &plan_path, "parallel-plan"));
+    let ids = plan["selected_review_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+    let make_work = |id: &Value, path: &Path| {
+        let mut args = fixture.work_args(owner, false);
+        args.extend(["--review-ids", id.as_str().unwrap()]);
+        fs::write(path, ok(&args).to_string()).unwrap();
+    };
+    let first_work = fixture.base.join("first-work.json");
+    let second_work = fixture.base.join("second-work.json");
+    make_work(&ids[0], &first_work);
+    make_work(&ids[1], &second_work);
+    let allocate = |path: &Path, worker: &str, key: &str| {
+        [
+            "state",
+            "allocate",
+            "--store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--operation-key",
+            key,
+            "--owner",
+            owner,
+            "--generation",
+            "1",
+            "--worker",
+            worker,
+            "--work-package",
+            path.to_str().unwrap(),
+        ]
+        .map(str::to_owned)
+    };
+    let first = allocate(&first_work, "a", "allocate-a");
+    let collision = allocate(&first_work, "b", "allocate-b");
+    fn args(values: &[String]) -> Vec<&str> {
+        values.iter().map(String::as_str).collect()
+    }
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| invoke(&args(&first)));
+        let b = scope.spawn(|| invoke(&args(&collision)));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert_ne!(a.status.success(), b.status.success());
+    let (accepted, winning_args, refused) = if a.status.success() {
+        (a, &first, b)
+    } else {
+        (b, &collision, a)
+    };
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("active assignment"));
+    let accepted = successful_json(accepted, &args(winning_args));
+    let allocation = accepted["result"]["assignment_id"].as_str().unwrap();
+    assert_eq!(ok(&args(winning_args))["replayed"], true);
+    assert_eq!(
+        fixture.work(owner, false)["payload"]["review_ids"],
+        json!([ids[1]])
+    );
+    let separate = allocate(&second_work, "c", "allocate-c");
+    let second = ok(&args(&separate));
+    assert_eq!(
+        fixture.work(owner, false)["payload"]["review_ids"],
+        json!([])
+    );
+
+    fixture.answers("not_issue", "Synthetic independent response.");
+    for response in fs::read_dir(fixture.run.join("responses")).unwrap() {
+        let path = response.unwrap().path();
+        if read(&path)["results"][0]["review_id"] != ids[0] {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    let mut record = fixture.record_args("1", owner, "parallel-record");
+    record.extend([
+        "--work-package",
+        first_work.to_str().unwrap(),
+        "--allow-partial",
+        "true",
+    ]);
+    reject(&record, "require their assignment ID");
+    record.extend(["--assignment", allocation]);
+    assert_eq!(ok(&record)["result"]["status"], "recorded");
+    assert_eq!(ok(&record)["replayed"], true);
+    assert_eq!(ok(&args(winning_args))["currently_owned"], false);
+
+    let second_id = second["result"]["assignment_id"].as_str().unwrap();
+    let release = [
+        "state",
+        "release",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--assignment",
+        second_id,
+        "--operation-key",
+        "release-c",
+    ];
+    assert_eq!(ok(&release)["result"]["status"], "released");
+    assert_eq!(ok(&args(&separate))["currently_owned"], false);
+    let history = fixture.view(true);
+    let allocations = history["assignments"].as_array().unwrap();
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["assignment_id"] == allocation && a["status"] == "completed")
+    );
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["assignment_id"] == second_id && a["status"] == "released")
+    );
+}
+
+#[test]
+#[ignore = "requires MEHSCAN_TURSO_SYNC_SERVER pointing to the official tursodb executable"]
+fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+
+    struct Server(Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let fixture = Fixture::new("upstream-sync");
+    let address = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let backend = std::env::var("MEHSCAN_TURSO_SYNC_SERVER").unwrap();
+    let mut server = Server(
+        Command::new(backend)
+            .arg(fixture.base.join("upstream.turso"))
+            .args(["--sync-server", &address.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while TcpStream::connect(address).is_err() {
+        assert!(
+            server.0.try_wait().unwrap().is_none() && Instant::now() < deadline,
+            "Turso sync server did not start"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let remote = format!("http://{address}");
+    let replicas = ["a", "b", "reader"].map(|name| fixture.base.join(format!("{name}.turso")));
+    let sync_args = |operation, replica: &Path, extra: &[&str]| {
+        let mut args = [
+            "memory",
+            "sync",
+            operation,
+            "--replica",
+            replica.to_str().unwrap(),
+            "--remote",
+            remote.as_str(),
+            "--repository-key",
+            "repo:123",
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        args.extend(extra.iter().map(|value| (*value).to_string()));
+        args
+    };
+    let sync = |operation, replica: &Path, extra: &[&str]| {
+        let args = sync_args(operation, replica, extra);
+        ok(&args.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    sync("pull", &replicas[0], &[]);
+    sync("pull", &replicas[1], &[]);
+    let mut batches = Vec::new();
+    for (index, verdict) in ["not_issue", "needs_review"].into_iter().enumerate() {
+        let writer = Fixture {
+            base: fixture.base.clone(),
+            source: fixture.source.clone(),
+            inventory: fixture.inventory.clone(),
+            run: fixture.run.clone(),
+            store: fixture.base.join(format!("writer-{index}")),
+        };
+        let claim = writer.claim("first", "0", "writer-claim", false);
+        let owner = claim["result"]["owner"].as_str().unwrap();
+        writer.answers(verdict, "Independent source-bound assessment.");
+        ok(&writer.record_args("1", owner, "writer-record"));
+        let db = writer.base.join(format!("writer-{index}.turso"));
+        let end = writer.end_with_memory(owner, &db, "writer-end");
+        let batch = end["memory"]["batch"].as_str().unwrap();
+        let label = format!("writer-{index}");
+        let args = [
+            "--inventory",
+            writer.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            batch,
+            "--publisher-label",
+            &label,
+            "--store",
+            db.to_str().unwrap(),
+        ];
+        let staged = sync("stage", &replicas[index], &args);
+        assert_eq!(staged["assessments"], 1);
+        let duplicate = sync("stage", &replicas[index], &args);
+        assert_eq!(duplicate["reused"], true);
+        assert_eq!(duplicate["publication"], staged["publication"]);
+        batches.push((db, batch.to_owned()));
+    }
+    sync("push", &replicas[1], &[]);
+    sync("pull", &replicas[0], &[]);
+    sync("push", &replicas[0], &[]);
+    sync("push", &replicas[0], &[]);
+    let bootstrap = sync("pull", &replicas[2], &[]);
+    sync("pull", &replicas[1], &[]);
+    sync("pull", &replicas[0], &[]);
+    sync("checkpoint", &replicas[2], &[]);
+    let selection = [
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+    ];
+    let reader = sync("context", &replicas[2], &selection);
+    assert_eq!(reader["authority"], "upstream_context");
+    for publication in reader["publications"].as_array().unwrap() {
+        assert!(
+            publication["file_dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| {
+                    file["path"] == "app.js"
+                        && file["role"] == "primary"
+                        && file["sha256"].as_str().is_some_and(|hash| hash.len() == 64)
+                })
+        );
+    }
+    assert_eq!(
+        reader["publications"].as_array().unwrap().len(),
+        2,
+        "{reader}"
+    );
+    assert_eq!(
+        reader["conflicting_verdicts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap(),
+        &json!(["needs_review", "not_issue"])
+    );
+    assert_eq!(sync("context", &replicas[0], &selection), reader);
+    assert_eq!(sync("context", &replicas[1], &selection), reader);
+    assert_eq!(sync("status", &replicas[2], &[])["initialized"], true);
+
+    for (index, (store, batch)) in batches.iter().enumerate() {
+        sync(
+            "stage",
+            &replicas[index],
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:24",
+                "--batch",
+                batch,
+                "--publisher-label",
+                &format!("writer-{index}-second-publication"),
+                "--store",
+                store.to_str().unwrap(),
+            ],
+        );
+    }
+    sync("push", &replicas[0], &[]);
+    sync("push", &replicas[1], &[]);
+    let incremental = sync("pull", &replicas[2], &[]);
+    let converged = sync("context", &replicas[2], &selection);
+    assert_eq!(converged["publications"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        converged["conflicting_verdicts"],
+        reader["conflicting_verdicts"]
+    );
+    for replica in &replicas[..2] {
+        sync("pull", replica, &[]);
+        assert_eq!(sync("context", replica, &selection), converged);
+    }
+    assert_eq!(
+        sync(
+            "context",
+            &replicas[2],
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:25",
+            ]
+        )["publications"],
+        json!([])
+    );
+    eprintln!(
+        "Turso transport sample: {}",
+        json!({"bootstrap":bootstrap,"incremental":incremental})
+    );
+
+    let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
+    let key = wrong
+        .iter()
+        .position(|arg| arg == "--repository-key")
+        .unwrap();
+    wrong[key + 1] = "repo:other".into();
+    reject(
+        &wrong.iter().map(String::as_str).collect::<Vec<_>>(),
+        "another repository",
+    );
+}
+
+#[test]
+#[ignore = "requires MEHSCAN_RAZOR_BACKEND and MEHSCAN_RAZOR_SDK"]
+fn turso_compares_sdk_bound_razor_render_uses() {
+    let backend = std::env::var("MEHSCAN_RAZOR_BACKEND").unwrap();
+    let sdk = std::env::var("MEHSCAN_RAZOR_SDK").unwrap();
+    let sdk_args = ["--razor-backend", &backend, "--razor-sdk", &sdk];
+    let mut fixture = Fixture::new("razor-render-memory");
+    let project = fixture.source.join("App.csproj");
+    let project_source = "<Project Sdk=\"Microsoft.NET.Sdk.Web\" />\n";
+    fs::write(&project, project_source).unwrap();
+    fs::write(
+        fixture.source.join("_Imports.razor"),
+        "@using Microsoft.AspNetCore.Components\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("Widget.razor"),
+        "<p>@((MarkupString)Value)</p>\n@code { [Parameter] public string Value { get; set; } = \"\"; }\n",
+    ).unwrap();
+    fs::write(
+        fixture.source.join("First.razor"),
+        "<Widget Value=\"hello\" />\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("Example.razor"),
+        "@* <Widget /> *@\n<p>Example</p>\n",
+    )
+    .unwrap();
+    let retired = fixture.source.join("Retired.razor");
+    fs::write(&retired, "<Widget />\n").unwrap();
+    fixture.prepare_with("razor-before", &sdk_args);
+    let claim = fixture.claim("before", "0", "razor-render-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    fixture.answers("needs_review", "Confirm the public rendering context.");
+    ok(&fixture.record_args("1", owner, "razor-render-record"));
+    let db = fixture.base.join("memory.turso");
+    let end = fixture.end_with_memory(owner, &db, "razor-render-end");
+    let batch = end["memory"]["batch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{end}"));
+    let compare = |fixture: &Fixture| {
+        invoke(&[
+            "memory",
+            "compare",
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            batch,
+        ])
+    };
+    let compare_widget = |fixture: &Fixture| {
+        let comparison = successful_json(compare(fixture), &["memory", "compare"]);
+        comparison["assessments"].as_array().unwrap().iter()
+            .find(|row| row["files"].as_array().unwrap().iter().any(|file| file["role"] == "primary" && file["path"] == "Widget.razor"))
+            .unwrap_or_else(|| panic!("no Widget.razor assessment in {comparison}"))["razor_render_uses"].clone()
+    };
+    let exact = compare_widget(&fixture);
+    assert_eq!(
+        exact["callers"],
+        json!([
+            {"path":"First.razor","status":"unchanged"},
+            {"path":"Retired.razor","status":"unchanged"},
+        ]),
+        "{exact}"
+    );
+    assert_eq!(exact["project_configuration"], "unchanged");
+
+    fs::write(
+        &project,
+        format!("<!-- source-only configuration edit -->\n{project_source}"),
+    )
+    .unwrap();
+    let stale = compare(&fixture);
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("Razor project inputs changed"));
+    fs::write(
+        fixture.source.join("First.razor"),
+        "<Widget Value=\"updated\" />\n",
+    )
+    .unwrap();
+    fs::write(fixture.source.join("Second.razor"), "<Widget />\n").unwrap();
+    fs::write(&retired, "<p>Caller retired</p>\n").unwrap();
+    fs::write(fixture.source.join("Dynamic.cs"), "public static class DynamicRenderer { public static void Render<T>(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b) where T: Microsoft.AspNetCore.Components.IComponent { b.OpenComponent<T>(0); b.CloseComponent(); } }\n").unwrap();
+    fixture.prepare_with("razor-after", &sdk_args);
+    let changed = compare_widget(&fixture);
+    assert_eq!(
+        changed["callers"],
+        json!([
+            {"path":"First.razor","status":"modified"},
+            {"path":"Retired.razor","status":"removed"},
+            {"path":"Second.razor","status":"added"},
+        ]),
+        "{changed}"
+    );
+    assert_eq!(
+        changed["unresolved_callers"],
+        json!([{"path":"Dynamic.cs","status":"added"}]),
+        "{changed}"
+    );
+    assert_eq!(changed["project_configuration"], "modified");
+
+    fixture.prepare("razor-markup-only");
+    let markup_only = compare_widget(&fixture);
+    assert_eq!(markup_only["prior_available"], true);
+    assert_eq!(markup_only["current_available"], false);
+    assert!(markup_only.get("callers").is_none());
+}
+
+#[test]
+fn turso_compares_retained_source_and_caller_observations() {
+    let mut fixture = Fixture::new("memory-dependencies");
+    let policy = fixture.source.join("policy.js");
+    fs::write(&policy, "export const enabled = false;\n").unwrap();
+    fixture.prepare("before");
+    let claim = fixture.claim("before", "0", "dependencies-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let manifest = read(&fixture.run.join("manifest.json"));
+    let journals = fixture.base.join("journals");
+    fs::create_dir(&journals).unwrap();
+    let draft = fixture.base.join("draft.json");
+    for entry in manifest["bundles"].as_array().unwrap() {
+        let filename = entry["filename"].as_str().unwrap();
+        let request = fixture.run.join("requests").join(filename);
+        let response = fixture.run.join("responses").join(filename);
+        let results = read(&request)["review_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| {
+                json!({"review_id":id, "decision":"needs_review", "confidence":"medium",
+                    "summary":"Caller configuration needs confirmation.",
+                    "reason":"The policy flag is disabled in the inspected module.",
+                    "checks":["Which caller loads this policy module?"],
+                    "evidence":[{"path":"policy.js", "start_line":1, "end_line":1}]})
+            })
+            .collect::<Vec<_>>();
+        fs::write(&draft, json!({"results":results}).to_string()).unwrap();
+        let finalized = invoke(&[
+            "investigate",
+            "review-bundle-finalize",
+            "--bundle",
+            request.to_str().unwrap(),
+            "--draft",
+            draft.to_str().unwrap(),
+            "--journal-dir",
+            journals.to_str().unwrap(),
+            "--output",
+            response.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+        ]);
+        assert!(
+            finalized.status.success(),
+            "{}",
+            String::from_utf8_lossy(&finalized.stderr)
+        );
+    }
+    ok(&fixture.record_args("1", owner, "dependencies-record"));
+    let db = fixture.base.join("memory.turso");
+    let end = fixture.end_with_memory(owner, &db, "dependencies-end");
+    let batch = end["memory"]["batch"].as_str().unwrap();
+    let compare = |fixture: &Fixture, stream: &str| {
+        invoke(&[
+            "memory",
+            "compare",
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            stream,
+            "--batch",
+            batch,
+        ])
+    };
+    let exact = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    assert_eq!(exact["authority"], "dependency_observations");
+    assert_eq!(exact["base_snapshot"], exact["snapshot"]);
+    let review = exact["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["references"][0]["symbol"] == "handle")
+        .unwrap_or_else(|| panic!("expected a handle reference in {exact}"));
+    assert_eq!(review["references"][0]["status"], "unchanged");
+    assert_eq!(review["references"][0]["prior_file_count"], 1);
+    assert_eq!(review["decisive_ranges"][0]["status"], "unchanged");
+
+    fs::write(
+        fixture.source.join("unrelated.js"),
+        "export const label = 1;\n",
+    )
+    .unwrap();
+    fixture.prepare("unrelated");
+    let unrelated = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    assert_ne!(unrelated["base_snapshot"], unrelated["snapshot"]);
+    assert_eq!(unrelated["assessments"], exact["assessments"]);
+
+    fs::write(
+        &policy,
+        "export const enabled = false;\n// Surrounding documentation.\n",
+    )
+    .unwrap();
+    fixture.prepare("surrounding-text");
+    let surrounding = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    let assessment = &surrounding["assessments"][0];
+    assert_eq!(assessment["decisive_ranges"][0]["status"], "unchanged");
+    assert!(
+        assessment["files"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"path":"policy.js","role":"decisive_source","status":"modified"}))
+    );
+
+    fs::write(
+        fixture.source.join("caller.js"),
+        "export const route = handle;\n",
+    )
+    .unwrap();
+    fs::write(&policy, "export const enabled = true; \n").unwrap();
+    fixture.prepare("changed");
+    let changed = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    let review = changed["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["references"][0]["symbol"] == "handle")
+        .unwrap();
+    assert_eq!(review["references"][0]["status"], "membership_changed");
+    assert_eq!(review["references"][0]["current_file_count"], 2);
+    assert_eq!(review["decisive_ranges"][0]["status"], "modified");
+    for (path, role, status) in [
+        ("app.js", "primary", "unchanged"),
+        ("policy.js", "decisive_source", "modified"),
+    ] {
+        assert!(
+            review["files"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({"path":path,"role":role,"status":status})),
+            "{review}"
+        );
+    }
+    let other_stream = compare(&fixture, "pr:25");
+    assert!(!other_stream.status.success());
+    assert!(String::from_utf8_lossy(&other_stream.stderr).contains("repository and stream"));
+
+    let claim = fixture.claim("edited", "1", "edited-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let plan = fixture.base.join("edited-plan.json");
+    fs::write(&plan, fixture.plan_template("value").to_string()).unwrap();
+    let mut plan_args = fixture.plan_args(owner, &plan, "edited-plan");
+    let generation = plan_args
+        .iter()
+        .position(|arg| *arg == "--generation")
+        .unwrap();
+    plan_args[generation + 1] = "2";
+    ok(&plan_args);
+    let prepared = ok(&[
+        "memory",
+        "prepare",
+        "--store",
+        db.to_str().unwrap(),
+        "--state-store",
+        fixture.store.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--generation",
+        "2",
+        "--owner",
+        owner,
+        "--skill-root",
+        fixture.base.to_str().unwrap(),
+    ]);
+    let observations = &prepared["memory"]["prior_dependencies"];
+    assert_eq!(observations["batch"], batch, "{prepared}");
+    assert_eq!(
+        observations["assessments"][0]["current_review_ids"],
+        prepared["work_package"]["payload"]["review_ids"]
+    );
+    assert_eq!(
+        observations["assessments"][0]["references"][0]["status"],
+        "membership_changed"
+    );
+    assert_eq!(
+        observations["assessments"][0]["files"],
+        json!([{"path":"policy.js","role":"decisive_source","status":"modified"}])
+    );
+}
+
+#[test]
+fn native_end_retries_memory_retention_at_the_original_terminal_receipt() {
+    let fixture = Fixture::new("memory-end");
+    let first = fixture.claim("original", "0", "end-memory-claim", false);
+    let owner = first["result"]["owner"].as_str().unwrap();
+    let decisions = fixture.answers("needs_review", "Keep the original outstanding check.");
+    ok(&fixture.record_args("1", owner, "end-memory-record"));
+    let db = fixture.base.join("memory.turso");
+    // A temporarily invalid backing path fails retention after the native end.
+    fs::create_dir(&db).unwrap();
+    let end = [
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--status",
+        "finished",
+        "--operation-key",
+        "end-with-memory",
+        "--memory-store",
+        db.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ];
+    let failed = ok(&end);
+    assert_eq!(failed["result"]["status"], "finished");
+    assert_eq!(failed["memory"]["status"], "pending");
+    assert_eq!(fixture.view(false)["attempt_status"], "finished");
+
+    let later = fixture.claim("later", "1", "later-claim", true);
+    let later_owner = later["result"]["owner"].as_str().unwrap();
+    fixture.answers(
+        "not_issue",
+        "A separate evaluation has a different outcome.",
+    );
+    ok(&fixture.record_args("2", later_owner, "later-record"));
+    fs::remove_dir(&db).unwrap();
+
+    let source = fixture.source.join("app.js");
+    let unchanged = fs::read(&source).unwrap();
+    let mut edited = unchanged.clone();
+    edited.extend(b"\n// Different checkout contents.\n");
+    fs::write(&source, edited).unwrap();
+    let stale = ok(&end);
+    assert_eq!(stale["memory"]["status"], "pending");
+    assert!(
+        stale["memory"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("source files changed")
+    );
+    assert!(!db.exists());
+    fs::write(&source, unchanged).unwrap();
+
+    let retained = ok(&end);
+    assert_eq!(retained["sequence"], failed["sequence"]);
+    assert_eq!(retained["replayed"], true);
+    assert_eq!(retained["memory"]["status"], "retained");
+    assert_eq!(retained["memory"]["assessments"], decisions.len());
+    assert_eq!(retained["memory"]["reused"], false);
+    let repeated = ok(&end);
+    assert_eq!(repeated["memory"]["batch"], retained["memory"]["batch"]);
+    assert_eq!(repeated["memory"]["reused"], true);
+
+    let lookup = ok(&[
+        "memory",
+        "assessments",
+        "--store",
+        db.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ]);
+    let batch = &lookup["batches"][0];
+    assert_eq!(batch["generation"], 1);
+    assert!(
+        batch["assessments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["verdict"] == "needs_review")
+    );
+    let current = fixture.view(false);
+    assert_eq!(current["generation"], 2);
+    assert_eq!(current["attempt_status"], "running");
+    let cancelled = ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "2",
+        "--owner",
+        later_owner,
+        "--status",
+        "cancelled",
+        "--operation-key",
+        "cancel-with-memory",
+        "--memory-store",
+        fixture.base.join("unused.turso").to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--source-root",
+        fixture.base.join("missing-source").to_str().unwrap(),
+    ]);
+    assert_eq!(cancelled["memory"]["status"], "skipped");
+    assert!(!fixture.base.join("unused.turso").exists());
+    assert!(
+        fixture
+            .base
+            .canonicalize()
+            .unwrap()
+            .starts_with(std::env::temp_dir().canonicalize().unwrap())
+    );
+    fs::remove_dir_all(&fixture.base).unwrap();
 }
 
 impl Fixture {
@@ -68,9 +1326,12 @@ impl Fixture {
         fixture
     }
     fn prepare(&mut self, suffix: &str) {
+        self.prepare_with(suffix, &[]);
+    }
+    fn prepare_with(&mut self, suffix: &str, options: &[&str]) {
         self.inventory = self.base.join(format!("inventory-{suffix}"));
         self.run = self.base.join(format!("run-{suffix}"));
-        ok(&[
+        let mut args = vec![
             "investigate",
             "review-inventory",
             self.source.to_str().unwrap(),
@@ -78,7 +1339,9 @@ impl Fixture {
             "repo:123",
             "--output",
             self.inventory.to_str().unwrap(),
-        ]);
+        ];
+        args.extend_from_slice(options);
+        ok(&args);
         let inventory = read(&self.inventory.join("inventory.json"));
         let ids = inventory["entries"]
             .as_array()
@@ -129,6 +1392,32 @@ impl Fixture {
             .as_array()
             .unwrap()
             .clone()
+    }
+    fn end_with_memory(&self, owner: &str, db: &Path, operation: &str) -> Value {
+        ok(&[
+            "state",
+            "end",
+            "--store",
+            self.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--repository-key",
+            "repo:123",
+            "--generation",
+            "1",
+            "--owner",
+            owner,
+            "--status",
+            "incomplete",
+            "--operation-key",
+            operation,
+            "--memory-store",
+            db.to_str().unwrap(),
+            "--source-root",
+            self.source.to_str().unwrap(),
+            "--inventory",
+            self.inventory.to_str().unwrap(),
+        ])
     }
     fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
         ok(&[
@@ -592,16 +1881,43 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
     )
     .unwrap();
     fs::write(fixture.source.join("empty.js"), "").unwrap();
+    fs::write(
+        fixture.source.join("old-name.js"),
+        "export const limit = 5;\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("settings.json"),
+        "{\"approvalRequired\":true}\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("caller.js"),
+        "function canPublish(settings, approved) { return !settings.approvalRequired || approved; }\n",
+    ).unwrap();
     git(&["add", "."]);
     git(&["commit", "--quiet", "-m", "base"]);
     let base = git(&["rev-parse", "HEAD"]);
     fs::remove_file(fixture.source.join("guard.js")).unwrap();
     fs::remove_file(fixture.source.join("empty.js")).unwrap();
+    fs::rename(
+        fixture.source.join("old-name.js"),
+        fixture.source.join("new-name.js"),
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("settings.json"),
+        "{\"approvalRequired\":false}\n",
+    )
+    .unwrap();
     fs::write(
         fixture.source.join("unknown.xyz"),
         "changed unsupported contract\n",
     )
     .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "changed controls and files"]);
+    let target = git(&["rev-parse", "HEAD"]);
     fixture.inventory = fixture.base.join("changed-inventory");
     ok(&[
         "investigate",
@@ -609,6 +1925,9 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
         fixture.source.to_str().unwrap(),
         "--changed-from",
         &base,
+        "--target",
+        &target,
+        "--merge-base",
         "--diff-mode",
         "files",
         "--repository-key",
@@ -643,6 +1962,22 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
             entry["summary"] = json!("Inspected the pinned empty file removed by this change.");
             entry["evidence"] =
                 json!([{ "side":"base", "path":"empty.js", "start_line":1, "end_line":1 }]);
+        } else if entry["path"] == "new-name.js" {
+            entry["status"] = json!("reviewed");
+            entry["summary"] = json!("Compared the renamed constant at both pinned endpoints.");
+            entry["evidence"] = json!([
+                {"side":"base", "path":"old-name.js", "start_line":1, "end_line":1},
+                {"side":"current", "path":"new-name.js", "start_line":1, "end_line":1}
+            ]);
+        } else if entry["path"] == "settings.json" {
+            entry["status"] = json!("reviewed");
+            entry["summary"] =
+                json!("Compared the approval setting and read its unchanged caller.");
+            entry["evidence"] = json!([
+                {"side":"base", "path":"settings.json", "start_line":1, "end_line":1},
+                {"side":"current", "path":"settings.json", "start_line":1, "end_line":1},
+                {"side":"current", "path":"caller.js", "start_line":1, "end_line":1}
+            ]);
         } else {
             entry["status"] = json!("coverage_gap");
             entry["summary"] = json!("Native analyzer does not cover this contract.");
@@ -677,6 +2012,26 @@ fn changed_completion_accounts_for_zero_candidates_old_source_and_coverage_gaps(
             .contains("user.admin")
     );
     assert_eq!(guard["evidence"][0]["revision"], base);
+    let changed_paths = history["completion"]["changed_paths"].as_array().unwrap();
+    assert_eq!(changed_paths.len(), 5);
+    let configuration = changed_paths
+        .iter()
+        .find(|entry| entry["path"] == "settings.json")
+        .unwrap();
+    assert_eq!(configuration["status"], "reviewed");
+    assert_eq!(configuration["evidence"].as_array().unwrap().len(), 3);
+    assert_eq!(configuration["evidence"][2]["source"]["path"], "caller.js");
+    let rename = changed_paths
+        .iter()
+        .find(|entry| entry["path"] == "new-name.js")
+        .unwrap();
+    assert_eq!(rename["status"], "reviewed");
+    assert_eq!(rename["evidence"].as_array().unwrap().len(), 2);
+    assert!(
+        !changed_paths
+            .iter()
+            .any(|entry| entry["path"] == "caller.js")
+    );
     let mut bad = draft.clone();
     for entry in bad["change_pass"].as_array_mut().unwrap() {
         if entry["path"] == "guard.js" {

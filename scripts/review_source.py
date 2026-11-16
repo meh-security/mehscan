@@ -883,7 +883,7 @@ def run(args, legacy, worker):
                     skill, [w["path"] for w in assignment["windows"]]
                 )
             ),
-            "work": context.compact_work(payload, assignment["review_ids"]),
+            "work": context.compact_work(payload, assignment["review_ids"], include_active_gaps=question is None),
             "native_questions": known,
             "primary": {"windows": windows, "limits": plan["limitations"]},
             "source_assignment_id": assignment["id"],
