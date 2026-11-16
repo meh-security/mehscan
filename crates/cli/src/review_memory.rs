@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use turso::{Builder, Connection, transaction::TransactionBehavior};
 
 mod assessments;
+mod dependencies;
 mod legacy;
 
 const SCHEMA: &str = "
@@ -65,6 +66,7 @@ struct Snapshot {
     inventory: String,
     source: String,
     files: BTreeMap<String, String>,
+    sources: Option<mehscan_engine::investigation::ReviewMemorySources>,
 }
 
 enum Operation {
@@ -77,6 +79,10 @@ enum Operation {
     },
     Assessments {
         stream: String,
+    },
+    Compare {
+        stream: String,
+        batch: String,
     },
     Reuse {
         stream: String,
@@ -104,7 +110,7 @@ impl EndRetention {
         sequence: u64,
     ) -> Result<serde_json::Value, String> {
         super::review_state::outside_source(state, &self.source_root)?;
-        let snapshot = load_snapshot(&self.source_root, &self.inventory)?;
+        let snapshot = load_snapshot(&self.source_root, &self.inventory, true)?;
         if snapshot.repository.repository_key.as_deref() != Some(repository_key) {
             return Err("memory inventory belongs to a different repository".into());
         }
@@ -140,7 +146,9 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             help();
             return Ok(());
         }
-        Some("location" | "snapshot" | "retain" | "assessments" | "reuse" | "prepare") => {}
+        Some(
+            "location" | "snapshot" | "retain" | "assessments" | "reuse" | "prepare" | "compare",
+        ) => {}
         Some("import-legacy" | "legacy-history") => {
             return legacy::run(command.as_deref().unwrap(), arguments);
         }
@@ -168,7 +176,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return super::print_json(&json(locations)?);
     }
     let store = args.optional("--store").map(PathBuf::from);
-    let snapshot = load_snapshot(&root, &inventory)?;
+    let snapshot = load_snapshot(
+        &root,
+        &inventory,
+        matches!(command.as_deref(), Some("retain" | "compare")),
+    )?;
     if command.as_deref() == Some("prepare") {
         return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
     }
@@ -200,6 +212,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
         Some("assessments") => Operation::Assessments {
             stream: args.required("--stream")?,
+        },
+        Some("compare") => Operation::Compare {
+            stream: args.required("--stream")?,
+            batch: args.required("--batch")?,
         },
         Some("reuse") => {
             let state = PathBuf::from(args.required("--state-store")?);
@@ -292,13 +308,15 @@ fn prepare_native(
     .prepare(root, &skill, provider.as_deref(), retained)
 }
 
-fn load_snapshot(root: &Path, inventory: &Path) -> Result<Snapshot, String> {
+fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Snapshot, String> {
     let (cache, inventory) = super::review_state::load_inventory(inventory)?;
     let catalog = inventory_catalog(&cache)?;
+    let sources = super::engine(mehscan_engine::investigation::review_memory_sources(
+        root, &cache,
+    ))?;
     Ok(Snapshot {
-        files: super::engine(
-            mehscan_engine::investigation::review_inventory_source_hashes(root, &cache),
-        )?,
+        files: sources.hashes(),
+        sources: keep_sources.then_some(sources),
         repository: catalog.repository.clone(),
         source: catalog.source_fingerprint.clone(),
         inventory,
@@ -409,8 +427,12 @@ fn operate(
     {
         return json(assessments::empty(snapshot)?);
     }
-    if matches!(operation, Operation::Reuse { .. }) && !store.is_file() {
-        return Err("memory reuse requires an existing local database".into());
+    if matches!(
+        operation,
+        Operation::Reuse { .. } | Operation::Compare { .. }
+    ) && !store.is_file()
+    {
+        return Err("memory reuse and comparison require an existing local database".into());
     }
     let _lock = lock_store(store)?;
     local_runtime()?.block_on(run_local(store, snapshot, operation))
@@ -476,6 +498,9 @@ fn help() {
     );
     legacy::help();
     println!(
+        "  mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH [--store FILE]"
+    );
+    println!(
         "\n  mehscan memory reuse --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --owner OWNER --work-package WORK --skill-root DIR [--provider-contract FILE] --batch ID --operation-key KEY [--store FILE]"
     );
 }
@@ -517,7 +542,7 @@ async fn schema_version(conn: &Connection) -> Result<i64, String> {
         .map_err(db_error)?;
     if let Some(row) = versions.next().await.map_err(db_error)? {
         let version = row.get::<i64>(0).map_err(db_error)?;
-        if matches!(version, 1..=3) && versions.next().await.map_err(db_error)?.is_none() {
+        if matches!(version, 1..=4) && versions.next().await.map_err(db_error)?.is_none() {
             return Ok(version);
         }
     }
@@ -542,11 +567,14 @@ async fn prepare_schema(conn: &Connection) -> Result<(), String> {
 
 async fn prepare_legacy_schema(conn: &Connection) -> Result<(), String> {
     prepare_schema(conn).await?;
-    if schema_version(conn).await? == 2 {
+    if !legacy::table_exists(conn, "legacy_imports").await? {
         legacy::install(conn).await?;
-        conn.execute("UPDATE review_memory_schema SET version = 3", ())
-            .await
-            .map_err(db_error)?;
+        conn.execute(
+            "UPDATE review_memory_schema SET version = 3 WHERE version = 2",
+            (),
+        )
+        .await
+        .map_err(db_error)?;
     }
     Ok(())
 }
@@ -618,11 +646,14 @@ async fn run_local(
 ) -> Result<serde_json::Value, String> {
     let read_only = matches!(
         operation,
-        Operation::Assessments { .. } | Operation::Reuse { .. }
+        Operation::Assessments { .. } | Operation::Reuse { .. } | Operation::Compare { .. }
     );
     let (_database, mut connection) = open_local(path, read_only).await?;
     if let Operation::Assessments { stream } = operation {
         return json(assessments::lookup(&connection, snapshot, &stream).await?);
+    }
+    if let Operation::Compare { stream, batch } = operation {
+        return dependencies::compare(&connection, snapshot, &stream, &batch).await;
     }
     if let Operation::Reuse {
         stream,
@@ -662,6 +693,7 @@ async fn run_local(
     let created = persist_snapshot(&tx, snapshot, &repository, &id).await?;
     if let Operation::Retain { admission, stream } = &operation {
         let result = assessments::retain(&tx, &id, &snapshot.inventory, stream, admission).await?;
+        dependencies::retain(&tx, snapshot, &id, result.batch(), &admission.records).await?;
         tx.commit().await.map_err(db_error)?;
         return json(result);
     }

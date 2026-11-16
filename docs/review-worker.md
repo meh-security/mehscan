@@ -620,6 +620,22 @@ inventory and stream.
 Use the returned batches as historical context. Native state remains the
 authority for supersession, unresolved checks, and the current verdict.
 
+To inspect a retained batch after an edit, compare it against an inventory
+created from the current source in the same repository and stream.
+
+```text
+mehscan memory compare --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH
+```
+
+The read-only comparison reports changes to primary files, cited evidence,
+and captured control or configuration files. It also checks the set of files
+that contain watched identifiers, including Razor component names. This search
+covers captured text, where matches can include comments and declarations.
+`membership_changed` marks a different set of matching files.
+`member_file_changed` marks a content change within the same set. An
+`unavailable` file lacked a baseline hash. Use these observations to choose
+what to recheck. Verdict reuse still requires current native admission.
+
 For an unchanged full-source review, the controller can reuse settled decisions
 from a finished batch in the same native journal and stream. Start the new
 native generation and bind its plan and single-model runtime. For the

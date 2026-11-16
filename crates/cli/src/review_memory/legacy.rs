@@ -413,7 +413,7 @@ fn distinct_destination(input: &Path, destination: &Path) -> Result<(), String> 
     Ok(())
 }
 
-async fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
+pub(super) async fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
     let mut rows = conn
         .query(
             "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1",
@@ -523,7 +523,8 @@ async fn history(
     origin: &str,
     assessment: Option<&str>,
 ) -> Result<Json, String> {
-    if schema_version(conn).await? < 3 {
+    let version = schema_version(conn).await?;
+    if version < 3 || (version == 4 && !table_exists(conn, "legacy_imports").await?) {
         return Err("review memory has no legacy imports".into());
     }
     let digest = imported_digest(conn, origin)
@@ -674,6 +675,9 @@ mod tests {
                 let (_db, conn) = open_local(&target, false).await.unwrap();
                 super::super::prepare_schema(&conn).await.unwrap();
                 assert_eq!(schema_version(&conn).await.unwrap(), 2);
+                super::super::dependencies::prepare_schema(&conn).await.unwrap();
+                let error = history(&conn, "fixture", None).await.unwrap_err();
+                assert!(error.contains("no legacy imports"), "{error}");
             }
             let original = fs::read(&source).unwrap();
             let first = import(&source, &target, "fixture", None).await.unwrap();
@@ -684,6 +688,7 @@ mod tests {
             assert_eq!(fs::read(&source).unwrap(), original);
             {
                 let (_db, conn) = open_local(&target, true).await.unwrap();
+                assert_eq!(schema_version(&conn).await.unwrap(), 4);
                 let saved = history(&conn, "fixture", Some("review")).await.unwrap();
                 assert_eq!(saved["authority"], "historical_context");
                 assert_eq!(saved["checks"][0]["question"], "Is the input bounded?");

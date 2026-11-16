@@ -108,6 +108,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Final report | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
 | Locate persistent review state | `mehscan memory location --source-root ROOT --inventory DIR` uses the inventory's stable repository key. Use its `state_store` for state commands. |
 | Prepare unchanged native work | `mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security` returns the remaining `work_package`. |
+| Inspect dependencies after an edit | `mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH` compares cited files and lexical reference observations. Use its output to guide source checks under the current work package. |
 | Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 
 Use `--format sarif` or `--format markdown` for those report projections.

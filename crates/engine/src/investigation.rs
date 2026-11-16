@@ -450,11 +450,13 @@ pub fn validate_review_inventory(
     validate_review_inventory_sources(root, inventory, &RepositorySources::load_snapshot(root)?)
 }
 
-/// Hash the same discovered inputs used to validate the native inventory.
-pub fn review_inventory_source_hashes(
+/// Captured text used to validate a native review inventory.
+pub struct ReviewMemorySources(RepositorySources);
+
+pub fn review_memory_sources(
     root: &Path,
     inventory: &ReviewInventory,
-) -> Result<BTreeMap<String, String>, EngineError> {
+) -> Result<ReviewMemorySources, EngineError> {
     let sources = RepositorySources::load_snapshot(root)?;
     validate_review_inventory_sources(root, inventory, &sources)?;
     if inventory
@@ -466,11 +468,57 @@ pub fn review_inventory_source_hashes(
             "inventory identity does not match its source fingerprint".into(),
         ));
     }
-    Ok(sources
-        .files
-        .into_iter()
-        .map(|(path, file)| (path, review_content_fingerprint(file.source.as_bytes())))
-        .collect())
+    Ok(ReviewMemorySources(sources))
+}
+
+impl ReviewMemorySources {
+    pub fn hashes(&self) -> BTreeMap<String, String> {
+        self.0
+            .files
+            .iter()
+            .map(|(path, file)| {
+                (
+                    path.clone(),
+                    review_content_fingerprint(file.source.as_bytes()),
+                )
+            })
+            .collect()
+    }
+
+    /// Observe exact identifier occurrences in the captured text. This includes
+    /// definitions, markup and comments, and makes no semantic dispatch claim.
+    pub fn reference_files<'a, 'b>(
+        &'a self,
+        names: &'b BTreeSet<String>,
+    ) -> std::collections::HashMap<&'b str, Vec<&'a str>> {
+        let mut matches: std::collections::HashMap<_, Vec<_>> = names
+            .iter()
+            .map(|name| (name.as_str(), Vec::new()))
+            .collect();
+        if !matches.is_empty() {
+            for (path, file) in &self.0.files {
+                for token in file
+                    .source
+                    .split(|ch| !is_identifier_character(ch) && ch != '$')
+                {
+                    if let Some(paths) = matches.get_mut(token)
+                        && paths.last() != Some(&path.as_str())
+                    {
+                        paths.push(path.as_str());
+                    }
+                }
+            }
+        }
+        matches
+    }
+}
+
+/// Hash the same discovered inputs used to validate the native inventory.
+pub fn review_inventory_source_hashes(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<BTreeMap<String, String>, EngineError> {
+    Ok(review_memory_sources(root, inventory)?.hashes())
 }
 
 /// Validate the raw source snapshot for fresh compiler collection only.

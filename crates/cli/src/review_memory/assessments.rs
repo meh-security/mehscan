@@ -65,6 +65,20 @@ pub(super) struct Retention {
     reused: bool,
 }
 
+impl Retention {
+    pub(super) fn batch(&self) -> &str {
+        &self.batch
+    }
+}
+
+pub(super) fn assessment_id(
+    snapshot: &str,
+    inventory: &str,
+    decision: &str,
+) -> Result<String, String> {
+    fingerprint(&(snapshot, inventory, decision))
+}
+
 pub(super) async fn retain(
     tx: &Connection,
     snapshot: &str,
@@ -112,7 +126,7 @@ pub(super) async fn retain(
             let response = &record.response;
             // A native decision ID retains the complete decision identity. Include
             // the exact admitted inventory to avoid conflating assessment bases.
-            let id = fingerprint(&(snapshot, inventory, &record.decision_id))?;
+            let id = assessment_id(snapshot, inventory, &record.decision_id)?;
             let verdict = match response.decision {
                 ReviewDecision::Issue => "issue",
                 ReviewDecision::NotIssue => "not_issue",

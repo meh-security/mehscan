@@ -456,6 +456,153 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
 }
 
 #[test]
+fn turso_compares_retained_source_and_caller_observations() {
+    let mut fixture = Fixture::new("memory-dependencies");
+    let policy = fixture.source.join("policy.js");
+    fs::write(&policy, "export const enabled = false;\n").unwrap();
+    fixture.prepare("before");
+    let claim = fixture.claim("before", "0", "dependencies-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    let manifest = read(&fixture.run.join("manifest.json"));
+    let journals = fixture.base.join("journals");
+    fs::create_dir(&journals).unwrap();
+    let draft = fixture.base.join("draft.json");
+    for entry in manifest["bundles"].as_array().unwrap() {
+        let filename = entry["filename"].as_str().unwrap();
+        let request = fixture.run.join("requests").join(filename);
+        let response = fixture.run.join("responses").join(filename);
+        let results = read(&request)["review_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| {
+                json!({"review_id":id, "decision":"needs_review", "confidence":"medium",
+                    "summary":"Caller configuration needs confirmation.",
+                    "reason":"The policy flag is disabled in the inspected module.",
+                    "checks":["Which caller loads this policy module?"],
+                    "evidence":[{"path":"policy.js", "start_line":1, "end_line":1}]})
+            })
+            .collect::<Vec<_>>();
+        fs::write(&draft, json!({"results":results}).to_string()).unwrap();
+        let finalized = invoke(&[
+            "investigate",
+            "review-bundle-finalize",
+            "--bundle",
+            request.to_str().unwrap(),
+            "--draft",
+            draft.to_str().unwrap(),
+            "--journal-dir",
+            journals.to_str().unwrap(),
+            "--output",
+            response.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+        ]);
+        assert!(
+            finalized.status.success(),
+            "{}",
+            String::from_utf8_lossy(&finalized.stderr)
+        );
+    }
+    ok(&fixture.record_args("1", owner, "dependencies-record"));
+    let db = fixture.base.join("memory.turso");
+    let end = ok(&[
+        "state",
+        "end",
+        "--store",
+        fixture.store.to_str().unwrap(),
+        "--stream",
+        "pr:24",
+        "--repository-key",
+        "repo:123",
+        "--generation",
+        "1",
+        "--owner",
+        owner,
+        "--status",
+        "incomplete",
+        "--operation-key",
+        "dependencies-end",
+        "--memory-store",
+        db.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+    ]);
+    let batch = end["memory"]["batch"].as_str().unwrap();
+    let compare = |fixture: &Fixture, stream: &str| {
+        invoke(&[
+            "memory",
+            "compare",
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            stream,
+            "--batch",
+            batch,
+        ])
+    };
+    let exact = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    assert_eq!(exact["authority"], "dependency_observations");
+    assert_eq!(exact["base_snapshot"], exact["snapshot"]);
+    let review = exact["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["references"][0]["symbol"] == "handle")
+        .unwrap_or_else(|| panic!("expected a handle reference in {exact}"));
+    assert_eq!(review["references"][0]["status"], "unchanged");
+    assert_eq!(review["references"][0]["prior_file_count"], 1);
+
+    fs::write(
+        fixture.source.join("unrelated.js"),
+        "export const label = 1;\n",
+    )
+    .unwrap();
+    fixture.prepare("unrelated");
+    let unrelated = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    assert_ne!(unrelated["base_snapshot"], unrelated["snapshot"]);
+    assert_eq!(unrelated["assessments"], exact["assessments"]);
+
+    fs::write(
+        fixture.source.join("caller.js"),
+        "export const route = handle;\n",
+    )
+    .unwrap();
+    fs::write(&policy, "export const enabled = true;\n").unwrap();
+    fixture.prepare("changed");
+    let changed = successful_json(compare(&fixture, "pr:24"), &["memory", "compare"]);
+    let review = changed["assessments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["references"][0]["symbol"] == "handle")
+        .unwrap();
+    assert_eq!(review["references"][0]["status"], "membership_changed");
+    assert_eq!(review["references"][0]["current_file_count"], 2);
+    for (path, role, status) in [
+        ("app.js", "primary", "unchanged"),
+        ("policy.js", "decisive_source", "modified"),
+    ] {
+        assert!(
+            review["files"]
+                .as_array()
+                .unwrap()
+                .contains(&json!({"path":path,"role":role,"status":status})),
+            "{review}"
+        );
+    }
+    let other_stream = compare(&fixture, "pr:25");
+    assert!(!other_stream.status.success());
+    assert!(String::from_utf8_lossy(&other_stream.stderr).contains("repository and stream"));
+}
+
+#[test]
 fn native_end_retries_memory_retention_at_the_original_terminal_receipt() {
     let fixture = Fixture::new("memory-end");
     let first = fixture.claim("original", "0", "end-memory-claim", false);
