@@ -149,15 +149,17 @@ def common_prefix(packet):
 
 
 def prompt(task, packet, facts, state, *, new_case, source_presentation):
-    from codex_protocol import present_source_inputs
+    from codex_protocol import present_active_gaps, present_source_inputs
     import source_review_protocol
     value = common_prefix(packet) if state is None else (
         "Begin the next declared case in this domain session. The prior case is sealed.\n" if new_case
         else "Continue the current declared domain case.\n")
     if new_case:
         display, _ = present_source_inputs(task, packet, [], source_presentation, include_packet=True)
+        display, active_gaps = present_active_gaps(display)
         display = {k: v for k, v in display.items() if k not in ("contract", "domain_shared_facts")}
         value += "\nCurrent case evidence and verification targets:\n" + json.dumps(display, ensure_ascii=False)
+        value += active_gaps
     # Reuse the ordinary source continuation's evidence/citation/coverage/budget
     # rendering. The new case packet above has already supplied its primary view.
     prior = {"sent_facts": (state or {}).get("sent_facts", [])}

@@ -1327,7 +1327,9 @@ def run_locked(args):
         packet = {"schema_version": "1", "package_id": expected["package_id"],
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
                   "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role, tiered=bool(tiered_policy)),
-                  "work": context.compact_work(payload, ids or requested), "native_questions": entries,
+                  "work": context.compact_work(payload, ids or requested,
+                      include_active_gaps=role == "investigator" and task["kind"] == "native_bundle"),
+                  "native_questions": entries,
                   "primary": prepared_changes}
         if tiered_policy:
             packet["job_binding"] = {"profile": profile, "role": role,

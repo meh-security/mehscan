@@ -223,7 +223,7 @@ def schema(task, base, api, guidance, bound_handles=True):
 
 
 def prompt(task, packet, facts, state, *, source_presentation="raw"):
-    from codex_protocol import present_source_inputs, SOURCE_VIEW_NOTICE
+    from codex_protocol import present_active_gaps, present_source_inputs, SOURCE_VIEW_NOTICE
 
     prior = set((state or {}).get("sent_facts", []))
     new = [f for f in facts if f["result_id"] not in prior]
@@ -231,6 +231,7 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
         task, packet, new, source_presentation, include_packet=state is None
     )
     if state is None:
+        display, active_gaps = present_active_gaps(display)
         value = packet["contract"]
         from codex_protocol import API, GUIDANCE
 
@@ -244,6 +245,7 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
         value += "\nRequested source assignment and native questions:\n" + json.dumps(
             {k: v for k, v in display.items() if k != "contract"}, ensure_ascii=False
         )
+        value += active_gaps
     else:
         value = "Continue this source assignment using the previously inspected source and the new deciding evidence."
     if source_presentation != "raw":

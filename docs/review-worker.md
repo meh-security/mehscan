@@ -1048,6 +1048,12 @@ The controller does not turn these counters into a provider invoice.
 
 ## Resume missing facts
 
+When a revised inventory maps an assigned native question to an earlier
+`needs_review` decision, the worker supplies its saved deciding questions and
+prior locations. The bundled reviewer uses those locations to guide fresh
+source reads. Questions already registered in the current generation retain
+their current IDs and any bound evidence updates.
+
 Register a question against an exact current needs_review decision/check or a
 current needs_review change-pass question with `state pending`. Use a typed kind
 such as `source_authority`, `control_coverage`, `caller_reachability`,

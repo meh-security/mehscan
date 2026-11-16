@@ -372,11 +372,45 @@ def prepare_changes(root, scope, native, env, timeout):
     return {"windows": windows, "hunks": hunks, "limits": limits}
 
 
-def compact_work(payload, ids):
-    return {key: payload[key] for key in ("assessment_context", "policy", "repository", "impact_scope", "change_pass")} | {
-        "runtime": payload.get("runtime"), "review_ids": ids, "pending_questions": payload.get("pending_questions", []),
-        "evidence_updates": payload.get("evidence_updates", []),
-        "parent_decisions": payload.get("parent_decisions", {})}
+def compact_work(payload, ids, *, include_active_gaps=False):
+    parents_by_review = payload.get("expected_parents", {})
+    selected_parents = {parent for review_id in ids for parent in parents_by_review.get(review_id, ())}
+    parents = {record["decision_id"]: record for record in payload.get("parent_decisions", ())
+               if record["decision_id"] in selected_parents}
+    questions = [row for row in payload.get("pending_questions", ())
+                 if row["origin"]["kind"] == "change_pass" or row["origin"].get("decision_id") in parents]
+    question_ids = {row["question_id"] for row in questions}
+    work = {key: payload[key] for key in ("assessment_context", "policy", "repository", "impact_scope", "change_pass")} | {
+        "runtime": payload.get("runtime"), "review_ids": ids, "pending_questions": questions,
+        "evidence_updates": [row for row in payload.get("evidence_updates", ()) if row["question_id"] in question_ids],
+        "parent_decisions": list(parents.values())}
+    if include_active_gaps:
+        current = {(row["origin"].get("decision_id"), row["question"]): row["question_id"] for row in questions}
+        gaps = [
+            active_gap(review_id, parents[parent], current)
+            for review_id in ids
+            for parent in parents_by_review.get(review_id, ())
+            if parent in parents and parents[parent]["response"]["decision"] == "needs_review"
+        ]
+        if gaps:
+            work["active_gaps"] = gaps
+    return work
+
+
+def active_gap(review_id, record, current):
+    response = record["response"]
+    trace = response.get("investigation") or {}
+    prior = record["decision_id"]
+    questions = list(dict.fromkeys([*response["checks"], *trace.get("blockers", ())]))
+    primary = (record["identity"].get("primary_location_fingerprint") or {}).get("location")
+    locations = {}
+    for location in [primary, *(artifact["location"] for artifact in trace.get("decisive_artifacts", ()))]:
+        if location is not None:
+            path, first, last = location["path"], location["start"]["line"], location["end"]["line"]
+            locations[(path, first, last)] = {"path": path, "start_line": first, "end_line": last}
+    return {"review_id": review_id, "prior_decision_id": prior, "prior_summary": response["summary"],
+            "questions": [{"text": text, "current_question_id": current.get((prior, text))} for text in questions],
+            "prior_locations": list(locations.values())}
 
 
 def prepare_application(root, sweep, cache, snapshot_id):
