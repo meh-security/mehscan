@@ -55,6 +55,10 @@ or finished snapshots coalesce without returning an owner. Cancelled/incomplete
 snapshots can start a fresh attempt. Attempt IDs cannot be reused for a new
 generation.
 
+Git worktrees can share a state store outside both checkouts. Identical
+inventories on the same stream coalesce across worktree paths. Use different
+streams for independently active branch reviews.
+
 Every mutation requires an `--operation-key`, unique within the entire store.
 Use a stable key for one logical request: retrying identical input returns its
 original receipt; reusing the key for different input fails. `replayed` identifies

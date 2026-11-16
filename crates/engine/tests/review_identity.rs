@@ -521,6 +521,28 @@ fn direct_reports_preserve_change_scope_and_reject_mixed_comparisons() {
 #[test]
 fn structural_identity_survives_formatting_lines_and_checkout_roots() {
     let a = inventory(&root("a"), SOURCE, Some("github.com/repositories/123"));
+    let relocated = inventory(
+        &root("relocated"),
+        SOURCE,
+        Some("github.com/repositories/123"),
+    );
+    assert_ne!(a.scan.root, relocated.scan.root);
+    assert_eq!(
+        a.input_fingerprint().unwrap(),
+        relocated.input_fingerprint().unwrap()
+    );
+    let mut legacy = serde_json::to_value(&a).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("portable_input_fingerprint");
+    let mut legacy: ReviewInventory = serde_json::from_value(legacy).unwrap();
+    let original_legacy_fingerprint = legacy.input_fingerprint().unwrap();
+    legacy.scan.root = relocated.scan.root.clone();
+    assert_ne!(
+        legacy.input_fingerprint().unwrap(),
+        original_legacy_fingerprint
+    );
     let b = inventory(
         &root("b"),
         "// header\r\n\r\nfunction handle(request) {\r\n  eval ( /* trivia */ request.query.code );\r\n}\r\n",
@@ -544,6 +566,10 @@ fn structural_identity_survives_formatting_lines_and_checkout_roots() {
             .collect::<BTreeSet<_>>()
     };
     assert_eq!(keys(&a), keys(&b));
+    assert_ne!(
+        a.input_fingerprint().unwrap(),
+        b.input_fingerprint().unwrap()
+    );
     let a = a.identity_catalog.unwrap();
     let b = b.identity_catalog.unwrap();
     assert_ne!(a.source_fingerprint, b.source_fingerprint);

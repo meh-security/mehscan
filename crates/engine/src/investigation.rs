@@ -409,6 +409,9 @@ pub struct ReviewInventory {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_catalog: Option<mehscan_core::ReviewIdentityCatalog>,
     pub schema_version: String,
+    /// New inventories bind the input contents independently of checkout location.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    portable_input_fingerprint: bool,
     /// Invalidates cached Rust facts without expiring unrelated language work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rust_configuration_revision: Option<String>,
@@ -434,7 +437,14 @@ pub struct ReviewInventory {
 impl ReviewInventory {
     /// Bind review reuse to facts, admission policy and native inputs, not ID count.
     pub fn input_fingerprint(&self) -> Result<String, EngineError> {
-        let bytes = serde_json::to_vec(self).map_err(|e| EngineError(e.to_string()))?;
+        let bytes = if self.portable_input_fingerprint {
+            let mut input = serde_json::to_value(self).map_err(|e| EngineError(e.to_string()))?;
+            input["scan"]["root"] = serde_json::Value::String(".".into());
+            serde_json::to_vec(&input)
+        } else {
+            serde_json::to_vec(self)
+        }
+        .map_err(|e| EngineError(e.to_string()))?;
         Ok(crate::csharp_semantic::digest(&bytes))
     }
 }
@@ -875,6 +885,7 @@ pub fn build_review_inventory_scoped_with_native_backends(
     Ok(ReviewInventory {
         identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
+        portable_input_fingerprint: true,
         cpp_effect_revision: scan
             .coverage
             .languages
