@@ -717,6 +717,7 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     };
     sync("pull", &replicas[0], &[]);
     sync("pull", &replicas[1], &[]);
+    let mut batches = Vec::new();
     for (index, verdict) in ["not_issue", "needs_review"].into_iter().enumerate() {
         let writer = Fixture {
             base: fixture.base.clone(),
@@ -750,12 +751,13 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         let duplicate = sync("stage", &replicas[index], &args);
         assert_eq!(duplicate["reused"], true);
         assert_eq!(duplicate["publication"], staged["publication"]);
+        batches.push((db, batch.to_owned()));
     }
     sync("push", &replicas[1], &[]);
     sync("pull", &replicas[0], &[]);
     sync("push", &replicas[0], &[]);
     sync("push", &replicas[0], &[]);
-    sync("pull", &replicas[2], &[]);
+    let bootstrap = sync("pull", &replicas[2], &[]);
     sync("pull", &replicas[1], &[]);
     sync("pull", &replicas[0], &[]);
     sync("checkpoint", &replicas[2], &[]);
@@ -797,6 +799,55 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     assert_eq!(sync("context", &replicas[0], &selection), reader);
     assert_eq!(sync("context", &replicas[1], &selection), reader);
     assert_eq!(sync("status", &replicas[2], &[])["initialized"], true);
+
+    for (index, (store, batch)) in batches.iter().enumerate() {
+        sync(
+            "stage",
+            &replicas[index],
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:24",
+                "--batch",
+                batch,
+                "--publisher-label",
+                &format!("writer-{index}-second-publication"),
+                "--store",
+                store.to_str().unwrap(),
+            ],
+        );
+    }
+    sync("push", &replicas[0], &[]);
+    sync("push", &replicas[1], &[]);
+    let incremental = sync("pull", &replicas[2], &[]);
+    let converged = sync("context", &replicas[2], &selection);
+    assert_eq!(converged["publications"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        converged["conflicting_verdicts"],
+        reader["conflicting_verdicts"]
+    );
+    for replica in &replicas[..2] {
+        sync("pull", replica, &[]);
+        assert_eq!(sync("context", replica, &selection), converged);
+    }
+    assert_eq!(
+        sync(
+            "context",
+            &replicas[2],
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:25",
+            ]
+        )["publications"],
+        json!([])
+    );
+    eprintln!(
+        "Turso transport sample: {}",
+        json!({"bootstrap":bootstrap,"incremental":incremental})
+    );
 
     let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
     let key = wrong
