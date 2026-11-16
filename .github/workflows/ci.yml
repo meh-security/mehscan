@@ -25,7 +25,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 75 || 60 }}
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 75 || 60 }}
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -35,7 +35,8 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
-          - macos-latest
+          # Hosted ARM jobs have repeatedly been cancelled while queued on PRs.
+          - ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'macos-latest' }}
 
     steps:
       - name: Check out source
@@ -83,7 +84,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-e2e.ps1 -SkipBuild
 
-      # Share one macOS ARM runner between Rust and integration tests.
+      # Share one macOS runner between Rust and integration tests.
       - name: Test native review integration
         if: runner.os == 'macOS'
         uses: ./.github/actions/test-review-integration
