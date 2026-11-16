@@ -84,9 +84,9 @@ jobs:
         shell: pwsh
         run: ./scripts/test-e2e.ps1 -SkipBuild
 
-      # Share one macOS runner between Rust and integration tests.
+      # Share one Apple Silicon runner between Rust and integration tests.
       - name: Test native review integration
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
         uses: ./.github/actions/test-review-integration
         with:
           worker-tier: ${{ inputs.include_research && 'all' || 'product' }}
@@ -95,15 +95,13 @@ jobs:
   integration:
     name: Integration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 90 || 60 }}
     env:
       CARGO_INCREMENTAL: "0"
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest","macos-15-intel"]' || '["ubuntu-latest","windows-latest"]') }}
 
     steps:
       - name: Check out source
