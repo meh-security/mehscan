@@ -15,6 +15,21 @@ RESEARCH_MODULES = {
     "test_workspace_batch", "test_workspace_planner",
 }
 
+# Run these product checks on Intel macOS PR runners. Linux and Windows run the
+# full product tier. Keep POSIX-specific behavior and the native CLI boundary.
+SMOKE_TESTS = {
+    "test_context.Context.test_source_root_alias_accepts_contained_files_and_rejects_escape",
+    "test_workspace_audit.AuditTests.test_root_alias_preserves_source_status_without_trusting_source_links",
+    "test_worker.Worker.test_native_worker_records_its_local_assignment",
+    "test_worker.Worker.test_tiered_local_assignment_enforces_its_reserved_provider_calls",
+    "test_worker.Worker.test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow",
+    "test_worker.Worker.test_native_admission_and_pending_crashes_resume_without_more_model_calls",
+    "test_worker.Worker.test_native_runtime_matches_python_package_and_rejects_worker_override",
+    "test_work_review.WorkReview.test_native_fast_reconciles_scoped_correction_under_original_allowance",
+    "test_workspace_bridge.NativeBridgeTests.test_native_bootstrap_fresh_context_reuse_and_complete_original_bundle_finalization",
+    "test_source_review.SourceReview.test_native_admission_rejects_unseen_fabricated_and_altered_plans",
+}
+
 
 def flatten(suite):
     for item in suite:
@@ -40,6 +55,18 @@ def inventory():
 
 def tier(test):
     return "research" if test.__class__.__module__ in RESEARCH_MODULES else "product"
+
+
+def select(tests, selection):
+    if selection == "all":
+        return tests
+    if selection == "smoke":
+        selected = [test for test in tests if tier(test) == "product" and test.id() in SMOKE_TESTS]
+        missing = SMOKE_TESTS - {test.id() for test in selected}
+        if missing:
+            raise ValueError(f"missing product smoke tests: {', '.join(sorted(missing))}")
+        return selected
+    return [test for test in tests if tier(test) == selection]
 
 
 class TimedResult(unittest.TextTestResult):
@@ -85,12 +112,12 @@ class TimedResult(unittest.TextTestResult):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tier", choices=("all", "product", "research"), default="all")
+    parser.add_argument("--tier", choices=("all", "product", "research", "smoke"), default="all")
     parser.add_argument("--list", action="store_true", help="collect/classify without executing")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     tests = inventory()
-    selected = [test for test in tests if args.tier == "all" or tier(test) == args.tier]
+    selected = select(tests, args.tier)
     report = {"schema_version":1, "selection":args.tier,
               "inventory":[{"id":test.id(), "tier":tier(test), "selected":test in selected} for test in tests],
               "results":[], "status":"listed" if args.list else "interrupted"}

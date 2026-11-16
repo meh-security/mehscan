@@ -95,7 +95,7 @@ jobs:
   integration:
     name: Integration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 90 || 60 }}
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
     strategy:
@@ -133,5 +133,5 @@ jobs:
       - name: Test native review integration
         uses: ./.github/actions/test-review-integration
         with:
-          worker-tier: ${{ inputs.include_research && 'all' || 'product' }}
+          worker-tier: ${{ inputs.include_research && 'all' || (runner.os == 'macOS' && 'smoke' || 'product') }}
           artifact-name: review-worker-tests-${{ matrix.os }}
