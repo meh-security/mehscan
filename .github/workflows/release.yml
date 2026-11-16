@@ -127,13 +127,13 @@ jobs:
           $package | ConvertTo-Json -Depth 5
 
       - name: Attest the CI-built release archive
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/release-artifacts/*.zip
 
       - name: Upload the release archive and checksum
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mehscan-release-${{ matrix.platform }}
@@ -145,7 +145,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
