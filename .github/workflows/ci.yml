@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      include_research:
+        description: Run the experimental review worker tests as well
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -73,10 +78,58 @@ jobs:
       - name: Build and test all targets
         run: python scripts/test-cargo-batches.py
 
+      - name: Run the CLI acceptance test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-e2e.ps1 -SkipBuild
+
+  integration:
+    name: Integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      # The release workflow validates the packaged build with full LTO.
+      CARGO_PROFILE_RELEASE_LTO: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the minimum supported Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement scripts/requirements-ci.txt
+
+      - name: Restore Cargo dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-1.88.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.88.0-
+
       - name: Build the optimized scanner for native integration tests
         shell: pwsh
         run: |
-          cargo build -p mehscan-cli --release --locked
+          cargo +1.88.0 build -p mehscan-cli --release --locked
           if ($LASTEXITCODE -ne 0) { throw 'Optimized scanner build failed' }
           $binaryName = if ($IsWindows) { 'mehscan.exe' } else { 'mehscan' }
           $scanner = Join-Path $env:GITHUB_WORKSPACE "target/release/$binaryName"
@@ -87,13 +140,8 @@ jobs:
           MEHSCAN_REQUIRE_NATIVE_TESTS: "true"
         run: python -m unittest discover -s tests/github_action -v
 
-      - name: Run the CLI acceptance test
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test-e2e.ps1 -SkipBuild
-
       - name: Test provider-neutral review worker with native admission
-        run: python scripts/test-review-suites.py --output test-results/review-worker.json
+        run: python scripts/test-review-suites.py --tier ${{ inputs.include_research && 'all' || 'product' }} --output test-results/review-worker.json
 
       - name: Save worker test classifications and timings
         if: always()
