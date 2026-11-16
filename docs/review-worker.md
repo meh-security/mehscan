@@ -542,10 +542,11 @@ the second-pass summary records its own wall time separately. See
 ## Capture local review memory
 
 Persistent repository reviews use a local Turso database by default. Prepare
-the native inventory with a stable `--repository-key`, then ask the controller
-for the journal and database locations:
+the native inventory with a stable `--repository-key` and keep run artifacts
+outside the source checkout.
 
 ```text
+mehscan investigate review-inventory ROOT --repository-key KEY --output RUN/inventory
 mehscan memory location --source-root ROOT --inventory RUN/inventory
 ```
 
@@ -561,6 +562,14 @@ directory outside the source root to choose a different state home. The
 controller creates the repository directory on location lookup and initializes
 the Turso database on the first write. Use `--store FILE` for a specific database
 with `memory` commands and `--memory-store FILE` with `state end`.
+
+[Claim a generation](review-state.md#claim-a-generation) with that journal and
+bind the review plan. Use `memory prepare` for native-only work and `state work`
+for a source-first plan. At close, supply the inventory that was actually
+admitted, including an augmented inventory if the source pass created one.
+Keep the journal and database together for subsequent reviews. An unchanged
+claim may coalesce with an existing attempt. To start a new generation for the
+same inputs, use `--retry true` with the current generation and a fresh attempt ID.
 
 To capture or compare source snapshots directly, run:
 
@@ -623,8 +632,9 @@ mehscan memory prepare --source-root ROOT --inventory RUN/inventory --state-stor
 Save the returned `work_package` as the worker input. The controller checks the
 latest retained batch and records eligible reuse from a matching finished
 generation in native state. An empty list means the requested native work
-has already been accounted for. If memory is unavailable or incompatible, the
-controller reports that status and returns the native work still outstanding.
+has already been accounted for. Remaining IDs still require review. If memory
+is unavailable or incompatible, the controller reports that status and returns
+the native work still outstanding.
 Retrying preparation recovers already admitted reuse. Include the bound
 `--provider-contract` when required and use `--review-ids` for an explicit
 subset. Source-first work plans continue to use their full `state work`
@@ -651,8 +661,8 @@ continue ordinary review under the current work package.
 The controller accepts versioned review-memory archives through version 7:
 
 ```text
-mehscan memory import-legacy --store STATE/review-memory.turso --legacy ARCHIVE.sqlite --origin ARCHIVE_NAME [--legacy-objects OBJECTS.sqlite]
-mehscan memory legacy-history --store STATE/review-memory.turso --origin ARCHIVE_NAME [--assessment ID]
+mehscan memory import-legacy --store MEMORY_DB --legacy ARCHIVE.sqlite --origin ARCHIVE_NAME [--legacy-objects OBJECTS.sqlite]
+mehscan memory legacy-history --store MEMORY_DB --origin ARCHIVE_NAME [--assessment ID]
 ```
 
 The importer reads the archive through the Rust Turso SDK and retains snapshot,
@@ -662,8 +672,10 @@ and extracts their review decisions and evidence locations. Pass `--legacy-objec
 if the archive's object pack has moved. Keep the original database and its
 object files for evidence excerpts and attachments.
 
-Use a stable origin name for the archive. Repeating the same import reuses the
-saved result. Give a changed archive a distinct origin to preserve earlier
+Use the `memory_store` path from `mehscan memory location` as `MEMORY_DB`, or
+choose a separate local Turso file. Give the archive a stable origin name.
+Repeating the same import reuses the saved result. Give a changed archive
+a distinct origin to preserve earlier
 history. Native reuse requires a validated native admission.
 
 ## Prepare review work

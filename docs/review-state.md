@@ -5,6 +5,11 @@ keeps generation ownership and immutable native decisions across processes. The 
 Action can optionally call them on one configured persistent host. Independent
 ephemeral runners do not share a store; see [Action coordination](github-action.md#persistent-host-coordination).
 
+For persistent local reviews, the native journal owns attempts and admissions.
+The paired local Turso database retains eligible decisions and source
+fingerprints for later reviews. One-shot reviews can use a temporary journal
+and close with `--memory-mode temporary`.
+
 ## Claim a generation
 
 Source-bound work-goal reviews also retain `source-review/case-state.sqlite`.
@@ -177,7 +182,7 @@ subjects, conflicts or security coverage. Every view retains
 `alert_disposition: "not_established"`. No GHAS dismissal, alert closure, waiver,
 thread resolution or merge gate is inferred from it.
 
-The store is one versioned, hash-chained `transactions.jsonl`. Mutations hold an
+The native journal is one versioned, hash-chained `transactions.jsonl`. Mutations hold an
 exclusive OS file lock through replay, precondition checks, append and `sync_all`;
 reads hold a shared lock. A receipt follows file synchronization. Torn tails,
 unknown schemas, altered hashes, reordered transactions and replay mismatches

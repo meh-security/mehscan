@@ -3,13 +3,11 @@
 For the dedicated hosted test repository, phased SARIF acceptance and later App
 setup, see [GitHub acceptance setup](github-acceptance.md).
 
-By default, the root `action.yml` prepares a Changed native review inventory for a current PR
-or an explicitly selected release delta. It writes source-bound JSON, a compact
-job summary and reusable inventory artifacts. It does not run AI, finish the
-reviewer's change pass, assess a prospective merge, upload SARIF, comment on a PR
-or approve a merge. Native preparation can complete while security questions and
-unsupported/deleted contracts still need review. Do not configure this job as a
-required security gate.
+By default, the root `action.yml` prepares a Changed native inventory for a
+current PR or a selected release delta. Native preparation leaves reviewer work
+outstanding. Configure an authorized reviewer to run the change pass and use
+the optional [delta coverage gate](#delta-coverage) to enforce completion.
+The caller chooses how to retain the advisory artifacts.
 
 This implementation requires Mehscan 0.9.0 or newer. Set repository variable `MEHSCAN_V11_COMMIT`
 to a reviewed full commit SHA containing both the Action and CLI, then copy
@@ -305,7 +303,24 @@ clearance. A successful execution may retain pending questions and coverage limi
 including historical/stale results. `summary.md` displays status and these counts.
 Neither `reviewed` nor complete work asserts application safety or merge approval.
 
+A failure before review progress still writes `delta-coverage.json`. For
+example, missing provider credentials leave affected paths unavailable and
+completion outputs empty. An interrupted job can publish admitted partial
+findings while its delta coverage remains incomplete.
+
 ### Delta coverage
+
+Start with the [BYOK caller example](examples/mehscan-byok-advisory.yml) and
+configure an authorized provider. Set these inputs on the Mehscan Action step
+for a one-shot review with coverage enforcement.
+
+```yaml
+review-mode: comprehensive
+require-complete-delta-coverage: 'true'
+```
+
+This workflow uses a temporary review journal. Its artifact records the
+reviewed revision and can travel with the findings.
 
 `delta-coverage.json` records the pinned base tip, merge base when applicable,
 head, scan root, review policy and coverage for each changed path. The changed
@@ -321,8 +336,8 @@ reviewed, pending, deferred, unavailable, stale, and cancelled paths. Gate
 completion requires a current pinned result, reviewed paths, and no pending,
 deferred, missing, or conflicting required native decisions. An admitted issue
 can coexist with complete coverage. Changed current line ranges without
-admitted primary-source citations remain open. Native analysis limits remain visible in
-`completion.json`; evidence-backed change-pass review can account for a path
+admitted primary-source citations remain open. Native analysis limits remain
+visible in `completion.json`. Evidence-backed change-pass review can account for a path
 that the native scanner could not analyze.
 
 With the gate enabled, it checks endpoint freshness again before accepting a
