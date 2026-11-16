@@ -457,7 +457,16 @@ pub fn review_memory_sources(
     root: &Path,
     inventory: &ReviewInventory,
 ) -> Result<ReviewMemorySources, EngineError> {
-    let sources = RepositorySources::load_snapshot(root)?;
+    let discovery = discover(root)?;
+    if let Some(bindings) = &inventory.scan.razor_render_bindings {
+        let projects = crate::razor_frontend::project_files(&discovery);
+        if crate::razor_frontend::project_fingerprints(&projects) != bindings.project_inputs {
+            return Err(EngineError(
+                "review inventory is stale: Razor project inputs changed; regenerate it".into(),
+            ));
+        }
+    }
+    let sources = RepositorySources::from_discovery(discovery, true, false)?;
     validate_review_inventory_sources(root, inventory, &sources)?;
     if inventory
         .identity_catalog

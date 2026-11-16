@@ -67,6 +67,7 @@ struct Snapshot {
     source: String,
     files: BTreeMap<String, String>,
     sources: Option<mehscan_engine::investigation::ReviewMemorySources>,
+    razor_render_bindings: Option<mehscan_core::RazorRenderBindings>,
 }
 
 enum Operation {
@@ -319,6 +320,7 @@ fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Sn
         sources: keep_sources.then_some(sources),
         repository: catalog.repository.clone(),
         source: catalog.source_fingerprint.clone(),
+        razor_render_bindings: cache.scan.razor_render_bindings.filter(|_| keep_sources),
         inventory,
     })
 }
@@ -542,7 +544,7 @@ async fn schema_version(conn: &Connection) -> Result<i64, String> {
         .map_err(db_error)?;
     if let Some(row) = versions.next().await.map_err(db_error)? {
         let version = row.get::<i64>(0).map_err(db_error)?;
-        if matches!(version, 1..=4) && versions.next().await.map_err(db_error)?.is_none() {
+        if matches!(version, 1..=5) && versions.next().await.map_err(db_error)?.is_none() {
             return Ok(version);
         }
     }

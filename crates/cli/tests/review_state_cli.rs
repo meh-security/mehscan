@@ -456,6 +456,121 @@ fn exact_turso_reuse_readmits_settled_native_decisions_under_matching_work() {
 }
 
 #[test]
+#[ignore = "requires MEHSCAN_RAZOR_BACKEND and MEHSCAN_RAZOR_SDK"]
+fn turso_compares_sdk_bound_razor_render_uses() {
+    let backend = std::env::var("MEHSCAN_RAZOR_BACKEND").unwrap();
+    let sdk = std::env::var("MEHSCAN_RAZOR_SDK").unwrap();
+    let sdk_args = ["--razor-backend", &backend, "--razor-sdk", &sdk];
+    let mut fixture = Fixture::new("razor-render-memory");
+    let project = fixture.source.join("App.csproj");
+    let project_source = "<Project Sdk=\"Microsoft.NET.Sdk.Web\" />\n";
+    fs::write(&project, project_source).unwrap();
+    fs::write(
+        fixture.source.join("_Imports.razor"),
+        "@using Microsoft.AspNetCore.Components\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("Widget.razor"),
+        "<p>@((MarkupString)Value)</p>\n@code { [Parameter] public string Value { get; set; } = \"\"; }\n",
+    ).unwrap();
+    fs::write(
+        fixture.source.join("First.razor"),
+        "<Widget Value=\"hello\" />\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.source.join("Example.razor"),
+        "@* <Widget /> *@\n<p>Example</p>\n",
+    )
+    .unwrap();
+    let retired = fixture.source.join("Retired.razor");
+    fs::write(&retired, "<Widget />\n").unwrap();
+    fixture.prepare_with("razor-before", &sdk_args);
+    let claim = fixture.claim("before", "0", "razor-render-claim", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    fixture.answers("needs_review", "Confirm the public rendering context.");
+    ok(&fixture.record_args("1", owner, "razor-render-record"));
+    let db = fixture.base.join("memory.turso");
+    let end = fixture.end_with_memory(owner, &db, "razor-render-end");
+    let batch = end["memory"]["batch"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{end}"));
+    let compare = |fixture: &Fixture| {
+        invoke(&[
+            "memory",
+            "compare",
+            "--store",
+            db.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            batch,
+        ])
+    };
+    let compare_widget = |fixture: &Fixture| {
+        let comparison = successful_json(compare(fixture), &["memory", "compare"]);
+        comparison["assessments"].as_array().unwrap().iter()
+            .find(|row| row["files"].as_array().unwrap().iter().any(|file| file["role"] == "primary" && file["path"] == "Widget.razor"))
+            .unwrap_or_else(|| panic!("no Widget.razor assessment in {comparison}"))["razor_render_uses"].clone()
+    };
+    let exact = compare_widget(&fixture);
+    assert_eq!(
+        exact["callers"],
+        json!([
+            {"path":"First.razor","status":"unchanged"},
+            {"path":"Retired.razor","status":"unchanged"},
+        ]),
+        "{exact}"
+    );
+    assert_eq!(exact["project_configuration"], "unchanged");
+
+    fs::write(
+        &project,
+        format!("<!-- source-only configuration edit -->\n{project_source}"),
+    )
+    .unwrap();
+    let stale = compare(&fixture);
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("Razor project inputs changed"));
+    fs::write(
+        fixture.source.join("First.razor"),
+        "<Widget Value=\"updated\" />\n",
+    )
+    .unwrap();
+    fs::write(fixture.source.join("Second.razor"), "<Widget />\n").unwrap();
+    fs::write(&retired, "<p>Caller retired</p>\n").unwrap();
+    fs::write(fixture.source.join("Dynamic.cs"), "public static class DynamicRenderer { public static void Render<T>(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder b) where T: Microsoft.AspNetCore.Components.IComponent { b.OpenComponent<T>(0); b.CloseComponent(); } }\n").unwrap();
+    fixture.prepare_with("razor-after", &sdk_args);
+    let changed = compare_widget(&fixture);
+    assert_eq!(
+        changed["callers"],
+        json!([
+            {"path":"First.razor","status":"modified"},
+            {"path":"Retired.razor","status":"removed"},
+            {"path":"Second.razor","status":"added"},
+        ]),
+        "{changed}"
+    );
+    assert_eq!(
+        changed["unresolved_callers"],
+        json!([{"path":"Dynamic.cs","status":"added"}]),
+        "{changed}"
+    );
+    assert_eq!(changed["project_configuration"], "modified");
+
+    fixture.prepare("razor-markup-only");
+    let markup_only = compare_widget(&fixture);
+    assert_eq!(markup_only["prior_available"], true);
+    assert_eq!(markup_only["current_available"], false);
+    assert!(markup_only.get("callers").is_none());
+}
+
+#[test]
 fn turso_compares_retained_source_and_caller_observations() {
     let mut fixture = Fixture::new("memory-dependencies");
     let policy = fixture.source.join("policy.js");
@@ -506,30 +621,7 @@ fn turso_compares_retained_source_and_caller_observations() {
     }
     ok(&fixture.record_args("1", owner, "dependencies-record"));
     let db = fixture.base.join("memory.turso");
-    let end = ok(&[
-        "state",
-        "end",
-        "--store",
-        fixture.store.to_str().unwrap(),
-        "--stream",
-        "pr:24",
-        "--repository-key",
-        "repo:123",
-        "--generation",
-        "1",
-        "--owner",
-        owner,
-        "--status",
-        "incomplete",
-        "--operation-key",
-        "dependencies-end",
-        "--memory-store",
-        db.to_str().unwrap(),
-        "--source-root",
-        fixture.source.to_str().unwrap(),
-        "--inventory",
-        fixture.inventory.to_str().unwrap(),
-    ]);
+    let end = fixture.end_with_memory(owner, &db, "dependencies-end");
     let batch = end["memory"]["batch"].as_str().unwrap();
     let compare = |fixture: &Fixture, stream: &str| {
         invoke(&[
@@ -764,9 +856,12 @@ impl Fixture {
         fixture
     }
     fn prepare(&mut self, suffix: &str) {
+        self.prepare_with(suffix, &[]);
+    }
+    fn prepare_with(&mut self, suffix: &str, options: &[&str]) {
         self.inventory = self.base.join(format!("inventory-{suffix}"));
         self.run = self.base.join(format!("run-{suffix}"));
-        ok(&[
+        let mut args = vec![
             "investigate",
             "review-inventory",
             self.source.to_str().unwrap(),
@@ -774,7 +869,9 @@ impl Fixture {
             "repo:123",
             "--output",
             self.inventory.to_str().unwrap(),
-        ]);
+        ];
+        args.extend_from_slice(options);
+        ok(&args);
         let inventory = read(&self.inventory.join("inventory.json"));
         let ids = inventory["entries"]
             .as_array()
@@ -825,6 +922,32 @@ impl Fixture {
             .as_array()
             .unwrap()
             .clone()
+    }
+    fn end_with_memory(&self, owner: &str, db: &Path, operation: &str) -> Value {
+        ok(&[
+            "state",
+            "end",
+            "--store",
+            self.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--repository-key",
+            "repo:123",
+            "--generation",
+            "1",
+            "--owner",
+            owner,
+            "--status",
+            "incomplete",
+            "--operation-key",
+            operation,
+            "--memory-store",
+            db.to_str().unwrap(),
+            "--source-root",
+            self.source.to_str().unwrap(),
+            "--inventory",
+            self.inventory.to_str().unwrap(),
+        ])
     }
     fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
         ok(&[

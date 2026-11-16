@@ -111,6 +111,10 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Inspect dependencies after an edit | `mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH` compares cited files and lexical reference observations. Use its output to guide source checks under the current work package. |
 | Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 
+When both inventories use the SDK Razor backend, `memory compare` also reports
+observed direct render callers by component path. Recheck changed callers and
+project configuration. Treat unresolved tags and dynamic calls as open checks.
+
 Use `--format sarif` or `--format markdown` for those report projections.
 Source admission creates new review inputs. Export selected bundles from that
 new inventory and keep their finalized responses under `NEXT`; its

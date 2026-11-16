@@ -16,6 +16,14 @@ internal static partial class RazorFrontend
     {
         foreach (var call in syntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
+            var name = call.Expression switch
+            {
+                MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
+                MemberBindingExpressionSyntax binding => binding.Name.Identifier.ValueText,
+                SimpleNameSyntax simple => simple.Identifier.ValueText,
+                _ => null
+            };
+            if (name is not ("OpenComponent" or "OpenElement")) continue;
             if (model.GetSymbolInfo(call).Symbol is not IMethodSymbol method
                 || method.ContainingType.ToDisplayString() != "Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder"
                 || method.ContainingType.Locations.Any(l => l.IsInSource)) continue;

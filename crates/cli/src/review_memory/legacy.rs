@@ -524,7 +524,7 @@ async fn history(
     assessment: Option<&str>,
 ) -> Result<Json, String> {
     let version = schema_version(conn).await?;
-    if version < 3 || (version == 4 && !table_exists(conn, "legacy_imports").await?) {
+    if version < 3 || (version >= 4 && !table_exists(conn, "legacy_imports").await?) {
         return Err("review memory has no legacy imports".into());
     }
     let digest = imported_digest(conn, origin)

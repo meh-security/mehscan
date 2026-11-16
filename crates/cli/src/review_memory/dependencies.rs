@@ -10,6 +10,8 @@ use turso::Connection;
 
 use super::{Snapshot, assessments::assessment_id, db_error, fingerprint, schema_version};
 
+mod razor;
+
 const SCHEMA: &str = "
     CREATE TABLE dependency_batches (
         batch_id TEXT PRIMARY KEY NOT NULL REFERENCES assessment_batches(id)
@@ -154,6 +156,7 @@ pub(super) async fn retain(
     records: &[ReviewDecisionRecord],
 ) -> Result<(), String> {
     prepare_schema(conn).await?;
+    razor::retain(conn, snapshot, snapshot_id).await?;
     let added = conn
         .execute(
             "INSERT INTO dependency_batches VALUES (?1) ON CONFLICT(batch_id) DO NOTHING",
@@ -247,6 +250,8 @@ struct Assessment {
     decision_id: String,
     files: Vec<FileInput>,
     references: Vec<ReferenceInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    razor_render_uses: Option<razor::Comparison>,
 }
 
 pub(super) async fn compare(
@@ -262,18 +267,23 @@ pub(super) async fn compare(
     }
     let repository = fingerprint(&snapshot.repository)?;
     let current = snapshot.id(&repository)?;
-    let mut rows = conn.query(
-        "SELECT b.snapshot_id, d.batch_id FROM assessment_batches b JOIN snapshots s ON s.id = b.snapshot_id
+    let mut rows = conn
+        .query(
+            "SELECT b.snapshot_id, d.batch_id, b.inventory_fingerprint
+         FROM assessment_batches b JOIN snapshots s ON s.id = b.snapshot_id
          LEFT JOIN dependency_batches d ON d.batch_id = b.id
          WHERE b.id = ?1 AND b.stream = ?2 AND s.repository_id = ?3",
-        (batch, stream, repository.as_str()),
-    ).await.map_err(db_error)?;
+            (batch, stream, repository.as_str()),
+        )
+        .await
+        .map_err(db_error)?;
     let row = rows
         .next()
         .await
         .map_err(db_error)?
         .ok_or("retained dependency batch does not match this repository and stream")?;
     let base: String = row.get(0).map_err(db_error)?;
+    let prior_inventory: String = row.get(2).map_err(db_error)?;
     if row.get::<Option<String>>(1).map_err(db_error)?.is_none() {
         return Err("retained batch has no captured dependencies; re-retain it with its original inventory and source".into());
     }
@@ -300,6 +310,7 @@ pub(super) async fn compare(
             decision_id,
             files: Vec::new(),
             references: Vec::new(),
+            razor_render_uses: None,
         });
         if let Some(path) = row.get::<Option<String>>(4).map_err(db_error)? {
             let before: Option<String> = row.get(5).map_err(db_error)?;
@@ -364,6 +375,23 @@ pub(super) async fn compare(
                 prior_file_count: count,
                 current_file_count,
             });
+    }
+    if results
+        .values()
+        .any(|assessment| razor::target(assessment).is_some())
+    {
+        let prior = razor::baseline(conn, &base, &prior_inventory).await?;
+        let current = razor::current(snapshot)?;
+        for assessment in results.values_mut() {
+            if let Some(target) = razor::target(assessment) {
+                assessment.razor_render_uses = Some(razor::compare(
+                    prior.as_ref(),
+                    current.as_ref(),
+                    target,
+                    &snapshot.files,
+                ));
+            }
+        }
     }
     Ok(
         json!({"authority":"dependency_observations", "reference_scope":"captured_identifier_references/v1",

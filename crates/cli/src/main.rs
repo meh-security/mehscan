@@ -327,11 +327,13 @@ fn resolve_change_scope(
 fn razor_options(
     backend: Option<PathBuf>,
     sdk: Option<PathBuf>,
+    include_render_uses: bool,
 ) -> Result<Option<mehscan_engine::razor_frontend::RazorOptions>, String> {
     match (backend, sdk) {
         (Some(backend), Some(sdk)) => Ok(Some(mehscan_engine::razor_frontend::RazorOptions {
             backend,
             sdk,
+            include_render_uses,
         })),
         (None, None) => Ok(None),
         _ => Err("--razor-backend and --razor-sdk must be supplied together".into()),
@@ -463,7 +465,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
-    let razor = razor_options(razor_backend, razor_sdk)?;
+    let razor = razor_options(razor_backend, razor_sdk, false)?;
     if typescript_semantic.is_some() != typescript_context.is_some() {
         return Err(
             "--typescript-semantic and --typescript-context must be supplied together".into(),
@@ -821,6 +823,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let razor = razor_options(
                 parsed.optional("--razor-backend").map(PathBuf::from),
                 parsed.optional("--razor-sdk").map(PathBuf::from),
+                true,
             )?;
             let ts_semantic = parsed.optional("--typescript-semantic").map(PathBuf::from);
             let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);

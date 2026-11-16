@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use mehscan_core::{Evidence, EvidenceContext, Location, OperandFact, OperandFactKind, Position};
+use mehscan_core::{
+    Evidence, EvidenceContext, Location, OperandFact, OperandFactKind, Position, RazorRenderUse,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::EngineError;
@@ -17,6 +19,7 @@ pub struct RazorOptions {
     pub backend: PathBuf,
     /// Explicit installed SDK directory, e.g. DOTNET_ROOT/sdk/10.0.402.
     pub sdk: PathBuf,
+    pub include_render_uses: bool,
 }
 
 #[derive(Serialize)]
@@ -31,12 +34,14 @@ struct Request<'a> {
     sdk_path: PathBuf,
     files: Vec<Input<'a>>,
     projects: Vec<Input<'a>>,
+    include_render_uses: bool,
 }
 #[derive(Deserialize)]
 pub(crate) struct Output {
     schema_version: String,
     pub projections: Vec<Projection>,
     pub diagnostics: Vec<String>,
+    pub render_uses: Option<Vec<RazorRenderUse>>,
 }
 #[derive(Deserialize)]
 pub(crate) struct Projection {
@@ -67,6 +72,35 @@ struct Navigation {
     value: String,
 }
 
+pub(crate) fn project_files(discovery: &crate::repository::Discovery) -> Vec<(String, String)> {
+    discovery
+        .files
+        .iter()
+        .filter(|file| {
+            file.absolute
+                .extension()
+                .is_some_and(|extension| extension == "csproj")
+        })
+        .filter_map(|file| {
+            std::fs::read_to_string(&file.absolute)
+                .ok()
+                .map(|source| (file.relative.clone(), source))
+        })
+        .collect()
+}
+
+pub(crate) fn project_fingerprints(projects: &[(String, String)]) -> BTreeMap<String, String> {
+    projects
+        .iter()
+        .map(|(path, source)| {
+            (
+                path.clone(),
+                crate::csharp_semantic::digest(source.as_bytes()),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn collect(
     root: &Path,
     options: &RazorOptions,
@@ -90,6 +124,7 @@ pub(crate) fn collect(
             .iter()
             .map(|(path, text)| Input { path, text })
             .collect(),
+        include_render_uses: options.include_render_uses,
     };
     let input = serde_json::to_vec(&request).map_err(|e| EngineError(e.to_string()))?;
     let mut command = Command::new(options.backend.canonicalize()?);
@@ -143,12 +178,40 @@ pub(crate) fn collect(
         )));
     }
     written?;
-    let output: Output = serde_json::from_slice(&bytes).map_err(|e| EngineError(e.to_string()))?;
+    let mut output: Output =
+        serde_json::from_slice(&bytes).map_err(|e| EngineError(e.to_string()))?;
     if output.schema_version != "1" {
         return Err(EngineError("Unsupported Razor frontend schema".into()));
     }
     for projection in &output.projections {
         projection.validate(files)?;
+    }
+    if options.include_render_uses {
+        if let Some(mut uses) = output.render_uses.take() {
+            let valid = uses.iter().all(|edge| {
+                files.contains_key(&edge.path)
+                    && (files.contains_key(&edge.target)
+                        || edge.target == "*"
+                        || edge.target.strip_prefix("component:").is_some_and(|tag| {
+                            !tag.is_empty()
+                                && tag.chars().all(|c| {
+                                    c.is_alphanumeric() || matches!(c, '_' | '.' | '-' | ':')
+                                })
+                        }))
+            });
+            if valid {
+                uses.sort_unstable_by(|a, b| (&a.target, &a.path).cmp(&(&b.target, &b.path)));
+                uses.dedup();
+                output.render_uses = Some(uses);
+            } else {
+                output.diagnostics.push(
+                    "Razor frontend returned invalid render uses; caller observations unavailable"
+                        .into(),
+                );
+            }
+        }
+    } else {
+        output.render_uses = None;
     }
     Ok(output)
 }

@@ -636,6 +636,17 @@ covers captured text, where matches can include comments and declarations.
 `unavailable` file lacked a baseline hash. Use these observations to choose
 what to recheck. Verdict reuse still requires current native admission.
 
+For Razor components, create both inventories with `--razor-backend` and
+`--razor-sdk` to compare SDK-observed render callers. Use a current helper that
+reports render-use edges. `razor_render_uses.callers` lists added, removed,
+modified and unchanged caller files for the exact component path.
+`unresolved_callers` includes matching unresolved tags and dynamic render calls
+whose targets still need review. Project manifest changes are reported separately.
+The comparison reads the saved inventory observations and requires current
+project inputs. A missing capture is reported as unavailable. The SDK observes
+source bindings within its supplied project context. Runtime dispatch and
+effective deployment configuration still require their own checks.
+
 For an unchanged full-source review, the controller can reuse settled decisions
 from a finished batch in the same native journal and stream. Start the new
 native generation and bind its plan and single-model runtime. For the

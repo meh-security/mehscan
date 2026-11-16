@@ -162,20 +162,7 @@ pub(crate) fn scan_profiled(
     } else {
         Vec::new()
     };
-    let dotnet_project_sources = discovery
-        .files
-        .iter()
-        .filter(|file| {
-            file.absolute
-                .extension()
-                .is_some_and(|extension| extension == "csproj")
-        })
-        .filter_map(|file| {
-            fs::read_to_string(&file.absolute)
-                .ok()
-                .map(|source| (file.relative.clone(), source))
-        })
-        .collect::<Vec<_>>();
+    let dotnet_project_sources = crate::razor_frontend::project_files(&discovery);
     let python_template_sources = discovery
         .files
         .iter()
@@ -1031,6 +1018,7 @@ pub(crate) fn scan_profiled(
             }
         }
     }
+    let mut razor_render_bindings = None;
     if let Some(razor) = options.razor.as_ref().filter(|_| !razor_sources.is_empty()) {
         match crate::razor_frontend::collect(
             &discovery.root,
@@ -1039,6 +1027,15 @@ pub(crate) fn scan_profiled(
             &dotnet_project_sources,
         ) {
             Ok(output) => {
+                razor_render_bindings =
+                    output
+                        .render_uses
+                        .map(|uses| mehscan_core::RazorRenderBindings {
+                            uses,
+                            project_inputs: crate::razor_frontend::project_fingerprints(
+                                &dotnet_project_sources,
+                            ),
+                        });
                 for message in output.diagnostics {
                     diagnostics.push(Diagnostic {
                         level: DiagnosticLevel::Warning,
@@ -1204,6 +1201,7 @@ pub(crate) fn scan_profiled(
         security_paths,
         coverage,
         impact_scope,
+        razor_render_bindings,
         diagnostics,
     };
     let finalization_microseconds = finalization_started.elapsed().as_micros();

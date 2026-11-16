@@ -105,6 +105,7 @@ fn scan_result() -> ScanResult {
         }],
         coverage: Coverage::default(),
         impact_scope: None,
+        razor_render_bindings: None,
         diagnostics: Vec::new(),
     }
 }
