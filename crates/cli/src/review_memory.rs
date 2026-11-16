@@ -13,6 +13,7 @@ use turso::{Builder, Connection, transaction::TransactionBehavior};
 mod assessments;
 mod dependencies;
 mod legacy;
+mod upstream;
 
 const SCHEMA: &str = "
     CREATE TABLE review_memory_schema (
@@ -153,6 +154,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         Some("import-legacy" | "legacy-history") => {
             return legacy::run(command.as_deref().unwrap(), arguments);
         }
+        Some("sync") => return upstream::run(arguments),
         Some(other) => {
             return Err(format!(
                 "unknown memory operation {other:?}; use 'mehscan memory --help'"
@@ -180,7 +182,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let snapshot = load_snapshot(
         &root,
         &inventory,
-        matches!(command.as_deref(), Some("retain" | "compare")),
+        matches!(command.as_deref(), Some("retain" | "compare" | "prepare")),
     )?;
     if command.as_deref() == Some("prepare") {
         return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
@@ -293,7 +295,7 @@ fn prepare_native(
             })
         })
     });
-    super::review_state::MemoryPreparation {
+    let mut prepared = super::review_state::MemoryPreparation {
         store: &state,
         stream: &stream,
         repository_key: snapshot
@@ -306,7 +308,41 @@ fn prepare_native(
         owner: &owner,
         requested: requested.as_deref(),
     }
-    .prepare(root, &skill, provider.as_deref(), retained)
+    .prepare(root, &skill, provider.as_deref(), retained)?;
+    if prepared.memory["status"] == "no_batch"
+        && prepared
+            .work_package
+            .payload
+            .expected_parents
+            .values()
+            .any(|parents| !parents.is_empty())
+    {
+        let context = resolve_store(store, root, &snapshot.repository).and_then(|path| {
+            if !path.is_file() {
+                return Ok(None);
+            }
+            let _lock = lock_store(&path)?;
+            local_runtime()?.block_on(async {
+                let (_database, connection) = open_local(&path, true).await?;
+                dependencies::prepare_context(
+                    &connection,
+                    snapshot,
+                    &stream,
+                    &prepared.work_package,
+                )
+                .await
+            })
+        });
+        match context {
+            Ok(Some(context)) => prepared.memory["prior_dependencies"] = context,
+            Ok(None) => {}
+            Err(reason) => {
+                prepared.memory["prior_dependencies"] =
+                    serde_json::json!({"status":"unavailable","reason":reason})
+            }
+        }
+    }
+    json(prepared)
 }
 
 fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Snapshot, String> {
@@ -499,6 +535,7 @@ fn help() {
         "  mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root DIR [--provider-contract FILE] [--review-ids ID,ID] [--store FILE | --memory-mode temporary]"
     );
     legacy::help();
+    upstream::help();
     println!(
         "  mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH [--store FILE]"
     );
@@ -558,6 +595,9 @@ async fn prepare_schema(conn: &Connection) -> Result<(), String> {
     }
     if version < 2 {
         conn.execute_batch(assessments::SCHEMA)
+            .await
+            .map_err(db_error)?;
+        conn.execute_batch(assessments::CONTENT_SCHEMA)
             .await
             .map_err(db_error)?;
         conn.execute("UPDATE review_memory_schema SET version = 2", ())

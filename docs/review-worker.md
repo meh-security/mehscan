@@ -631,6 +631,8 @@ The read-only comparison reports changes to primary files, cited evidence,
 and captured control or configuration files. It also checks the set of files
 that contain watched identifiers, including Razor component names. This search
 covers captured text, where matches can include comments and declarations.
+`decisive_ranges` compares cited bytes at their original offsets. An edit
+elsewhere in a cited file can leave the cited range unchanged.
 `membership_changed` marks a different set of matching files.
 `member_file_changed` marks a content change within the same set. An
 `unavailable` file lacked a baseline hash. Use these observations to choose
@@ -667,6 +669,12 @@ Retrying preparation recovers already admitted reuse. Include the bound
 subset. Source-first work plans continue to use their full `state work`
 handoff so they can account for source coverage and AI-only checks.
 
+After a source edit, preparation can include `memory.prior_dependencies` for
+assigned reviews with exact native parents in the retained baseline. It lists
+changed or unavailable evidence files and reference observations. Keep these
+reviews in the current work package and use the observations to guide source
+checks.
+
 To select a specific retained batch, request the current `state work` package
 and pass its saved file to the explicit reuse command:
 
@@ -676,12 +684,41 @@ mehscan memory reuse --source-root ROOT --inventory RUN/inventory --state-store 
 
 Include the current `--provider-contract` if the work package binds one. The
 controller checks the current source and plan, the original native admission,
-and the exact current parent of every reused decision. Work packages with
-pending questions or evidence updates go through regular review. After reuse,
+and the exact current parent of every reused decision. Reviews with pending
+questions or evidence updates remain assigned for review. Other settled reviews
+in the same package can be reused. After reuse,
 obtain a fresh work package for `result.remaining_review_ids`. Only the listed
 native review IDs have been accounted for. Broader source coverage and scoped
 threat-model work use their own checks. If the batch or work contract differs,
 continue ordinary review under the current work package.
+
+### Share retained context with Turso sync
+
+Use a dedicated upstream database for one repository and one sharing boundary.
+Each installation uses a separate replica file outside the checkout. Supply
+`MEHSCAN_TURSO_AUTH_TOKEN` through the environment for authenticated HTTPS or
+Turso endpoints. The official local sync server also supports HTTP on localhost.
+
+```text
+mehscan memory sync pull --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+mehscan memory sync stage --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH --publisher-label LABEL
+mehscan memory sync push --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+mehscan memory sync context --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM
+```
+
+Stage an explicitly selected local batch after the first pull. Staging commits
+its assessments, questions, cited evidence metadata and file dependencies to
+the replica. Review
+summaries and questions travel with the publication. Push sends the staged
+records upstream. Retry the same stage and label to keep the publication ID.
+Use `status` and `checkpoint` with the same replica, endpoint and repository
+arguments to inspect sync counters and checkpoint the replica.
+
+Pull before reading shared context on another installation. Exact repository,
+snapshot, inventory and stream scope the lookup. Conflicting verdicts remain
+visible with their publications. Publisher labels are attribution supplied by
+the publisher. Shared rows are advisory context. Native local admission still
+determines verdict reuse and completion.
 
 ### Import legacy review history
 

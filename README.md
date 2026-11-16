@@ -87,6 +87,9 @@ outside the checkout to change their location. For one-shot work, use a
 temporary journal and close with `state end --memory-mode temporary`.
 The [local memory guide](docs/review-worker.md#capture-local-review-memory)
 covers preparation, retention and importing older history.
+Use [local worker assignments](docs/review-state.md#assign-reviews-to-local-workers)
+to reserve distinct reviews, or [Turso sync](docs/review-worker.md#share-retained-context-with-turso-sync)
+to share retained context between installations.
 
 ## Pull-request review in GitHub Actions
 

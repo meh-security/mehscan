@@ -20,7 +20,10 @@ pub(super) const SCHEMA: &str = "
     );
     CREATE INDEX assessment_batch_inventory
         ON assessment_batches(snapshot_id, inventory_fingerprint, stream, generation, id);
-    CREATE TABLE assessments (
+";
+
+pub(super) const CONTENT_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS assessments (
         id TEXT NOT NULL PRIMARY KEY,
         decision_id TEXT NOT NULL,
         review_id TEXT NOT NULL,
@@ -31,19 +34,19 @@ pub(super) const SCHEMA: &str = "
         confidence TEXT NOT NULL,
         summary TEXT NOT NULL
     );
-    CREATE TABLE batch_assessments (
+    CREATE TABLE IF NOT EXISTS batch_assessments (
         batch_id TEXT NOT NULL REFERENCES assessment_batches(id),
         assessment_id TEXT NOT NULL REFERENCES assessments(id),
         PRIMARY KEY (batch_id, assessment_id)
     );
-    CREATE TABLE assessment_questions (
+    CREATE TABLE IF NOT EXISTS assessment_questions (
         assessment_id TEXT NOT NULL REFERENCES assessments(id),
         kind TEXT NOT NULL,
         ordinal INTEGER NOT NULL,
         question TEXT NOT NULL,
         PRIMARY KEY (assessment_id, kind, ordinal)
     );
-    CREATE TABLE assessment_evidence (
+    CREATE TABLE IF NOT EXISTS assessment_evidence (
         assessment_id TEXT NOT NULL REFERENCES assessments(id),
         kind TEXT NOT NULL,
         reference TEXT NOT NULL,
@@ -269,13 +272,15 @@ struct Batch {
 }
 
 #[derive(Serialize)]
-struct Assessment {
+pub(super) struct Assessment {
+    #[serde(skip)]
+    id: String,
     decision_id: String,
     review_id: String,
-    subject_key: String,
+    pub(super) subject_key: String,
     basis_fingerprint: String,
     response_fingerprint: String,
-    verdict: String,
+    pub(super) verdict: String,
     confidence: String,
     summary: String,
     questions: Vec<Question>,
@@ -449,7 +454,10 @@ pub(super) async fn latest_finished_batch(
     .map(Some)
 }
 
-async fn read_assessments(conn: &Connection, batch: &str) -> Result<Vec<Assessment>, String> {
+pub(super) async fn read_assessments(
+    conn: &Connection,
+    batch: &str,
+) -> Result<Vec<Assessment>, String> {
     let mut output = Vec::new();
     let mut rows = conn.query(
         "SELECT a.id, a.decision_id, a.review_id, a.subject_key, a.basis_fingerprint, a.response_fingerprint,
@@ -472,6 +480,7 @@ async fn read_assessments(conn: &Connection, batch: &str) -> Result<Vec<Assessme
             });
         }
         output.push(Assessment {
+            id: id.clone(),
             decision_id: row.get(1).map_err(db_error)?,
             review_id: row.get(2).map_err(db_error)?,
             subject_key: row.get(3).map_err(db_error)?,
@@ -485,6 +494,60 @@ async fn read_assessments(conn: &Connection, batch: &str) -> Result<Vec<Assessme
         });
     }
     Ok(output)
+}
+
+pub(super) async fn publish_assessment(
+    conn: &Connection,
+    publication: &str,
+    assessment: &Assessment,
+) -> Result<(), String> {
+    let id = assessment.id.as_str();
+    let added = conn.execute(
+        "INSERT INTO assessments VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO NOTHING",
+        (id, assessment.decision_id.as_str(), assessment.review_id.as_str(), assessment.subject_key.as_str(),
+         assessment.basis_fingerprint.as_str(), assessment.response_fingerprint.as_str(), assessment.verdict.as_str(),
+         assessment.confidence.as_str(), assessment.summary.as_str()),
+    ).await.map_err(db_error)?;
+    if added != 0 {
+        for (ordinal, question) in assessment.questions.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO assessment_questions VALUES (?1,?2,?3,?4)",
+                (
+                    id,
+                    question.kind.as_str(),
+                    integer(ordinal)?,
+                    question.text.as_str(),
+                ),
+            )
+            .await
+            .map_err(db_error)?;
+        }
+        for evidence in &assessment.evidence {
+            conn.execute(
+                "INSERT INTO assessment_evidence VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                (
+                    id,
+                    evidence.kind.as_str(),
+                    evidence.reference.as_str(),
+                    evidence.path.as_str(),
+                    evidence.start_line,
+                    evidence.end_line,
+                    evidence.start_byte,
+                    evidence.end_byte,
+                    evidence.excerpt_sha256.as_deref(),
+                ),
+            )
+            .await
+            .map_err(db_error)?;
+        }
+    }
+    conn.execute(
+        "INSERT INTO batch_assessments VALUES (?1,?2)",
+        (publication, id),
+    )
+    .await
+    .map_err(db_error)?;
+    Ok(())
 }
 
 async fn read_evidence(conn: &Connection, id: &str) -> Result<Vec<Evidence>, String> {

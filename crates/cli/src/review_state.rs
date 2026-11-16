@@ -50,6 +50,23 @@ enum Command {
         provenance: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         work_package: Option<mehscan_core::ReviewWorkPackage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignment: Option<String>,
+    },
+    Allocate {
+        key: String,
+        generation: u64,
+        owner: String,
+        assignment: String,
+        worker: String,
+        reserve_calls: Option<usize>,
+        work_package: mehscan_core::ReviewWorkPackage,
+    },
+    Release {
+        key: String,
+        generation: u64,
+        owner: String,
+        assignment: String,
     },
     Reuse {
         key: String,
@@ -140,7 +157,10 @@ struct Stream {
     pending: BTreeMap<String, mehscan_core::ReviewPendingRecord>,
     facts: BTreeMap<String, mehscan_core::ReviewFactRecord>,
     fact_reviews: BTreeMap<String, BTreeSet<String>>,
+    assignments: BTreeMap<String, allocations::Assignment>,
 }
+
+mod allocations;
 
 #[derive(Default)]
 struct State {
@@ -189,6 +209,18 @@ impl State {
                 owner,
                 ..
             }
+            | Command::Allocate {
+                key,
+                generation,
+                owner,
+                ..
+            }
+            | Command::Release {
+                key,
+                generation,
+                owner,
+                ..
+            }
             | Command::End {
                 key,
                 generation,
@@ -228,6 +260,13 @@ impl State {
                     && generation.is_none_or(|generation| generation == attempt.generation)
                     && owner.is_none_or(|owner| owner == &attempt.owner)
                     && attempt_id.is_none_or(|id| id == &attempt.attempt_id)
+                    && match command {
+                        Command::Allocate { assignment, .. } => self.streams[&key]
+                            .assignments
+                            .get(assignment)
+                            .is_some_and(|item| item.is_active(attempt.generation)),
+                        _ => true,
+                    }
             })
     }
     fn owned_stream(
@@ -332,6 +371,28 @@ impl State {
                     json!({"status":"claimed","stream_key":key,"generation":generation,"snapshot_id":snapshot_id,"owner":owner}),
                 )
             }
+            Command::Allocate {
+                key,
+                generation,
+                owner,
+                assignment,
+                worker,
+                reserve_calls,
+                work_package,
+            } => self.owned_stream(key, *generation, owner)?.allocate(
+                assignment,
+                worker,
+                work_package,
+                *reserve_calls,
+            ),
+            Command::Release {
+                key,
+                generation,
+                owner,
+                assignment,
+            } => self
+                .owned_stream(key, *generation, owner)?
+                .release(*generation, assignment),
             Command::Record {
                 key,
                 generation,
@@ -340,6 +401,7 @@ impl State {
                 supersessions,
                 provenance,
                 work_package,
+                assignment,
             } => {
                 let stream = self.owned_stream(key, *generation, owner)?;
                 let binding = stream.attempts.last().unwrap().binding.clone();
@@ -360,6 +422,12 @@ impl State {
                         records,
                     )?;
                 }
+                stream.validate_allocation(
+                    *generation,
+                    assignment.as_deref(),
+                    work_package.as_ref(),
+                    records,
+                )?;
                 let mut incoming = BTreeMap::new();
                 for record in records {
                     if record.repository != binding.repository
@@ -460,7 +528,10 @@ impl State {
                         .insert(record.decision_id.clone());
                 }
                 if let Some(package) = work_package {
-                    if reusable_work(package) {
+                    if reusable_work(package)
+                        && package.payload.pending_questions.is_empty()
+                        && package.payload.evidence_updates.is_empty()
+                    {
                         let candidates = stream.reusable_admissions.entry(*generation).or_default();
                         for record in records.iter().filter(|record| settled(record)) {
                             candidates.insert(
@@ -488,11 +559,15 @@ impl State {
                         }
                     }
                 }
+                let mut provenance = provenance.clone();
+                if let Some(id) = assignment {
+                    provenance["assignment"] = stream.finish_allocation(id);
+                }
                 stream
                     .provenance
                     .entry(*generation)
                     .or_default()
-                    .push(provenance.clone());
+                    .push(provenance);
                 Ok(
                     json!({"status":"recorded","generation":generation,"decision_ids":incoming.keys().collect::<Vec<_>>()}),
                 )
@@ -511,7 +586,7 @@ impl State {
                 let current = stream.attempts.last().unwrap();
                 validate_work_package(stream, current, work_package, &[])?;
                 if !reusable_work(work_package) {
-                    return Err("memory reuse requires a bound full-source work package without pending questions or evidence updates".into());
+                    return Err("memory reuse requires a bound full-source work package without a change pass".into());
                 }
                 let previous = stream
                     .attempts
@@ -540,6 +615,8 @@ impl State {
                 }
                 let mut records = Vec::new();
                 let mut review_ids = BTreeSet::new();
+                let blocked = pending_memory_reviews(stream, work_package);
+                let reserved = stream.reserved_reviews(*generation);
                 for id in decision_ids {
                     let Some(record) = stream.decisions.get(id) else {
                         return Err("retained decision is missing from native state".into());
@@ -553,6 +630,8 @@ impl State {
                             .and_then(|eligible| eligible.get(id))
                             == Some(&previous_plan.plan_id)
                         && settled(record)
+                        && !blocked.contains(review)
+                        && !reserved.contains(review.as_str())
                         && parents.is_some_and(|parents| parents.as_slice() == [id.as_str()])
                         && !current.admissions.contains(id)
                         && review_ids.insert(review.clone())
@@ -567,8 +646,9 @@ impl State {
                     .filter(|id| {
                         let parents = &work_package.payload.expected_parents[*id];
                         !review_ids.contains(*id)
-                            && !matches!(parents.as_slice(), [parent]
+                            && (blocked.contains(*id) || !matches!(parents.as_slice(), [parent]
                                 if current.admissions.contains(parent) && settled(&stream.decisions[parent]))
+                            )
                     })
                     .collect::<Vec<_>>();
                 let reused: Vec<_> = records
@@ -582,7 +662,17 @@ impl State {
                         provenance: json!({"kind":"exact_memory_reuse","batch":batch,"previous_generation":previous_generation,
                                            "work_package_id":work_package.package_id,"decision_ids":reused}),
                         work_package: Some(work_package.clone()),
+                        assignment: None,
                     })?;
+                    if !blocked.is_empty() {
+                        // Preserve eligibility for partial reuse while keeping
+                        // ordinary Record replay identical for older journals.
+                        let stream = self.owned_stream(key, *generation, owner)?;
+                        let eligible = stream.reusable_admissions.entry(*generation).or_default();
+                        for id in &reused {
+                            eligible.insert(id.clone(), work_package.payload.plan_id.clone());
+                        }
+                    }
                 }
                 Ok(
                     json!({"status":"memory_reuse","generation":generation,"decision_ids":reused,
@@ -611,6 +701,9 @@ impl State {
                 work_package,
             } => {
                 let stream = self.owned_stream(key, *generation, owner)?;
+                if !stream.reserved_reviews(*generation).is_empty() {
+                    return Err("release active assignments before replacing the plan".into());
+                }
                 if let Some(package) = work_package {
                     validate_work_package(stream, stream.attempts.last().unwrap(), package, &[])?;
                 }
@@ -865,6 +958,9 @@ impl State {
         }
         result["completion"] = completion_view(stream, current, &result["subjects"])?;
         result["pending_questions"] = pending_view(stream, current)?;
+        if !stream.assignments.is_empty() {
+            result["assignments"] = stream.assignment_view(current, history);
+        }
         if history {
             result["pending_history"] = json!(stream.pending);
             result["fact_history"] = json!(stream.facts);
@@ -1096,8 +1192,30 @@ fn reusable_work(package: &mehscan_core::ReviewWorkPackage) -> bool {
         .is_some_and(|runtime| runtime.orchestration.is_none())
         && payload.impact_scope.is_none()
         && payload.change_pass.is_empty()
-        && payload.pending_questions.is_empty()
-        && payload.evidence_updates.is_empty()
+        && payload.pending_questions.iter().all(|question| {
+            matches!(
+                question.origin,
+                mehscan_core::ReviewPendingOrigin::Decision { .. }
+            )
+        })
+}
+
+fn pending_memory_reviews(
+    stream: &Stream,
+    package: &mehscan_core::ReviewWorkPackage,
+) -> BTreeSet<String> {
+    package
+        .payload
+        .pending_questions
+        .iter()
+        .filter_map(|question| {
+            let mehscan_core::ReviewPendingOrigin::Decision { decision_id } = &question.origin
+            else {
+                return None;
+            };
+            Some(stream.decisions[decision_id].response.review_id.clone())
+        })
+        .collect()
 }
 
 fn settled(record: &ReviewDecisionRecord) -> bool {
@@ -1373,6 +1491,12 @@ pub(super) struct MemoryPreparation<'a> {
     pub requested: Option<&'a [String]>,
 }
 
+#[derive(Serialize)]
+pub(super) struct PreparedMemory {
+    pub memory: Value,
+    pub work_package: mehscan_core::ReviewWorkPackage,
+}
+
 impl MemoryPreparation<'_> {
     fn native_work(
         &self,
@@ -1384,7 +1508,8 @@ impl MemoryPreparation<'_> {
         if attempt.binding.inventory_input_fingerprint != self.inventory {
             return Err("work inventory differs from active generation".into());
         }
-        work_package(stream, attempt, self.requested, false)
+        let selected = stream.available_reviews(attempt, self.requested)?;
+        work_package(stream, attempt, selected.as_deref(), false)
     }
 
     fn remaining_work(
@@ -1398,9 +1523,10 @@ impl MemoryPreparation<'_> {
         }
         let stream = state.owned_stream(key, self.generation, self.owner)?;
         let attempt = stream.attempts.last().unwrap();
+        let blocked = pending_memory_reviews(stream, &full);
         let remaining = full.payload.review_ids.iter().filter(|id| {
             let parents = &full.payload.expected_parents[*id];
-            !matches!(parents.as_slice(), [parent]
+            blocked.contains(*id) || !matches!(parents.as_slice(), [parent]
                 if attempt.admissions.contains(parent)
                 && stream.reusable_admissions.get(&self.generation).and_then(|admitted| admitted.get(parent)) == Some(&full.payload.plan_id)
                 && settled(&stream.decisions[parent]))
@@ -1417,7 +1543,7 @@ impl MemoryPreparation<'_> {
         skill: &str,
         provider: Option<&str>,
         retained: Option<Result<Option<RetainedBatch>, String>>,
-    ) -> Result<Value, String> {
+    ) -> Result<PreparedMemory, String> {
         let key = stream_key(self.repository_key, self.stream)?;
         let mut state = read_store(self.store, None)?;
         let mut full = self.native_work(&mut state, &key)?;
@@ -1477,7 +1603,10 @@ impl MemoryPreparation<'_> {
         }
         let work = self.remaining_work(&mut state, &key, full)?;
         memory["remaining_review_ids"] = json!(work.payload.review_ids);
-        Ok(json!({"memory":memory,"work_package":work}))
+        Ok(PreparedMemory {
+            memory,
+            work_package: work,
+        })
     }
 }
 
@@ -1820,6 +1949,13 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
         });
         let resume_only = args.optional_bool("--resume-only")?.unwrap_or(false);
+        let assignment = args.optional("--assignment");
+        let read_completed = args
+            .optional_bool("--read-completed-assignment")?
+            .unwrap_or(false);
+        if read_completed && assignment.is_none() {
+            return Err("reading a completed assignment requires --assignment".into());
+        }
         let skill = args.optional("--skill-root");
         let provider = args.optional("--provider-contract");
         args.finish()?;
@@ -1854,12 +1990,17 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         {
             return Err("work inventory differs from active generation".into());
         }
-        let package = work_package(
-            stream,
-            stream.attempts.last().unwrap(),
-            requested.as_deref(),
-            resume_only,
-        )?;
+        let attempt = stream.attempts.last().unwrap();
+        let selected = if let Some(id) = assignment {
+            Some(
+                stream
+                    .assigned_reviews(generation, &id, requested.as_deref(), read_completed)?
+                    .to_vec(),
+            )
+        } else {
+            stream.available_reviews(attempt, requested.as_deref())?
+        };
+        let package = work_package(stream, attempt, selected.as_deref(), resume_only)?;
         if let Some(runtime) = &package.payload.runtime {
             validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
         }
@@ -1876,6 +2017,49 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let operation_key = args.required("--operation-key")?;
     let command = match operation.as_str() {
+        "allocate" => {
+            let root = PathBuf::from(args.required("--source-root")?);
+            let inventory_path = PathBuf::from(args.required("--inventory")?);
+            let generation = args.required_usize("--generation")? as u64;
+            let owner = args.required("--owner")?;
+            let worker = args.required("--worker")?;
+            let reserve_calls = args.optional_usize("--reserve-calls")?;
+            label(&worker)?;
+            let work = args.required("--work-package")?;
+            outside_source(&store, &root)?;
+            outside_source(Path::new(&work), &root)?;
+            let package =
+                read_work_package(Some(work))?.ok_or("allocation requires a work package")?;
+            let (_, binding) = inventory(&inventory_path, &root)?;
+            if package.payload.inventory_input_fingerprint != binding.inventory_input_fingerprint {
+                return Err("allocation work belongs to a different inventory".into());
+            }
+            let skill = args.optional("--skill-root");
+            let provider = args.optional("--provider-contract");
+            if let Some(runtime) = &package.payload.runtime {
+                validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
+            }
+            let key = stream_key(
+                binding.repository.repository_key.as_deref().unwrap(),
+                &stream,
+            )?;
+            let assignment = hash("mehscanAssignment/v1", &(&key, generation, &operation_key))?;
+            Command::Allocate {
+                key,
+                generation,
+                owner,
+                assignment,
+                worker,
+                reserve_calls,
+                work_package: package,
+            }
+        }
+        "release" => Command::Release {
+            key: stream_key(&args.required("--repository-key")?, &stream)?,
+            generation: args.required_usize("--generation")? as u64,
+            owner: args.required("--owner")?,
+            assignment: args.required("--assignment")?,
+        },
         "pending" | "pending-batch" | "fact" => {
             let inventory_path = PathBuf::from(args.required("--inventory")?);
             let root = PathBuf::from(args.required("--source-root")?);
@@ -2022,6 +2206,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 .unwrap_or_default();
             let allow_partial = args.optional_bool("--allow-partial")?.unwrap_or(false);
             let work_package = read_work_package(args.optional("--work-package"))?;
+            let assignment = args.optional("--assignment");
             let skill = args.optional("--skill-root");
             let provider = args.optional("--provider-contract");
             if let Some(runtime) = work_package
@@ -2113,6 +2298,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 supersessions,
                 provenance,
                 work_package,
+                assignment,
             }
         }
         "end" => {
@@ -2488,6 +2674,9 @@ fn read_work_package(
 }
 
 fn help() {
+    println!(
+        "Local assignments:\n  mehscan state allocate --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --work-package FILE --worker LABEL --operation-key ID\n  mehscan state release --store DIR --stream KEY --repository-key KEY --generation N --owner TOKEN --assignment ID --operation-key KEY\n  Submit assigned work with state record --assignment ID and the original --work-package."
+    );
     println!(
         "Pending facts and handoff:\n  mehscan state pending|pending-batch|fact --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID\n  mehscan state work --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN [--review-ids ID,ID] [--resume-only true|false]\nPending questions attach to exact current needs_review checks or a current change-pass question. Source-bound evidence updates request revalidation; they never change verdicts. Work exports a provider-neutral package without ownership credentials. Pass --work-package FILE to plan/record to reject changed parents, facts, plans or generations. Record accepts --reviewer LABEL as unauthenticated provenance. External/deployment fact authority remains unsupported.\n"
     );

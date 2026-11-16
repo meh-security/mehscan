@@ -63,6 +63,39 @@ still belongs to the active running attempt. An old receipt can contain an old
 owner and is not current authority. Source-bound claim/record retries still
 validate their inventory and artifacts before returning a receipt.
 
+## Assign reviews to local workers
+
+The generation owner can reserve a distinct set of review IDs for each worker.
+Create a `state work --review-ids ID,ID` package for that set and save it outside
+the checkout. Reserve the package before the worker starts.
+
+```text
+mehscan state allocate --store STATE --stream STREAM --generation N --owner OWNER --source-root ROOT --inventory RUN/inventory --work-package PACKAGE --worker LABEL --operation-key OP
+```
+
+The receipt includes `result.assignment_id`. Work preparation excludes active
+assignments. Submit the complete assigned response with `state record`, using
+the same `--work-package` and the returned `--assignment`. A runtime-bound
+package also requires its skill and provider arguments. The controller records
+the allocation and the validated decisions in the local journal. Repeating
+the same operation key recovers the receipt. Check `currently_owned` on an
+allocation receipt before recovering outstanding work and reconcile any provider
+call whose outcome is unknown.
+
+For the bundled worker, pass `--phase native --assignment ID` with the same
+work package and its exact bundle run.
+
+For a tiered plan, `state allocate --reserve-calls N` reserves model calls
+against the generation's bound run limit. Assign all tiered workers in that
+generation through the controller. The worker uses its own reservation.
+Released assignments remain charged at their reserved limit because the
+provider outcome can be unknown.
+
+Release unfinished work with `state release --store STATE --stream STREAM
+--repository-key KEY --generation N --owner OWNER --assignment ID --operation-key OP`.
+A late response from a released or expired assignment fails admission. Review
+`state history` for completed, released and expired allocations.
+
 ## Admit validated decisions
 
 Select bundles, perform review and finalize responses through the existing

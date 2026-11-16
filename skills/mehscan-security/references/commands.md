@@ -110,6 +110,8 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Prepare unchanged native work | `mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security` returns the remaining `work_package`. |
 | Inspect dependencies after an edit | `mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH` compares cited files and lexical reference observations. Use its output to guide source checks under the current work package. |
 | Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
+| Reserve a subset for a local worker | Export a package with `state work --review-ids ID,ID`, then reserve it with `state allocate` and record against its `--assignment`. See [local worker assignments](../../../docs/review-state.md#assign-reviews-to-local-workers). |
+| Inspect shared Turso context | Use `memory sync pull` and `memory sync context` on an enrolled replica. See [Turso sync](../../../docs/review-worker.md#share-retained-context-with-turso-sync). Treat published assessments as historical context. |
 
 When both inventories use the SDK Razor backend, `memory compare` also reports
 observed direct render callers by component path. Recheck changed callers and

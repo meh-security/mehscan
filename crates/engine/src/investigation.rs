@@ -481,6 +481,11 @@ pub fn review_memory_sources(
 }
 
 impl ReviewMemorySources {
+    pub fn range_hash(&self, path: &str, start: usize, end: usize) -> Option<String> {
+        let text = self.0.files.get(path)?.source.get(start..end)?;
+        Some(review_content_fingerprint(text.as_bytes()))
+    }
+
     pub fn hashes(&self) -> BTreeMap<String, String> {
         self.0
             .files

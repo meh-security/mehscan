@@ -5,7 +5,7 @@ use std::path::Path;
 
 use mehscan_core::{ReviewDecisionRecord, ReviewRelationshipScope, SecurityPathStepKind};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use turso::Connection;
 
 use super::{Snapshot, assessments::assessment_id, db_error, fingerprint, schema_version};
@@ -245,13 +245,35 @@ struct ReferenceInput {
 }
 
 #[derive(Serialize)]
+struct EvidenceRange {
+    path: String,
+    start_line: i64,
+    end_line: i64,
+    status: &'static str,
+}
+
+#[derive(Serialize)]
 struct Assessment {
     review_id: String,
     decision_id: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    current_review_ids: Vec<String>,
     files: Vec<FileInput>,
     references: Vec<ReferenceInput>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    decisive_ranges: Vec<EvidenceRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     razor_render_uses: Option<razor::Comparison>,
+}
+
+#[derive(Serialize)]
+struct Comparison {
+    authority: &'static str,
+    reference_scope: &'static str,
+    base_snapshot: String,
+    snapshot: String,
+    batch: String,
+    assessments: Vec<Assessment>,
 }
 
 pub(super) async fn compare(
@@ -260,6 +282,80 @@ pub(super) async fn compare(
     stream: &str,
     batch: &str,
 ) -> Result<Value, String> {
+    super::json(compare_selected(conn, snapshot, stream, batch, None).await?)
+}
+
+pub(super) async fn prepare_context(
+    conn: &Connection,
+    snapshot: &Snapshot,
+    stream: &str,
+    work: &mehscan_core::ReviewWorkPackage,
+) -> Result<Option<Value>, String> {
+    let mut parents = BTreeMap::<String, Vec<&str>>::new();
+    for (review, decisions) in &work.payload.expected_parents {
+        for decision in decisions {
+            parents
+                .entry(decision.clone())
+                .or_default()
+                .push(review.as_str());
+        }
+    }
+    if parents.is_empty() || schema_version(conn).await? < 4 {
+        return Ok(None);
+    }
+    let repository = fingerprint(&snapshot.repository)?;
+    let current = snapshot.id(&repository)?;
+    let generation =
+        i64::try_from(work.payload.generation).map_err(|_| "invalid work generation")?;
+    let mut rows = conn
+        .query(
+            "SELECT b.id, b.generation FROM assessment_batches b
+         JOIN snapshots s ON s.id = b.snapshot_id JOIN dependency_batches d ON d.batch_id = b.id
+         WHERE s.repository_id = ?1 AND b.stream = ?2 AND b.generation < ?3 AND b.snapshot_id != ?4
+         ORDER BY b.generation DESC, b.id LIMIT 2",
+            (repository.as_str(), stream, generation, current.as_str()),
+        )
+        .await
+        .map_err(db_error)?;
+    let Some(row) = rows.next().await.map_err(db_error)? else {
+        return Ok(None);
+    };
+    let batch: String = row.get(0).map_err(db_error)?;
+    let generation: i64 = row.get(1).map_err(db_error)?;
+    if let Some(peer) = rows.next().await.map_err(db_error)?
+        && peer.get::<i64>(1).map_err(db_error)? == generation
+    {
+        return Ok(None);
+    }
+    drop(rows);
+
+    let ids = parents.keys().cloned().collect();
+    let mut comparison = compare_selected(conn, snapshot, stream, &batch, Some(&ids)).await?;
+    if comparison.assessments.is_empty() {
+        return Ok(None);
+    }
+    for case in &mut comparison.assessments {
+        case.current_review_ids = parents[&case.decision_id]
+            .iter()
+            .copied()
+            .map(str::to_owned)
+            .collect();
+        case.files.retain(|file| file.status != "unchanged");
+        case.references
+            .retain(|reference| reference.status != "unchanged");
+        case.decisive_ranges
+            .retain(|range| range.status != "unchanged");
+    }
+    super::json(comparison).map(Some)
+}
+
+async fn compare_selected(
+    conn: &Connection,
+    snapshot: &Snapshot,
+    stream: &str,
+    batch: &str,
+    decisions: Option<&BTreeSet<String>>,
+) -> Result<Comparison, String> {
     if schema_version(conn).await? < 4 {
         return Err(
             "review memory has no captured dependencies; retain a native attempt first".into(),
@@ -304,12 +400,17 @@ pub(super) async fn compare(
     while let Some(row) = rows.next().await.map_err(db_error)? {
         let id: String = row.get(0).map_err(db_error)?;
         let review_id = row.get(1).map_err(db_error)?;
-        let decision_id = row.get(2).map_err(db_error)?;
+        let decision_id: String = row.get(2).map_err(db_error)?;
+        if decisions.is_some_and(|selected| !selected.contains(&decision_id)) {
+            continue;
+        }
         let assessment = results.entry(id).or_insert_with(|| Assessment {
             review_id,
             decision_id,
+            current_review_ids: Vec::new(),
             files: Vec::new(),
             references: Vec::new(),
+            decisive_ranges: Vec::new(),
             razor_render_uses: None,
         });
         if let Some(path) = row.get::<Option<String>>(4).map_err(db_error)? {
@@ -328,6 +429,40 @@ pub(super) async fn compare(
         }
     }
     drop(rows);
+    let mut rows = conn.query(
+        "SELECT e.assessment_id, e.path, e.start_line, e.end_line, e.start_byte, e.end_byte, e.excerpt_sha256
+         FROM batch_assessments b JOIN assessment_evidence e ON e.assessment_id = b.assessment_id
+         WHERE b.batch_id = ?1 AND e.excerpt_sha256 IS NOT NULL ORDER BY e.assessment_id, e.path, e.start_byte, e.end_byte",
+        (batch,),
+    ).await.map_err(db_error)?;
+    let sources = snapshot
+        .sources
+        .as_ref()
+        .ok_or("missing verified source capture")?;
+    while let Some(row) = rows.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        let Some(assessment) = results.get_mut(&id) else {
+            continue;
+        };
+        let path: String = row.get(1).map_err(db_error)?;
+        let expected: String = row.get(6).map_err(db_error)?;
+        let offset = |column| {
+            usize::try_from(row.get::<i64>(column).map_err(db_error)?)
+                .map_err(|_| "invalid retained source offset".to_string())
+        };
+        let status = match sources.range_hash(&path, offset(4)?, offset(5)?) {
+            Some(actual) if actual == expected => "unchanged",
+            Some(_) => "modified",
+            None => "unavailable",
+        };
+        assessment.decisive_ranges.push(EvidenceRange {
+            path,
+            start_line: row.get(2).map_err(db_error)?,
+            end_line: row.get(3).map_err(db_error)?,
+            status,
+        });
+    }
+    drop(rows);
     let mut previous = Vec::new();
     let mut names = BTreeSet::new();
     let mut rows = conn.query(
@@ -338,10 +473,14 @@ pub(super) async fn compare(
         (batch, base.as_str()),
     ).await.map_err(db_error)?;
     while let Some(row) = rows.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        if !results.contains_key(&id) {
+            continue;
+        }
         let symbol: String = row.get(1).map_err(db_error)?;
         names.insert(symbol.clone());
         previous.push((
-            row.get::<String>(0).map_err(db_error)?,
+            id,
             symbol,
             row.get::<String>(2).map_err(db_error)?,
             row.get::<String>(3).map_err(db_error)?,
@@ -349,7 +488,7 @@ pub(super) async fn compare(
         ));
     }
     drop(rows);
-    let observations = (base != current)
+    let observations = (base != current && !names.is_empty())
         .then(|| observe(snapshot, &names))
         .transpose()?;
     for (id, symbol, membership, inputs, count) in previous {
@@ -393,9 +532,12 @@ pub(super) async fn compare(
             }
         }
     }
-    Ok(
-        json!({"authority":"dependency_observations", "reference_scope":"captured_identifier_references/v1",
-              "base_snapshot":base, "snapshot":current, "batch":batch,
-              "assessments":results.into_values().collect::<Vec<_>>()}),
-    )
+    Ok(Comparison {
+        authority: "dependency_observations",
+        reference_scope: "captured_identifier_references/v1",
+        base_snapshot: base,
+        snapshot: current,
+        batch: batch.into(),
+        assessments: results.into_values().collect(),
+    })
 }

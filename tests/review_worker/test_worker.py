@@ -350,6 +350,25 @@ class LookupFailures(unittest.TestCase):
 
 
 class Worker(unittest.TestCase):
+    def test_native_worker_records_its_local_assignment(self):
+        allocation = self.native("state", "allocate", *self.common, "--worker", "local-worker",
+            "--work-package", str(self.package), "--skill-root", str(ROOT / "skills/mehscan-security"),
+            "--operation-key", "local-work")
+        assignment = allocation["result"]["assignment_id"]
+        result = self.invoke(extra=["--phase", "native", "--assignment", assignment])
+        record = json.loads((self.base / "worker/worker.json").read_text())
+        self.assertEqual(result.returncode, 0, record)
+        history = self.native("state", "history", "--store", str(self.store), "--stream", "local-review",
+                              "--repository-key", "evaluation:worker")
+        self.assertEqual(history["assignments"][0]["status"], "completed")
+        self.assertEqual(history["admission_provenance"]["1"][0]["assignment"],
+                         {"assignment_id": assignment, "worker": "local-worker"})
+        duplicate = self.invoke("duplicate", ["--phase", "native", "--assignment", assignment])
+        self.assertEqual(duplicate.returncode, 2, duplicate.stdout + duplicate.stderr)
+        refused = json.loads((self.base / "duplicate/worker.json").read_text())
+        self.assertIn("assignment is unavailable", refused["native_failures"][0]["stderr"])
+        self.assertFalse(refused["jobs"])
+
     def test_on_demand_guides_flow_through_worker_without_becoming_source_proof(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())
@@ -1498,6 +1517,20 @@ else:
         self.assertEqual(record["status"], "admitted", record)
         self.assertEqual(calls, [("expert", "investigator"), ("routine", "verification")])
         self.assertEqual(record["completion"]["issue_review_ids"], self.ids)
+
+    def test_tiered_local_assignment_enforces_its_reserved_provider_calls(self):
+        args = self.configure_tiered(run_calls=3)
+        allocation = self.native("state", "allocate", *self.common, "--worker", "budgeted-worker",
+            "--work-package", str(self.package), "--skill-root", str(ROOT / "skills/mehscan-security"),
+            "--provider-contract", args.provider_contract, "--reserve-calls", "1", "--operation-key", "reserve-one")
+        args.assignment = allocation["result"]["assignment_id"]
+        self.assertEqual(allocation["result"]["assignment"]["reserved_model_calls"], 1)
+        calls = []
+        with patch.object(worker, "execute", side_effect=self.tiered_provider(calls)):
+            record = worker.run(args)
+        self.assertEqual(record["status"], "incomplete", record)
+        self.assertEqual(calls, [("routine", "investigator")])
+        self.assert_no_decisions()
 
     def test_full_repository_work_preserves_null_scope_and_native_admission(self):
         self.inventory = self.base / "full-inventory"
