@@ -1,0 +1,49 @@
+name: Test native review integration
+description: Build the scanner and exercise the GitHub adapter, review worker, and providers
+
+inputs:
+  worker-tier:
+    description: Review worker test tier
+    required: true
+  artifact-name:
+    description: Artifact name for the worker test report
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build the optimized scanner for native integration tests
+      shell: pwsh
+      env:
+        # The release workflow validates the packaged build with full LTO.
+        CARGO_PROFILE_RELEASE_LTO: "false"
+      run: |
+        cargo +1.88.0 build -p mehscan-cli --release --locked
+        if ($LASTEXITCODE -ne 0) { throw 'Optimized scanner build failed' }
+        $binaryName = if ($IsWindows) { 'mehscan.exe' } else { 'mehscan' }
+        $scanner = Join-Path $env:GITHUB_WORKSPACE "target/release/$binaryName"
+        "MEHSCAN_TEST_SCANNER=$scanner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Test advisory GitHub lifecycle and native adapter
+      shell: pwsh
+      env:
+        MEHSCAN_REQUIRE_NATIVE_TESTS: "true"
+      run: python -m unittest discover -s tests/github_action -v
+
+    - name: Test provider-neutral review worker with native admission
+      shell: pwsh
+      env:
+        WORKER_TEST_TIER: ${{ inputs.worker-tier }}
+      run: python scripts/test-review-suites.py --tier "$env:WORKER_TEST_TIER" --output test-results/review-worker.json
+
+    - name: Save worker test classifications and timings
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: test-results/review-worker.json
+        if-no-files-found: ignore
+
+    - name: Test BYOK provider protocol and process execution
+      shell: pwsh
+      run: python -m unittest discover -s tests/provider_adapter -v

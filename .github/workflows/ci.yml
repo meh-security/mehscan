@@ -25,7 +25,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 75 || 60 }}
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -83,21 +83,26 @@ jobs:
         shell: pwsh
         run: ./scripts/test-e2e.ps1 -SkipBuild
 
+      # Share one macOS ARM runner between Rust and integration tests.
+      - name: Test native review integration
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/test-review-integration
+        with:
+          worker-tier: ${{ inputs.include_research && 'all' || 'product' }}
+          artifact-name: review-worker-tests-${{ matrix.os }}
+
   integration:
     name: Integration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
-      # The release workflow validates the packaged build with full LTO.
-      CARGO_PROFILE_RELEASE_LTO: "false"
     strategy:
       fail-fast: false
       matrix:
         os:
           - ubuntu-latest
           - windows-latest
-          - macos-latest
 
     steps:
       - name: Check out source
@@ -126,30 +131,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-1.88.0-
 
-      - name: Build the optimized scanner for native integration tests
-        shell: pwsh
-        run: |
-          cargo +1.88.0 build -p mehscan-cli --release --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Optimized scanner build failed' }
-          $binaryName = if ($IsWindows) { 'mehscan.exe' } else { 'mehscan' }
-          $scanner = Join-Path $env:GITHUB_WORKSPACE "target/release/$binaryName"
-          "MEHSCAN_TEST_SCANNER=$scanner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Test advisory GitHub lifecycle and native adapter
-        env:
-          MEHSCAN_REQUIRE_NATIVE_TESTS: "true"
-        run: python -m unittest discover -s tests/github_action -v
-
-      - name: Test provider-neutral review worker with native admission
-        run: python scripts/test-review-suites.py --tier ${{ inputs.include_research && 'all' || 'product' }} --output test-results/review-worker.json
-
-      - name: Save worker test classifications and timings
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Test native review integration
+        uses: ./.github/actions/test-review-integration
         with:
-          name: review-worker-tests-${{ matrix.os }}
-          path: test-results/review-worker.json
-          if-no-files-found: ignore
-
-      - name: Test BYOK provider protocol and process execution
-        run: python -m unittest discover -s tests/provider_adapter -v
+          worker-tier: ${{ inputs.include_research && 'all' || 'product' }}
+          artifact-name: review-worker-tests-${{ matrix.os }}
