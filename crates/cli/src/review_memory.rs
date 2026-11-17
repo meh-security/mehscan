@@ -14,6 +14,7 @@ mod assessments;
 mod dependencies;
 pub(super) mod knowledge;
 mod legacy;
+mod shared;
 mod upstream;
 
 const LOCAL_FOLDER_KEY_PREFIX: &str = "mehscan-local-folder:v1:";
@@ -192,7 +193,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             return legacy::run(command.as_deref().unwrap(), arguments);
         }
         Some("sync") => return upstream::run(arguments),
-        Some("knowledge-put" | "knowledge-list" | "knowledge-withdraw") => {}
+        Some("knowledge-put" | "knowledge-list" | "knowledge-withdraw" | "shared-facts") => {}
         Some(other) => {
             return Err(format!(
                 "unknown memory operation {other:?}; use 'mehscan memory --help'"
@@ -223,6 +224,14 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return super::print_json(&json(locations)?);
     }
     let store = args.optional("--store").map(PathBuf::from);
+    if command.as_deref() == Some("shared-facts") {
+        let input = args.optional("--input").map(PathBuf::from);
+        args.finish()?;
+        let (cache, _) = super::review_state::load_inventory(&inventory)?;
+        let repository = &inventory_catalog(&cache, &root)?.repository;
+        let store = resolve_store(store.as_deref(), &root, repository)?;
+        return super::print_json(&shared::run(&store, repository, input.as_deref(), &root)?);
+    }
     let snapshot = load_snapshot(
         &root,
         &inventory,
@@ -596,6 +605,9 @@ fn help() {
     legacy::help();
     upstream::help();
     println!(
+        "  mehscan memory shared-facts --source-root ROOT --inventory DIR [--store FILE] [--input PAGE]"
+    );
+    println!(
         "  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
     );
     println!(
@@ -801,6 +813,17 @@ async fn run_local(
 
     let created = persist_snapshot(&tx, snapshot, &repository, &id).await?;
     if let Operation::Retain { admission, stream } = &operation {
+        let sharing = shared::binding(&tx).await?;
+        if let Some(binding) = &sharing {
+            shared::validate_binding(&snapshot.repository, binding)?;
+        }
+        if (!admission.records.is_empty() || admission.sharing.is_some())
+            && sharing != admission.sharing
+        {
+            return Err(
+                "review retention must use the same sharing audience as native admission".into(),
+            );
+        }
         let result = assessments::retain(&tx, &id, &snapshot.inventory, stream, admission).await?;
         dependencies::retain(&tx, snapshot, &id, result.batch(), &admission.records).await?;
         let observations =

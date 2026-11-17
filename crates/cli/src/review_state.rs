@@ -153,6 +153,7 @@ struct Stream {
     admissions: BTreeMap<u64, BTreeSet<String>>,
     reusable_admissions: BTreeMap<u64, BTreeMap<String, String>>,
     knowledge_admissions: BTreeMap<u64, BTreeMap<String, Vec<String>>>,
+    sharing: Option<mehscan_core::ReviewSharingBinding>,
     provenance: BTreeMap<u64, Vec<Value>>,
     completion_plans: BTreeMap<u64, Vec<mehscan_core::ReviewCompletionPlanRecord>>,
     pending: BTreeMap<String, mehscan_core::ReviewPendingRecord>,
@@ -434,6 +435,8 @@ impl State {
                         package,
                         records,
                     )?;
+                } else {
+                    stream.check_sharing(None)?;
                 }
                 stream.validate_allocation(
                     *generation,
@@ -584,6 +587,10 @@ impl State {
                 }
                 let mut provenance = provenance.clone();
                 if let Some(package) = work_package {
+                    if let Some(sharing) = &package.payload.knowledge.sharing {
+                        stream.sharing = Some(sharing.clone());
+                        provenance["sharing"] = json!(sharing);
+                    }
                     let revisions = records
                         .iter()
                         .filter_map(|record| {
@@ -766,6 +773,12 @@ impl State {
                         .as_ref()
                         .map(|package| package.package_id.clone()),
                 });
+                if let Some(sharing) = work_package
+                    .as_ref()
+                    .and_then(|package| package.payload.knowledge.sharing.as_ref())
+                {
+                    stream.sharing = Some(sharing.clone());
+                }
                 Ok(json!({"status":"planned","generation":generation,"plan_id":plan_id}))
             }
             Command::PendingBatch {
@@ -1208,6 +1221,18 @@ fn bind_knowledge(
 }
 
 impl Stream {
+    fn check_sharing(
+        &self,
+        sharing: Option<&mehscan_core::ReviewSharingBinding>,
+    ) -> Result<(), String> {
+        if self.sharing.as_ref() != sharing
+            && (self.sharing.is_some() || !self.decisions.is_empty())
+        {
+            return Err("review journal belongs to a different sharing audience; use its dedicated state home".into());
+        }
+        Ok(())
+    }
+
     fn knowledge_revisions(&self, generation: u64, decision: &str) -> &[String] {
         self.knowledge_admissions
             .get(&generation)
@@ -1225,6 +1250,7 @@ fn validate_work_package(
     if package.package_id != hash("mehscanReviewWork/v1", &package.payload)? {
         return Err("work package integrity check failed".into());
     }
+    stream.check_sharing(package.payload.knowledge.sharing.as_ref())?;
     // Regenerate the exact handoff view; new facts, changed plans or parent heads
     // fence a late response even on the same source revision.
     let current = work_package(stream, attempt, Some(&package.payload.review_ids), false)?;
@@ -1546,6 +1572,7 @@ pub(super) struct MemoryAdmission {
     pub attempt: String,
     pub status: ReviewAttemptStatus,
     pub records: Vec<ReviewDecisionRecord>,
+    pub sharing: Option<mehscan_core::ReviewSharingBinding>,
 }
 
 pub(super) struct RetainedBatch {
@@ -1584,6 +1611,7 @@ impl MemoryPreparation<'_> {
             return Err("work inventory differs from active generation".into());
         }
         let selected = stream.available_reviews(attempt, self.requested)?;
+        stream.check_sharing(selection.sharing.as_ref())?;
         let mut package = work_package(stream, attempt, selected.as_deref(), false)?;
         bind_knowledge(&mut package, &attempt.binding, selection)?;
         Ok(package)
@@ -1800,6 +1828,7 @@ pub(super) fn memory_admission(
         attempt: attempt.attempt_id.clone(),
         status: attempt.status,
         records,
+        sharing: stream.sharing.clone(),
     })
 }
 
@@ -2125,6 +2154,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             &binding,
             &reader.load(&root, &inventory_path)?,
         )?;
+        stream.check_sharing(package.payload.knowledge.sharing.as_ref())?;
         if let Some(runtime) = &package.payload.runtime {
             validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
         }
@@ -2506,9 +2536,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 let selection = reader.load(&root, &inventory_path)?;
                 if let Some(package) = work_package {
                     selection.validate(&package.payload, &binding)?;
-                } else if records
-                    .iter()
-                    .any(|record| !selection.revisions_for(&record.identity).is_empty())
+                } else if selection.sharing.is_some()
+                    || records
+                        .iter()
+                        .any(|record| !selection.revisions_for(&record.identity).is_empty())
                 {
                     return Err(
                         "review with applicable knowledge requires its exact work package".into(),
@@ -2599,10 +2630,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     if attempt.generation != generation {
                         return Err("review completion belongs to a different generation".into());
                     }
-                    let has_bindings = attempt
-                        .admissions
-                        .iter()
-                        .any(|id| !stream.knowledge_revisions(generation, id).is_empty());
+                    let has_bindings = stream.sharing.is_some()
+                        || attempt
+                            .admissions
+                            .iter()
+                            .any(|id| !stream.knowledge_revisions(generation, id).is_empty());
                     let selection = match (&reader, &memory) {
                         (Ok(Some(reader)), Some(memory)) => reader.load(&memory.source_root, &memory.inventory),
                         (Err(reason), _) => Err(reason.clone()),
@@ -2613,6 +2645,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                         Err(reason) if has_bindings => return Err(reason),
                         Err(_) => return Ok(()),
                     };
+                    stream.check_sharing(selection.sharing.as_ref())?;
                     for id in &attempt.admissions {
                         let record = &stream.decisions[id];
                         if stream

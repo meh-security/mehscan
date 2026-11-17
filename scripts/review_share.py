@@ -5,9 +5,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from tempfile import TemporaryDirectory
 import urllib.parse
 
-from review_share_storage import MAX_DOCUMENT, EventStore, ShareError, canonical, parse_document, request_json, sql_database
+from review_share_storage import (
+    MAX_DOCUMENT, EventStore, ShareError, canonical, digest, parse_document, request_json, sql_database,
+)
 
 
 def endpoint(value):
@@ -106,8 +109,63 @@ def read_store(link):
     if any(session[key] != link[key] for key in ("audience", "enrollment", "repository_key")):
         raise ShareError(403, "read credential does not match the linked enrollment")
     store = EventStore(sql_database(session["remote"], session["token"]), link["enrollment"])
+    store.database_id = session.get("database_id")
     store.check_binding()
     return store
+
+
+def sync_facts(args, link):
+    root = args.source_root.resolve(strict=True)
+    scanner = outside(args.scanner, root)
+    inventory = outside(args.inventory, root)
+    link_path = outside(args.link, root)
+    cache_id = digest([endpoint(link["host"]), link["enrollment"]])
+    home = outside(link_path.parent / ("review-state-" + cache_id), root)
+    store = read_store(link)
+    sharing = {"enrollment": store.enrollment, "database_id": store.database_id}
+    if not isinstance(store.database_id, str) or not store.database_id:
+        raise ShareError(409, "the sharing service must identify the enrolled database before syncing facts")
+    env = {**child_env(), "MEHSCAN_STATE_HOME": str(home)}
+
+    def native(operation, *options):
+        result = subprocess.run([str(scanner), "memory", operation, "--source-root", str(root),
+                                 "--inventory", str(inventory), *options],
+                                capture_output=True, env=env, timeout=300)
+        if result.returncode:
+            raise ShareError(409, "native memory refused the shared fact cache or revision page")
+        if len(result.stdout) > 64 * 1024:
+            raise ShareError(502, "native memory returned an invalid fact sync receipt")
+        return parse_document(result.stdout)
+
+    state = native("shared-facts")
+    if state["sharing"] not in (None, sharing):
+        raise ShareError(409, "local memory is linked to a different sharing enrollment")
+    locations = native("location")
+    head = store.fact_head()
+    imported, retries = 0, 0
+    with TemporaryDirectory(dir=home, prefix="fact-sync-") as directory:
+        page = Path(directory) / "page.json"
+        while True:
+            after = state["cursor"]["after"]
+            if after:
+                checkpoint = store.get(state["cursor"]["event_id"])
+                if not checkpoint or checkpoint["kind"] != "fact" or checkpoint["seq"] != after:
+                    raise ShareError(409, "upstream fact history no longer contains the local checkpoint")
+            if state["sharing"] and after >= head:
+                break
+            facts = store.facts(after, head)
+            if after < head and not facts:
+                raise ShareError(409, "upstream did not return the announced shared fact revisions")
+            page.write_text(canonical({"sharing": sharing, "after": after, "facts": facts}), encoding="utf-8")
+            state = native("shared-facts", "--input", str(page))
+            if state["status"] == "cursor_changed":
+                retries += 1
+                if retries > 8:
+                    raise ShareError(409, "another client is updating the shared fact cache")
+                continue
+            imported += state["imported"]
+    return {"status": "synced", "sharing": sharing, "imported": imported, "cursor": state["cursor"],
+            "state_home": str(home), **locations}
 
 
 def main():
@@ -119,20 +177,21 @@ def main():
     connect.add_argument("--oidc-audience")
     connect.add_argument("--source-root", type=Path, required=True)
     connect.add_argument("--output", type=Path, required=True)
-    for name in ("list", "get", "publish", "fact", "grant", "workflow"):
+    for name in ("list", "get", "sync", "publish", "fact", "grant", "workflow"):
         command = commands.add_parser(name)
         command.add_argument("--link", type=Path, required=True)
         if name == "list":
             command.add_argument("--after", type=int, default=0)
         elif name == "get":
             command.add_argument("--id", required=True)
-        elif name == "publish":
+        elif name in ("publish", "sync"):
             for option in ("source-root", "inventory", "scanner"):
                 command.add_argument("--" + option, required=True, type=Path)
+        if name == "publish":
             command.add_argument("--store", type=Path)
             command.add_argument("--stream", required=True)
             command.add_argument("--batch", required=True)
-        else:
+        if name in ("fact", "grant", "workflow"):
             command.add_argument("--input", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -149,6 +208,8 @@ def main():
             link = read_json(args.link, 16 * 1024)
             if args.command == "publish":
                 result = publish(args, link)
+            elif args.command == "sync":
+                result = sync_facts(args, link)
             elif args.command == "list":
                 if not 0 <= args.after < 2**63:
                     raise ShareError(400, "invalid sharing cursor")

@@ -12,6 +12,7 @@ import urllib.request
 
 MAX_DOCUMENT = 4 * 1024 * 1024
 READ_TOKEN_MINUTES = 15
+FACT_PAGE_SIZE = 16
 EVENT_COLUMNS = "seq, id, kind, actor, stream, commit_sha, created_at"
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS mehscan_sharing (
@@ -167,6 +168,7 @@ def cloud_reader(enrollment):
     if not isinstance(token, str) or not token:
         raise ShareError(502, "Turso did not issue a read credential")
     return {"remote": enrollment["remote"], "token": token,
+            "database_id": enrollment["database_id"],
             "expires_in_seconds": READ_TOKEN_MINUTES * 60}
 
 
@@ -181,6 +183,7 @@ class EventStore:
     def __init__(self, execute, enrollment):
         self.execute = execute
         self.enrollment = enrollment
+        self.database_id = None
 
     def initialize(self):
         self.check_tables()
@@ -214,6 +217,19 @@ class EventStore:
 
     def list(self, after):
         return self.execute(f"SELECT {EVENT_COLUMNS} FROM mehscan_shared_events WHERE seq > ? ORDER BY seq LIMIT 100", after)
+
+    def fact_head(self):
+        return self.execute("SELECT coalesce(max(seq), 0) AS head FROM mehscan_shared_events WHERE kind = 'fact'")[0]["head"]
+
+    def facts(self, after, through):
+        rows = self.execute(
+            "SELECT seq, id, actor, payload FROM mehscan_shared_events "
+            "WHERE kind = 'fact' AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
+            after, through, FACT_PAGE_SIZE,
+        )
+        for row in rows:
+            row["payload"] = parse_document(row["payload"])
+        return rows
 
     def append(self, *, event_id, request_digest, kind, actor, stream, commit, payload, item_id=None, parent=None):
         encoded = canonical(payload)

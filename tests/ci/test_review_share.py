@@ -59,6 +59,29 @@ def batch():
                                    "role": "primary", "path": "src/app.js", "sha256": SHA}]}
 
 
+def save_fixture_responses(run, decision):
+    manifest = storage.parse_document((run / "manifest.json").read_bytes())
+    for bundle in manifest["bundles"]:
+        name = bundle["filename"]
+        request = storage.parse_document((run / "requests" / name).read_bytes())
+        results = []
+        for review in request["reviews"]:
+            if request["review_kind"] == "security_path":
+                anchor = review["candidate"]["sink"]["id"]
+            else:
+                offered = [item for item in review["evidence"] if item["id"] in review["anchor_evidence_ids"]]
+                anchor = next(item["id"] for kind in ("sink", "sensitive_operation", "security_configuration")
+                              for item in offered if item["kind"] == kind)
+            results.append({"review_id": review["id"], "selected_anchor_id": anchor, "decision": decision,
+                "confidence": "medium", "summary": "Retained finding context for the sharing test.",
+                "checks": ["Confirm which caller reaches the entry point."] if decision == "needs_review" else [],
+                "investigation": {"decisive_artifacts": [], "journal_summary": None,
+                    "citations": [{"artifact_id": anchor, "claim": "Native operation."}],
+                    "reviewer_inferences": [], "reviewer_origin_leads": [], "blockers": []}})
+        (run / "responses" / name).write_text(storage.canonical({"schema_version": "1.3",
+            "bundle_fingerprint": request["bundle_fingerprint"], "results": results}), encoding="utf-8")
+
+
 class ReviewSharing(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -98,7 +121,13 @@ class ReviewSharing(unittest.TestCase):
     def reader(self, enrollment):
         token = f"test-read-{len(self.leases)}"
         self.leases.append((token, dict(enrollment)))
-        return {"remote": enrollment["remote"], "token": token, "expires_in_seconds": 900}
+        return {"remote": enrollment["remote"], "token": token,
+                "database_id": enrollment["database_id"], "expires_in_seconds": 900}
+
+    def read_with_lease(self, remote, token):
+        matched = next(row for issued, row in self.leases if issued == token)
+        self.assertEqual(matched["remote"], remote)
+        return self.storage(matched, read_only=True).execute
 
     def verify(self, token):
         if token != "test-actions-jwt":
@@ -155,6 +184,10 @@ class ReviewSharing(unittest.TestCase):
         altered["batch"]["stream"] = "main"
         altered["batch"]["repository"]["source_repository_key"] = host.repository_key("999")
         self.rejected(403, "publish", "test-actions-jwt", altered)
+        altered = copy.deepcopy(submission)
+        altered["batch"]["sharing"] = {"enrollment": host.enrollment_id(REPO, "restricted"),
+                                       "database_id": "id:restricted-publications"}
+        self.rejected(403, "publish", "test-actions-jwt", altered)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             receipts = list(pool.map(lambda _: self.post("publish", "test-actions-jwt", submission), range(2)))
@@ -167,13 +200,7 @@ class ReviewSharing(unittest.TestCase):
 
         linked = {**self.post("link", self.viewer), "host": self.url, "repository_id": REPO}
 
-        def read_with_lease(remote, token):
-            matched = next(row for issued, row in self.leases if issued == token)
-            if matched["remote"] != remote:
-                self.fail("read lease was issued for a different database")
-            return self.storage(matched, read_only=True).execute
-
-        with patch.dict(os.environ, {"MEHSCAN_SHARE_TOKEN": self.viewer}), patch.object(client, "sql_database", read_with_lease):
+        with patch.dict(os.environ, {"MEHSCAN_SHARE_TOKEN": self.viewer}), patch.object(client, "sql_database", self.read_with_lease):
             reader = client.read_store(linked)
             self.assertEqual(reader.list(0), [receipt])
             self.assertEqual(reader.list(receipt["seq"]), [])
@@ -184,6 +211,154 @@ class ReviewSharing(unittest.TestCase):
                 reader.execute("UPDATE mehscan_shared_events SET stream = 'other'")
         self.post("workflow", self.manager)
         self.rejected(403, "publish", "test-actions-jwt", submission)
+
+    def test_shared_revisions_reach_normal_review_and_reopen_only_affected_work(self):
+        project = Path(__file__).resolve().parents[2]
+        scanner = Path(os.environ.get("MEHSCAN_TEST_SCANNER", project / "target/debug"
+                                     / ("mehscan.exe" if os.name == "nt" else "mehscan")))
+        if not scanner.is_file():
+            self.skipTest("build the native CLI to exercise linked review preparation")
+        first_root, second_root = (self.base / label for label in ("author-checkout", "review-checkout"))
+        first_root.mkdir()
+        for filename in ("app.js", "other.js"):
+            (first_root / filename).write_text("function handle(request) { eval(request.query.code); }\n", encoding="utf-8")
+        git = ["git", "-C", str(first_root)]
+        subprocess.run([*git, "init", "--quiet"], check=True, timeout=20)
+        subprocess.run([*git, "add", "."], check=True, timeout=20)
+        subprocess.run([*git, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "commit", "--quiet", "-m", "source"], check=True, timeout=20)
+        subprocess.run(["git", "clone", "--quiet", str(first_root), str(second_root)], check=True, timeout=30)
+
+        def native(*args, home=None, reject=None):
+            environment = client.child_env()
+            if home:
+                environment["MEHSCAN_STATE_HOME"] = str(home)
+            result = subprocess.run([str(scanner), *map(str, args)], capture_output=True, text=True,
+                                    env=environment, timeout=60)
+            if reject:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reject, result.stderr)
+                return None
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return storage.parse_document(result.stdout)
+
+        def linked(root, directory, *, token=self.viewer, audience=AUDIENCE):
+            directory = self.base / directory
+            directory.mkdir()
+            inventory = directory / "inventory"
+            native("investigate", "review-inventory", root, "--repository-key", host.repository_key(REPO),
+                   "--source-repository-key", host.repository_key(REPO), "--output", inventory)
+            link = {**self.post("link", token, audience=audience), "host": self.url, "repository_id": REPO}
+            path = directory / "link.json"
+            path.write_text(storage.canonical(link), encoding="utf-8")
+            return SimpleNamespace(scanner=scanner, source_root=root, inventory=inventory, link=path), link
+
+        def sync(pair, token=self.viewer):
+            with patch.dict(os.environ, {"MEHSCAN_SHARE_TOKEN": token}), \
+                    patch.object(client, "sql_database", self.read_with_lease):
+                return client.sync_facts(*pair)
+
+        draft = {"key": "entry-context", "operation": "add", "parent_revision": None,
+                 "fact": {"statement": "Confirm the caller scope for this operation.",
+                          "origin": "assertion", "scope": {"path": "app.js"}}}
+        received = self.post("fact", self.contributor, draft)
+        stale_source = self.post("fact", self.contributor, {
+            "key": "other-entry", "operation": "add", "parent_revision": None,
+            "fact": {"statement": "Locate the entry point in other.js.", "origin": "source_observation",
+                     "scope": {"path": "other.js"}, "source_sha256": {"other.js": "0" * 64}},
+        })
+        first, second = linked(first_root, "author-control"), linked(second_root, "review-control")
+        with patch.object(storage, "FACT_PAGE_SIZE", 1):
+            snapshot = sync(second)
+        self.assertEqual(sync(first)["sharing"], snapshot["sharing"])
+        self.assertEqual(snapshot["imported"], 2)
+        self.assertEqual(sync(second)["imported"], 0)
+        self.assertNotEqual(sync(first)["memory_store"], snapshot["memory_store"])
+        args = second[0]
+        home = snapshot["state_home"]
+        journal = snapshot["state_store"]
+        source_args = ["--source-root", args.source_root, "--inventory", args.inventory]
+        entries = storage.parse_document((args.inventory / "inventory.json").read_bytes())["entries"]
+        ids = {row["path"]: row["review_id"] for row in entries}
+        self.assertEqual(set(ids), {"app.js", "other.js"})
+        affected, unaffected = ids["app.js"], ids["other.js"]
+        skill = args.link.parent / "skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("Trusted fixture review instructions.", encoding="utf-8")
+        plan = args.link.parent / "plan.json"
+        work = args.link.parent / "work.json"
+
+        def plan_generation(generation):
+            previous = generation - 1
+            claim = native("state", "claim", "--store", journal, "--stream", "main", *source_args,
+                           "--attempt-id", str(generation), "--expected-generation", str(previous),
+                           "--retry", "true" if previous else "false", "--operation-key", f"claim-{generation}", home=home)
+            scope = ["--stream", "main", *source_args, "--generation", str(generation), "--owner", claim["result"]["owner"]]
+            state = ["--store", journal, *scope]
+            draft = native("state", "plan-template", *source_args, "--policy", "value", "--skill-root", skill, home=home)
+            plan.write_text(storage.canonical(draft), encoding="utf-8")
+            native("state", "plan", *state, "--input", plan, "--skill-root", skill, "--operation-key", f"plan-{generation}", home=home)
+            return scope, state
+
+        scope, state = plan_generation(1)
+        initial = native("state", "work", *state, "--skill-root", skill, home=home)
+        initial_knowledge = initial["payload"]["knowledge"]
+        self.assertEqual(initial_knowledge["sharing"], snapshot["sharing"])
+        self.assertEqual(initial_knowledge["by_review"], {affected: [received["id"]]})
+        self.assertNotIn(stale_source["id"], storage.canonical(initial))
+        work.write_text(storage.canonical(initial), encoding="utf-8")
+        run = args.link.parent / "bundles"
+        native("investigate", "review-bundles", args.source_root, "--inventory", args.inventory,
+               "--review-ids", ",".join(ids.values()), "--output", run, home=home)
+        save_fixture_responses(run, "not_issue")
+        native("state", "record", *state, "--run", run, "--work-package", work, "--skill-root", skill,
+               "--operation-key", "baseline", home=home)
+        closed = native("state", "end", *state, "--status", "finished", "--operation-key", "end", home=home)
+        self.assertEqual(closed["memory"]["status"], "retained")
+        exported = native("memory", "export", *source_args, "--stream", "main", "--batch",
+                          closed["memory"]["batch"], home=home)
+        self.assertEqual(exported["sharing"], snapshot["sharing"])
+
+        changed = self.post("fact", self.contributor, {**draft, "operation": "change", "parent_revision": received["id"],
+                            "fact": {**draft["fact"], "statement": "Check the new caller evidence."}})
+        database = self.storage({"database_name": "publications", "id": snapshot["sharing"]["enrollment"]})
+        valid = database.get(changed["id"])
+        event = {key: valid[key] for key in ("seq", "id", "actor", "payload")}
+        bad = {**event, "seq": event["seq"] + 1, "id": "f" * 64,
+               "payload": {**event["payload"], "revision_id": "f" * 64, "parent_revision": None}}
+        page = args.link.parent / "rejected-page.json"
+        page.write_text(storage.canonical({"sharing": snapshot["sharing"], "after": snapshot["cursor"]["after"],
+                                           "facts": [event, bad]}), encoding="utf-8")
+        native("memory", "shared-facts", *source_args, "--input", page, home=home,
+               reject="does not extend the current revision")
+        self.assertEqual(native("memory", "shared-facts", *source_args, home=home)["cursor"], snapshot["cursor"])
+        self.assertEqual(sync(second)["imported"], 1)
+        scope, state = plan_generation(2)
+        prepare = ["memory", "prepare", "--state-store", journal, *scope, "--skill-root", skill]
+        fresh = native(*prepare, home=home)
+        self.assertEqual(fresh["memory"]["reused_review_ids"], [unaffected])
+        package = fresh["work_package"]
+        self.assertEqual(package["payload"]["review_ids"], [affected])
+        self.assertEqual(package["payload"]["knowledge"]["by_review"], {affected: [changed["id"]]})
+        work.write_text(storage.canonical(package), encoding="utf-8")
+        withdrawal = self.post("fact", self.contributor, {**draft, "operation": "withdraw",
+                               "parent_revision": changed["id"], "fact": None})
+        self.assertEqual(sync(second)["cursor"]["event_id"], withdrawal["id"])
+        native("state", "record", *state, "--run", run, "--work-package", work, "--skill-root", skill,
+               "--operation-key", "stale", home=home, reject="applicable knowledge changed")
+        refreshed = native(*prepare, home=home)["work_package"]
+        self.assertEqual(refreshed["payload"]["review_ids"], [affected])
+        self.assertEqual(refreshed["payload"]["knowledge"]["by_review"], {})
+        history = native("memory", "knowledge-list", *source_args, "--history", "true", home=home)
+        self.assertTrue(any(row["revision"]["withdrawn"] for row in history["items"]))
+        restricted = linked(second_root, "restricted-control", token=self.manager, audience="restricted")
+        other_store = sync(restricted, self.manager)["memory_store"]
+        native("state", "work", *state, "--skill-root", skill, "--memory-store", other_store,
+               home=home, reject="different sharing audience")
+
+        database.execute("DELETE FROM mehscan_shared_events WHERE id = ?", withdrawal["id"])
+        with self.assertRaisesRegex(storage.ShareError, "no longer contains the local checkpoint"):
+            sync(second)
 
     def test_attributed_fact_history_conflicts_and_retries(self):
         draft = {"key": "route", "operation": "first", "parent_revision": None,
@@ -247,26 +422,7 @@ class ReviewSharing(unittest.TestCase):
         self.assertTrue(entries)
         native("investigate", "review-bundles", root, "--inventory", inventory,
                "--review-ids", ",".join(row["review_id"] for row in entries), "--output", run)
-        manifest = storage.parse_document((run / "manifest.json").read_bytes())
-        for bundle in manifest["bundles"]:
-            name = bundle["filename"]
-            request = storage.parse_document((run / "requests" / name).read_bytes())
-            results = []
-            for review in request["reviews"]:
-                if request["review_kind"] == "security_path":
-                    anchor = review["candidate"]["sink"]["id"]
-                else:
-                    offered = [item for item in review["evidence"] if item["id"] in review["anchor_evidence_ids"]]
-                    anchor = next(item["id"] for kind in ("sink", "sensitive_operation", "security_configuration")
-                                  for item in offered if item["kind"] == kind)
-                results.append({"review_id": review["id"], "selected_anchor_id": anchor, "decision": "needs_review",
-                    "confidence": "medium", "summary": "Retained finding context for the sharing test.",
-                    "checks": ["Confirm which caller reaches the entry point."],
-                    "investigation": {"decisive_artifacts": [], "journal_summary": None,
-                        "citations": [{"artifact_id": anchor, "claim": "Native operation."}],
-                        "reviewer_inferences": [], "reviewer_origin_leads": [], "blockers": []}})
-            (run / "responses" / name).write_text(storage.canonical({"schema_version": "1.3",
-                "bundle_fingerprint": request["bundle_fingerprint"], "results": results}), encoding="utf-8")
+        save_fixture_responses(run, "needs_review")
         native("state", "record", *state, *owner, "--run", run, "--operation-key", "record",
                "--memory-store", memory)
         retained = native("state", "end", *state, *owner, "--status", "incomplete", "--operation-key", "end",

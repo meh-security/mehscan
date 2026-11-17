@@ -134,6 +134,9 @@ impl Stream {
         };
         let result = json!({"status":"allocated","assignment_id":id,"assignment":assignment});
         self.assignments.insert(id.into(), assignment);
+        if let Some(sharing) = &package.payload.knowledge.sharing {
+            self.sharing = Some(sharing.clone());
+        }
         Ok(result)
     }
 

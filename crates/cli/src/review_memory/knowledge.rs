@@ -7,14 +7,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{
     ReviewDecisionRecord, ReviewKnowledgeContext, ReviewKnowledgeOrigin, ReviewKnowledgeRevision,
-    ReviewKnowledgeScope, ReviewRepositoryIdentity, ReviewStateBinding, ReviewSubjectIdentity,
-    ReviewWorkPayload,
+    ReviewKnowledgeScope, ReviewRepositoryIdentity, ReviewSharingBinding, ReviewStateBinding,
+    ReviewSubjectIdentity, ReviewWorkPayload,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use turso::{Connection, transaction::TransactionBehavior};
 
-use super::{Snapshot, db_error, fingerprint, legacy, load_snapshot, lock_store, open_local};
+use super::{
+    Snapshot, db_error, fingerprint, legacy, load_snapshot, lock_store, open_local, shared,
+};
 
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS review_knowledge (
@@ -131,7 +133,9 @@ impl Reader {
         };
         super::local_runtime()?.block_on(async {
             let (_database, conn) = open_local(path, true).await?;
-            if !legacy::table_exists(&conn, "review_knowledge").await? {
+            if !legacy::table_exists(&conn, "review_knowledge").await?
+                && !legacy::table_exists(&conn, "review_sharing").await?
+            {
                 return Ok(Selection::default());
             }
             let snapshot = load_snapshot(root, inventory, false)?;
@@ -142,18 +146,25 @@ impl Reader {
 
 pub(super) async fn select(conn: &Connection, snapshot: &Snapshot) -> Result<Selection, String> {
     let at = now()?;
-    Ok(Selection {
-        items: revisions(conn, &fingerprint(&snapshot.repository)?, true, None)
-            .await?
-            .into_iter()
-            .filter(|item| usable(item, snapshot, at))
-            .collect(),
-    })
+    let sharing = shared::binding(conn).await?;
+    let mut items = revisions(conn, &fingerprint(&snapshot.repository)?, true, None).await?;
+    if let Some(binding) = &sharing {
+        shared::validate_binding(&snapshot.repository, binding)?;
+        items.extend(
+            shared::revisions(conn, true, None)
+                .await?
+                .into_iter()
+                .filter_map(|item| shared::for_scan(item, &snapshot.repository.path_prefix)),
+        );
+    }
+    items.retain(|item| usable(item, snapshot, at));
+    Ok(Selection { items, sharing })
 }
 
 #[derive(Default)]
 pub(crate) struct Selection {
     items: Vec<ReviewKnowledgeRevision>,
+    pub(crate) sharing: Option<ReviewSharingBinding>,
 }
 
 impl Selection {
@@ -181,7 +192,10 @@ impl Selection {
         payload: &ReviewWorkPayload,
         binding: &ReviewStateBinding,
     ) -> Result<ReviewKnowledgeContext, String> {
-        let mut context = ReviewKnowledgeContext::default();
+        let mut context = ReviewKnowledgeContext {
+            sharing: self.sharing.clone(),
+            ..Default::default()
+        };
         let mut source_links = 0;
         for item in &self.items {
             let review_ids = payload
@@ -450,7 +464,7 @@ pub(super) fn run(
             }
             let (_database, conn) = open_local(&path, true).await?;
             let at = now()?;
-            let items = revisions(&conn, &repository, !history, item.as_deref())
+            let mut items = revisions(&conn, &repository, !history, item.as_deref())
                 .await?
                 .into_iter()
                 .map(|revision| {
@@ -460,6 +474,14 @@ pub(super) fn run(
                     })
                 })
                 .collect::<Vec<_>>();
+            if let Some(binding) = shared::binding(&conn).await? {
+                shared::validate_binding(&snapshot.repository, &binding)?;
+                for revision in shared::revisions(&conn, !history, item.as_deref()).await? {
+                    let usable = shared::for_scan(revision.clone(), &snapshot.repository.path_prefix)
+                        .is_some_and(|local| usable(&local, &snapshot, at));
+                    items.push(json!({"applicable_to_current_source":usable,"sharing":binding,"revision":revision}));
+                }
+            }
             return Ok(json!({"items":items}));
         }
         if withdrawal.is_some() && !path.is_file() {
@@ -471,6 +493,9 @@ pub(super) fn run(
             .await
             .map_err(db_error)?;
         super::prepare_schema(&tx).await?;
+        if let Some(binding) = shared::binding(&tx).await? {
+            shared::validate_binding(&snapshot.repository, &binding)?;
+        }
         tx.execute_batch(SCHEMA).await.map_err(db_error)?;
         let candidate = if let Some(draft) = draft {
             make_revision(&repository, &snapshot, draft)?

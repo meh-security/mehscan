@@ -88,6 +88,7 @@ struct Publication {
     attempt_status: String,
     assessments: Vec<assessments::Assessment>,
     dependencies: Vec<FileDependency>,
+    sharing: Option<mehscan_core::ReviewSharingBinding>,
 }
 
 enum Operation {
@@ -155,6 +156,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 let store = resolve_store(store.as_deref(), &root, &selection.snapshot.repository)?;
                 args.finish()?;
                 let content = load_local(&store, &selection, &batch)?;
+                if content.sharing.is_some() {
+                    return Err(
+                        "publish audience-bound reviews through the enrolled sharing service"
+                            .into(),
+                    );
+                }
                 Operation::Stage {
                     selection,
                     batch,
@@ -303,10 +310,15 @@ fn load_local(store: &Path, selection: &Selection, batch: &str) -> Result<Public
         } else {
             Vec::new()
         };
+        let sharing = super::shared::binding(&conn).await?;
+        if let Some(binding) = &sharing {
+            super::shared::validate_binding(&selection.snapshot.repository, binding)?;
+        }
         Ok(Publication {
             attempt_status: status,
             assessments: assessments::read_assessments(&conn, batch).await?,
             dependencies,
+            sharing,
         })
     })
 }
@@ -326,7 +338,7 @@ pub(super) fn export(
         stream,
     };
     let content = load_local(store, &selection, batch)?;
-    Ok(json!({
+    let mut result = json!({
         "schema_version": 1,
         "batch": batch,
         "repository": selection.snapshot.repository,
@@ -338,7 +350,11 @@ pub(super) fn export(
         "attempt_status": content.attempt_status,
         "assessments": content.assessments,
         "file_dependencies": content.dependencies,
-    }))
+    });
+    if let Some(binding) = content.sharing {
+        result["sharing"] = json!(binding);
+    }
+    Ok(result)
 }
 
 async fn open_replica(

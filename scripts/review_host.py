@@ -98,7 +98,7 @@ def stream_name(value):
 
 def verify_batch(batch, repo, stream):
     fields(batch, ("schema_version", "batch", "repository", "repository_id", "snapshot_id", "source_fingerprint",
-                   "inventory_fingerprint", "stream", "attempt_status", "assessments", "file_dependencies"))
+                   "inventory_fingerprint", "stream", "attempt_status", "assessments", "file_dependencies"), ("sharing",))
     if type(batch["schema_version"]) is not int or batch["schema_version"] != 1:
         raise ShareError(400, "unsupported retained batch schema")
     identity = fields(batch["repository"], ("repository_key", "path_prefix"), ("source_repository_key",))
@@ -170,7 +170,7 @@ def verify_fact(value, at):
         raise ShareError(400, "source observations require source hashes")
     for filename, sha in hashes.items():
         path(filename)
-        fingerprint(sha)
+        matching(sha, r"[a-f0-9]{64}")
     observed, expiry = value.get("observed_at"), value.get("expires_at")
     if (observed is None and ("environment" in scope or expiry is not None)
             or observed is not None and (type(observed) is not int or not 0 <= observed <= at)
@@ -370,6 +370,9 @@ class Service:
             raise ShareError(403, "retained review must bind the authenticated run and source commit")
         stream = policy["stream"]
         verify_batch(body["batch"], enrollment["repository_id"], stream)
+        if "sharing" in body["batch"] and body["batch"]["sharing"] != {
+                "enrollment": enrollment["id"], "database_id": enrollment["database_id"]}:
+            raise ShareError(403, "retained review belongs to a different sharing audience")
         event_id = digest(["review", enrollment["id"], actor, body["run_id"], body["run_attempt"], body["batch"]["batch"]])
         store = self.storage(enrollment)
         store.check_binding()
@@ -380,6 +383,8 @@ class Service:
 
     def fact(self, enrollment, actor, body):
         fields(body, ("key", "operation", "parent_revision", "fact"))
+        if len(canonical(body)) > 32 * 1024:
+            raise ShareError(413, "shared fact exceeds the size limit")
         key = bounded(body["key"], 256)
         matching(body["operation"], r"[a-zA-Z0-9][a-zA-Z0-9:._-]{0,127}")
         parent = body["parent_revision"]

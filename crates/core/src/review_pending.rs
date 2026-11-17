@@ -96,6 +96,13 @@ pub struct ReviewKnowledgeRevision {
     pub withdrawn: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewSharingBinding {
+    pub enrollment: String,
+    pub database_id: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewKnowledgeContext {
@@ -103,6 +110,8 @@ pub struct ReviewKnowledgeContext {
     pub by_review: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub omitted_source_links: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<ReviewSharingBinding>,
 }
 
 fn is_zero(value: &usize) -> bool {
@@ -111,7 +120,7 @@ fn is_zero(value: &usize) -> bool {
 
 impl ReviewKnowledgeContext {
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty() && self.by_review.is_empty()
+        self.items.is_empty() && self.by_review.is_empty() && self.sharing.is_none()
     }
 
     pub fn revisions(&self, review_id: &str) -> &[String] {

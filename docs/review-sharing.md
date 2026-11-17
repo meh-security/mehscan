@@ -76,6 +76,38 @@ withdrawal.
 python scripts/review_share.py fact --link LINK.json --input FACT.json
 ```
 
+## Use shared facts in a review
+
+Build the inventory with the linked repository key, then sync the latest facts
+before starting the review. Use repository-relative paths in shared fact
+scopes and source hashes.
+
+```sh
+mehscan investigate review-inventory CHECKOUT \
+  --repository-key github.com/repositories/REPOSITORY_ID --output INVENTORY
+python scripts/review_share.py sync --link LINK.json --scanner MEHSCAN \
+  --source-root CHECKOUT --inventory INVENTORY
+```
+
+Use the returned `state_home` as `MEHSCAN_STATE_HOME` for the entire review
+and the returned `state_store` as the native journal. Other local review commands
+use those same paths. A separate control directory for each checkout gives it
+its own progress and cache. The native controller also checks that a journal
+and a retained batch stay within their sharing audience.
+
+`memory prepare` and `state work` automatically include applicable cached fact
+revisions. The controller checks scope, source hashes, and expiration against
+the current checkout. A correction or withdrawal reopens affected work and
+invalidates responses still using the previous revision. Unchanged work stays
+eligible for reuse under the normal native checks. Sync before each linked
+review to pick up changes. An offline review can use its last successful local
+cache, with the last synced event ID available from `memory shared-facts`.
+
+The sync cursor advances with each committed page of facts. Repeated syncs
+download only newer revisions. A restored upstream database that lacks the
+local checkpoint requires reconciliation. Shared review publications are
+available as advisory history through `list` and `get`.
+
 ## Publish a protected branch review
 
 As Manager, approve a workflow with `review_share.py workflow --link LINK.json
@@ -99,7 +131,8 @@ approved branch runs, with the checkout pinned to the job's own SHA.
 [GitHub Actions OIDC claims](https://docs.github.com/en/actions/reference/security/oidc)
 
 Use `github.com/repositories/REPOSITORY_ID` as the inventory repository key.
-Run the usual local review in the approved stream, close it with its effective
+Sync shared facts, set the returned state home, and run the usual local review
+in the approved stream. Close it with its effective
 inventory, and take `memory.batch` from the retention receipt. Use the same
 source root, effective inventory, stream, and local database to publish.
 In the Actions job, link with `--oidc-audience YOUR_SERVICE_AUDIENCE` and use the
@@ -110,7 +143,8 @@ python scripts/review_share.py publish --link LINK.json --scanner MEHSCAN \
   --source-root CHECKOUT --inventory INVENTORY --stream main --batch BATCH_ID
 ```
 
-Add `--store` if the review used a specific local database. Retry with the
+Publish with the same `MEHSCAN_STATE_HOME`. Add `--store` if the review used a
+specific local database. Retry with the
 same retained batch and Actions run identity to recover the original receipt.
 The publication carries assessment summaries, pending questions, source
 references, and dependency fingerprints. Provider transcripts, raw source
