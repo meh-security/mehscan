@@ -12,6 +12,7 @@ use turso::{Builder, Connection, transaction::TransactionBehavior};
 
 mod assessments;
 mod dependencies;
+pub(super) mod knowledge;
 mod legacy;
 mod upstream;
 
@@ -101,6 +102,7 @@ struct Snapshot {
     inventory: String,
     source: String,
     files: BTreeMap<String, String>,
+    subjects: BTreeMap<String, mehscan_core::ReviewSubjectIdentity>,
     sources: Option<mehscan_engine::investigation::ReviewMemorySources>,
     razor_render_bindings: Option<mehscan_core::RazorRenderBindings>,
 }
@@ -189,6 +191,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             return legacy::run(command.as_deref().unwrap(), arguments);
         }
         Some("sync") => return upstream::run(arguments),
+        Some("knowledge-put" | "knowledge-list" | "knowledge-withdraw") => {}
         Some(other) => {
             return Err(format!(
                 "unknown memory operation {other:?}; use 'mehscan memory --help'"
@@ -205,6 +208,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let root = PathBuf::from(args.required("--source-root")?);
     let inventory = PathBuf::from(args.required("--inventory")?);
+    if let Some(command) = command
+        .as_deref()
+        .filter(|name| name.starts_with("knowledge-"))
+    {
+        return super::print_json(&knowledge::run(command, args, &root, &inventory)?);
+    }
     if command.as_deref() == Some("location") {
         args.finish()?;
         let (cache, _) = super::review_state::load_inventory(&inventory)?;
@@ -317,18 +326,22 @@ fn prepare_native(
     });
     args.finish()?;
     super::review_state::outside_source(&state, root)?;
-    let retained = (!temporary).then(|| {
-        resolve_store(store, root, &snapshot.repository).and_then(|path| {
-            if !path.is_file() {
-                return Ok(None);
-            }
-            let _lock = lock_store(&path)?;
-            local_runtime()?.block_on(async {
-                let (_database, connection) = open_local(&path, true).await?;
-                assessments::latest_finished_batch(&connection, snapshot, &stream).await
-            })
-        })
-    });
+    let reader = knowledge::Reader::lock(root, &snapshot.repository, store, temporary);
+    let path = reader
+        .as_ref()
+        .ok()
+        .and_then(|reader| reader.path.as_deref());
+    let mut selection = knowledge::Selection::default();
+    let retained = match (&reader, path) {
+        (Err(reason), _) => Some(Err(reason.clone())),
+        (Ok(_), Some(path)) if path.is_file() => Some(local_runtime()?.block_on(async {
+            let (_database, connection) = open_local(path, true).await?;
+            selection = knowledge::select(&connection, snapshot).await?;
+            assessments::latest_finished_batch(&connection, snapshot, &stream).await
+        })),
+        (Ok(_), Some(_)) => Some(Ok(None)),
+        (Ok(_), None) => None,
+    };
     let mut prepared = super::review_state::MemoryPreparation {
         store: &state,
         stream: &stream,
@@ -342,7 +355,7 @@ fn prepare_native(
         owner: &owner,
         requested: requested.as_deref(),
     }
-    .prepare(root, &skill, provider.as_deref(), retained)?;
+    .prepare(root, &skill, provider.as_deref(), retained, &selection)?;
     if prepared.memory["status"] == "no_batch"
         && prepared
             .work_package
@@ -351,13 +364,12 @@ fn prepare_native(
             .values()
             .any(|parents| !parents.is_empty())
     {
-        let context = resolve_store(store, root, &snapshot.repository).and_then(|path| {
-            if !path.is_file() {
+        let context = (|| {
+            let Some(path) = path.filter(|path| path.is_file()) else {
                 return Ok(None);
-            }
-            let _lock = lock_store(&path)?;
+            };
             local_runtime()?.block_on(async {
-                let (_database, connection) = open_local(&path, true).await?;
+                let (_database, connection) = open_local(path, true).await?;
                 dependencies::prepare_context(
                     &connection,
                     snapshot,
@@ -366,7 +378,7 @@ fn prepare_native(
                 )
                 .await
             })
-        });
+        })();
         match context {
             Ok(Some(context)) => prepared.memory["prior_dependencies"] = context,
             Ok(None) => {}
@@ -387,6 +399,7 @@ fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Sn
     ))?;
     Ok(Snapshot {
         files: sources.hashes(),
+        subjects: catalog.subjects.clone(),
         sources: keep_sources.then_some(sources),
         repository: catalog.repository.clone(),
         source: catalog.source_fingerprint.clone(),
@@ -576,6 +589,9 @@ fn help() {
     legacy::help();
     upstream::help();
     println!(
+        "  mehscan memory knowledge-put --source-root ROOT --inventory DIR --input FILE [--store FILE]\n  mehscan memory knowledge-list --source-root ROOT --inventory DIR [--item ID] [--history true] [--store FILE]\n  mehscan memory knowledge-withdraw --source-root ROOT --inventory DIR --item ID --author NAME --expected-revision ID [--store FILE]"
+    );
+    println!(
         "  mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH [--store FILE]"
     );
     println!(
@@ -746,6 +762,7 @@ async fn run_local(
     } = operation
     {
         let retained = assessments::reuse_batch(&connection, snapshot, &stream, batch).await?;
+        let selection = knowledge::select(&connection, snapshot).await?;
         return super::review_state::reuse_memory(
             &state,
             &stream,
@@ -753,6 +770,7 @@ async fn run_local(
             &operation_key,
             *work,
             retained,
+            &selection,
         );
     }
     let tx = connection
@@ -775,8 +793,12 @@ async fn run_local(
     if let Operation::Retain { admission, stream } = &operation {
         let result = assessments::retain(&tx, &id, &snapshot.inventory, stream, admission).await?;
         dependencies::retain(&tx, snapshot, &id, result.batch(), &admission.records).await?;
+        let observations =
+            knowledge::retain(&tx, snapshot, &repository, &admission.records).await?;
         tx.commit().await.map_err(db_error)?;
-        return json(result);
+        let mut receipt = json(result)?;
+        receipt["new_knowledge_revisions"] = serde_json::json!(observations);
+        return Ok(receipt);
     }
     tx.commit().await.map_err(db_error)?;
     let changes = base.map(|_| match previous.as_ref() {

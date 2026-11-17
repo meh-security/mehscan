@@ -43,6 +43,257 @@ fn read(path: &Path) -> Value {
 }
 
 #[test]
+fn local_knowledge_rechecks_affected_reviews_and_fences_late_results() {
+    let mut fixture = Fixture::new("knowledge");
+    fs::write(
+        fixture.source.join("other.js"),
+        "function other(request) { eval(request.query.code); }\n",
+    )
+    .unwrap();
+    fixture.prepare("two-sources");
+    let db = fixture.base.join("knowledge.turso");
+    let db = db.to_str().unwrap();
+    let skill = fixture.base.join("skill");
+    fs::create_dir(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "Trusted review policy.").unwrap();
+    let skill = skill.to_str().unwrap();
+    let plan_path = fixture.base.join("plan.json");
+    let mut plan = fixture.plan_template("value");
+    plan["runtime"] = ok(&["state", "runtime-template", "--skill-root", skill]);
+    fs::write(&plan_path, plan.to_string()).unwrap();
+    let work_path = fixture.base.join("knowledge-work.json");
+    let work = work_path.to_str().unwrap();
+    let input_path = fixture.base.join("fact.json");
+    let memory = |command, options: &[&str]| {
+        let mut args = vec![
+            "memory",
+            command,
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--store",
+            db,
+        ];
+        args.extend_from_slice(options);
+        ok(&args)
+    };
+    let prepare = |generation, owner| {
+        memory(
+            "prepare",
+            &[
+                "--state-store",
+                fixture.store.to_str().unwrap(),
+                "--stream",
+                "pr:24",
+                "--generation",
+                generation,
+                "--owner",
+                owner,
+                "--skill-root",
+                skill,
+            ],
+        )
+    };
+    let set_plan = |generation, owner, key| {
+        let mut args = fixture.plan_args(owner, &plan_path, key);
+        let index = args.iter().position(|arg| *arg == "--generation").unwrap();
+        args[index + 1] = generation;
+        args.extend(["--skill-root", skill]);
+        ok(&args);
+    };
+    let record = |generation, owner, key| {
+        let mut args = fixture.record_args(generation, owner, key);
+        args.extend([
+            "--skill-root",
+            skill,
+            "--work-package",
+            work,
+            "--memory-store",
+            db,
+        ]);
+        args
+    };
+    let end = |generation, owner, key| {
+        vec![
+            "state",
+            "end",
+            "--store",
+            fixture.store.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--source-root",
+            fixture.source.to_str().unwrap(),
+            "--memory-store",
+            db,
+            "--generation",
+            generation,
+            "--owner",
+            owner,
+            "--status",
+            "finished",
+            "--operation-key",
+            key,
+        ]
+    };
+    let put = |fact: &Value| {
+        fs::write(&input_path, fact.to_string()).unwrap();
+        memory("knowledge-put", &["--input", input_path.to_str().unwrap()])
+    };
+    let claim = fixture.claim("initial", "0", "knowledge-claim-1", false);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    set_plan("1", owner, "knowledge-plan-1");
+    let original = prepare("1", owner);
+    assert!(
+        original["work_package"]["payload"]
+            .get("knowledge")
+            .is_none()
+    );
+    fs::write(&work_path, original["work_package"].to_string()).unwrap();
+    let baseline = fixture.answers("not_issue", "Initial synthetic source assessment.");
+    assert_eq!(baseline.len(), 2);
+    ok(&record("1", owner, "knowledge-baseline"));
+    assert_eq!(
+        ok(&end("1", owner, "knowledge-end-1"))["memory"]["status"],
+        "retained"
+    );
+
+    let mut fact = json!({
+        "key":"entry-context","author":"developer","origin":"assertion",
+        "statement":"Review the entry conditions for this operation.",
+        "scope":{"path":"app.js","environment":"production"},"observed_at":1,
+        "evidence":["ticket-42"],
+    });
+    let first = put(&fact);
+    assert_eq!(first["changed"], true);
+    assert_eq!(put(&fact)["changed"], false);
+    let affected = first["affected_review_ids"].as_array().unwrap();
+    assert_eq!(affected.len(), 1);
+    let affected_id = affected[0].as_str().unwrap();
+    let first_revision = first["revision"]["revision_id"].as_str().unwrap();
+    let item_id = first["revision"]["item_id"].as_str().unwrap();
+
+    let claim = fixture.claim("recheck", "1", "knowledge-claim-2", true);
+    let owner = claim["result"]["owner"].as_str().unwrap();
+    set_plan("2", owner, "knowledge-plan-2");
+    let prepared = prepare("2", owner);
+    let stale = &prepared["work_package"];
+    assert_eq!(
+        prepared["memory"]["reused_review_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(stale["payload"]["review_ids"], json!([affected_id]));
+    assert_eq!(
+        stale["payload"]["knowledge"]["by_review"][affected_id],
+        json!([first_revision])
+    );
+    assert_eq!(
+        stale["payload"]["expected_parents"][affected_id]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    fs::write(&work_path, stale.to_string()).unwrap();
+
+    fact["parent_revision"] = json!(first_revision);
+    fact["statement"] =
+        json!("Additional source should be checked before using this deployment assertion.");
+    let revised = put(&fact);
+    let new_revision = revised["revision"]["revision_id"].as_str().unwrap();
+    assert_ne!(new_revision, first_revision);
+    assert_eq!(revised["revision"]["parent_revision"], first_revision);
+    reject(
+        &record("2", owner, "knowledge-reject-late"),
+        "applicable knowledge changed",
+    );
+
+    let fresh = prepare("2", owner);
+    assert_eq!(
+        fresh["work_package"]["payload"]["review_ids"],
+        json!([affected_id])
+    );
+    assert_eq!(
+        fresh["work_package"]["payload"]["knowledge"]["by_review"][affected_id],
+        json!([new_revision])
+    );
+    fs::write(&work_path, fresh["work_package"].to_string()).unwrap();
+    let scoped_run = fixture.base.join("scoped-bundles");
+    ok(&[
+        "investigate",
+        "review-bundles",
+        fixture.source.to_str().unwrap(),
+        "--inventory",
+        fixture.inventory.to_str().unwrap(),
+        "--review-ids",
+        affected_id,
+        "--output",
+        scoped_run.to_str().unwrap(),
+    ]);
+    let manifest = read(&scoped_run.join("manifest.json"));
+    let filename = manifest["bundles"][0]["filename"].as_str().unwrap();
+    let bundle: mehscan_core::PathReviewBundle =
+        serde_json::from_value(read(&scoped_run.join("requests").join(filename))).unwrap();
+    let anchor =
+        mehscan_engine::investigation::bundle_selected_anchor_id(&bundle, affected_id).unwrap();
+    fs::write(scoped_run.join("responses").join(filename), json!({
+        "schema_version":"1.3","bundle_fingerprint":bundle.bundle_fingerprint,"results":[{
+            "review_id":affected_id,"selected_anchor_id":anchor,"decision":"issue","confidence":"medium",
+            "summary":"Fresh synthetic assessment with the revised context.","checks":[],
+            "investigation":{"decisive_artifacts":[],"journal_summary":null,
+                "citations":[{"artifact_id":anchor,"claim":"Selected native operation."}],
+                "reviewer_inferences":[],"reviewer_origin_leads":[],"blockers":[]}
+        }]
+    }).to_string()).unwrap();
+    let report = ok(&[
+        "report",
+        "--run",
+        scoped_run.to_str().unwrap(),
+        "--source-root",
+        fixture.source.to_str().unwrap(),
+    ]);
+    let supersession = fixture.base.join("knowledge-supersession.json");
+    let old = &fresh["work_package"]["payload"]["expected_parents"][affected_id];
+    let decision = &report["decision_records"][0]["decision_id"];
+    fs::write(&supersession, json!([{"decision_id":decision,"parents":old,"reason":"Fresh review of revised evidence."}]).to_string()).unwrap();
+    let mut admit = record("2", owner, "knowledge-admit");
+    let run_arg = admit.iter().position(|arg| *arg == "--run").unwrap();
+    admit[run_arg + 1] = scoped_run.to_str().unwrap();
+    admit.extend(["--supersessions", supersession.to_str().unwrap()]);
+    assert_eq!(ok(&admit)["result"]["decision_ids"], json!([decision]));
+
+    let withdraw = || {
+        memory(
+            "knowledge-withdraw",
+            &[
+                "--item",
+                item_id,
+                "--author",
+                "developer",
+                "--expected-revision",
+                new_revision,
+            ],
+        )
+    };
+    assert_eq!(withdraw()["changed"], true);
+    assert_eq!(withdraw()["changed"], false);
+    assert_eq!(ok(&admit)["replayed"], true);
+    reject(
+        &end("2", owner, "knowledge-end-stale"),
+        "applicable knowledge changed after admission",
+    );
+    let history = memory("knowledge-list", &["--item", item_id, "--history", "true"]);
+    assert_eq!(history["items"].as_array().unwrap().len(), 3);
+    assert_eq!(fixture.view(false)["attempt_status"], "running");
+    fs::remove_dir_all(&fixture.base).unwrap();
+}
+
+#[test]
 fn turso_retains_native_pending_decisions_only_for_exact_current_inputs() {
     let mut fixture = Fixture::new("memory-admission");
     let db = fixture.base.join("memory.turso");

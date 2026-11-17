@@ -1,6 +1,7 @@
 //! Source-bound pending questions and evidence updates; updates are not verdicts.
 use crate::{ReviewAssessmentContext, ReviewChangeEvidence, ReviewChangeSourceReference};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +59,66 @@ pub struct ReviewFactRecord {
     pub evidence: Vec<ReviewChangeEvidence>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewKnowledgeOrigin {
+    Assertion,
+    SourceObservation,
+    Inference,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewKnowledgeScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewKnowledgeRevision {
+    pub item_id: String,
+    pub revision_id: String,
+    pub parent_revision: Option<String>,
+    pub key: String,
+    pub author: String,
+    pub origin: ReviewKnowledgeOrigin,
+    pub statement: String,
+    pub scope: ReviewKnowledgeScope,
+    pub source_sha256: BTreeMap<String, String>,
+    pub evidence: Vec<String>,
+    pub observed_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub withdrawn: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewKnowledgeContext {
+    pub items: Vec<ReviewKnowledgeRevision>,
+    pub by_review: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub omitted_source_links: usize,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+impl ReviewKnowledgeContext {
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.by_review.is_empty()
+    }
+
+    pub fn revisions(&self, review_id: &str) -> &[String] {
+        self.by_review.get(review_id).map_or(&[], Vec::as_slice)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewWorkPayload {
@@ -82,6 +143,8 @@ pub struct ReviewWorkPayload {
     pub pending_questions: Vec<ReviewPendingRecord>,
     pub evidence_updates: Vec<ReviewFactRecord>,
     pub change_pass: Vec<crate::ReviewChangePassEntry>,
+    #[serde(default, skip_serializing_if = "ReviewKnowledgeContext::is_empty")]
+    pub knowledge: ReviewKnowledgeContext,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

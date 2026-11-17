@@ -152,6 +152,7 @@ struct Stream {
     lineage: BTreeMap<String, ReviewStateSupersession>,
     admissions: BTreeMap<u64, BTreeSet<String>>,
     reusable_admissions: BTreeMap<u64, BTreeMap<String, String>>,
+    knowledge_admissions: BTreeMap<u64, BTreeMap<String, Vec<String>>>,
     provenance: BTreeMap<u64, Vec<Value>>,
     completion_plans: BTreeMap<u64, Vec<mehscan_core::ReviewCompletionPlanRecord>>,
     pending: BTreeMap<String, mehscan_core::ReviewPendingRecord>,
@@ -161,6 +162,18 @@ struct Stream {
 }
 
 mod allocations;
+use super::review_memory::knowledge::{
+    Reader as KnowledgeReader, Selection as KnowledgeSelection, premise_revisions,
+};
+
+fn memory_options(args: &mut super::ParsedArguments) -> Result<(Option<PathBuf>, bool), String> {
+    let store = args.optional("--memory-store").map(PathBuf::from);
+    let temporary = super::review_memory::temporary_mode(
+        args.optional("--memory-mode").as_deref(),
+        store.is_some(),
+    )?;
+    Ok((store, temporary))
+}
 
 #[derive(Default)]
 struct State {
@@ -528,6 +541,16 @@ impl State {
                         .insert(record.decision_id.clone());
                 }
                 if let Some(package) = work_package {
+                    let bindings = stream.knowledge_admissions.entry(*generation).or_default();
+                    for record in records {
+                        bindings.insert(
+                            record.decision_id.clone(),
+                            premise_revisions(
+                                &package.payload.knowledge,
+                                &record.response.review_id,
+                            ),
+                        );
+                    }
                     if reusable_work(package)
                         && package.payload.pending_questions.is_empty()
                         && package.payload.evidence_updates.is_empty()
@@ -560,6 +583,19 @@ impl State {
                     }
                 }
                 let mut provenance = provenance.clone();
+                if let Some(package) = work_package {
+                    let revisions = records
+                        .iter()
+                        .filter_map(|record| {
+                            let id = &record.response.review_id;
+                            let revisions = package.payload.knowledge.revisions(id);
+                            (!revisions.is_empty()).then_some((id, revisions))
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    if !revisions.is_empty() {
+                        provenance["knowledge_revisions"] = json!(revisions);
+                    }
+                }
                 if let Some(id) = assignment {
                     provenance["assignment"] = stream.finish_allocation(id);
                 }
@@ -630,6 +666,8 @@ impl State {
                             .and_then(|eligible| eligible.get(id))
                             == Some(&previous_plan.plan_id)
                         && settled(record)
+                        && stream.knowledge_revisions(*previous_generation, id)
+                            == premise_revisions(&work_package.payload.knowledge, review)
                         && !blocked.contains(review)
                         && !reserved.contains(review.as_str())
                         && parents.is_some_and(|parents| parents.as_slice() == [id.as_str()])
@@ -647,7 +685,9 @@ impl State {
                         let parents = &work_package.payload.expected_parents[*id];
                         !review_ids.contains(*id)
                             && (blocked.contains(*id) || !matches!(parents.as_slice(), [parent]
-                                if current.admissions.contains(parent) && settled(&stream.decisions[parent]))
+                                if current.admissions.contains(parent) && settled(&stream.decisions[parent])
+                                    && stream.knowledge_revisions(*generation, parent)
+                                        == premise_revisions(&work_package.payload.knowledge, id))
                             )
                     })
                     .collect::<Vec<_>>();
@@ -1149,11 +1189,31 @@ fn work_package(
         pending_questions: questions,
         evidence_updates: facts,
         change_pass: saved.plan.change_pass.clone(),
+        knowledge: Default::default(),
     };
     Ok(mehscan_core::ReviewWorkPackage {
         package_id: hash("mehscanReviewWork/v1", &payload)?,
         payload,
     })
+}
+
+fn bind_knowledge(
+    package: &mut mehscan_core::ReviewWorkPackage,
+    binding: &ReviewStateBinding,
+    selection: &KnowledgeSelection,
+) -> Result<(), String> {
+    package.payload.knowledge = selection.context(&package.payload, binding)?;
+    package.package_id = hash("mehscanReviewWork/v1", &package.payload)?;
+    Ok(())
+}
+
+impl Stream {
+    fn knowledge_revisions(&self, generation: u64, decision: &str) -> &[String] {
+        self.knowledge_admissions
+            .get(&generation)
+            .and_then(|items| items.get(decision))
+            .map_or(&[], Vec::as_slice)
+    }
 }
 
 fn validate_work_package(
@@ -1168,7 +1228,11 @@ fn validate_work_package(
     // Regenerate the exact handoff view; new facts, changed plans or parent heads
     // fence a late response even on the same source revision.
     let current = work_package(stream, attempt, Some(&package.payload.review_ids), false)?;
-    if &current != package {
+    let mut supplied = package.payload.clone();
+    // Live knowledge is checked under the memory lock before append. Replay
+    // uses the revisions saved with the journal transaction.
+    supplied.knowledge = Default::default();
+    if current.payload != supplied {
         return Err(
             "work package plan/parents/facts/generation changed; request fresh work".into(),
         );
@@ -1367,6 +1431,15 @@ fn read_state(file: &mut File, through: Option<u64>) -> Result<State, String> {
 }
 
 fn transact(store: &Path, operation: &str, command: Command) -> Result<Value, String> {
+    transact_checked(store, operation, command, |_, _| Ok(()))
+}
+
+fn transact_checked(
+    store: &Path,
+    operation: &str,
+    command: Command,
+    check: impl FnOnce(&State, &Command) -> Result<(), String>,
+) -> Result<Value, String> {
     label(operation)?;
     let create = matches!(&command, Command::Claim { .. });
     if create {
@@ -1396,6 +1469,7 @@ fn transact(store: &Path, operation: &str, command: Command) -> Result<Value, St
             json!({"sequence":sequence,"replayed":true,"currently_owned":state.currently_owned(&command) && (!matches!(&command, Command::Claim { .. }) || result.get("owner").is_some()),"result":result}),
         );
     }
+    check(&state, &command)?;
     let result = state.apply(&command)?;
     let currently_owned = state.currently_owned(&command)
         && (!matches!(&command, Command::Claim { .. }) || result.get("owner").is_some());
@@ -1502,6 +1576,7 @@ impl MemoryPreparation<'_> {
         &self,
         state: &mut State,
         key: &str,
+        selection: &KnowledgeSelection,
     ) -> Result<mehscan_core::ReviewWorkPackage, String> {
         let stream = state.owned_stream(key, self.generation, self.owner)?;
         let attempt = stream.attempts.last().unwrap();
@@ -1509,7 +1584,9 @@ impl MemoryPreparation<'_> {
             return Err("work inventory differs from active generation".into());
         }
         let selected = stream.available_reviews(attempt, self.requested)?;
-        work_package(stream, attempt, selected.as_deref(), false)
+        let mut package = work_package(stream, attempt, selected.as_deref(), false)?;
+        bind_knowledge(&mut package, &attempt.binding, selection)?;
+        Ok(package)
     }
 
     fn remaining_work(
@@ -1517,6 +1594,7 @@ impl MemoryPreparation<'_> {
         state: &mut State,
         key: &str,
         full: mehscan_core::ReviewWorkPackage,
+        selection: &KnowledgeSelection,
     ) -> Result<mehscan_core::ReviewWorkPackage, String> {
         if !reusable_work(&full) {
             return Ok(full);
@@ -1528,13 +1606,16 @@ impl MemoryPreparation<'_> {
             let parents = &full.payload.expected_parents[*id];
             blocked.contains(*id) || !matches!(parents.as_slice(), [parent]
                 if attempt.admissions.contains(parent)
+                && stream.knowledge_revisions(self.generation, parent) == premise_revisions(&full.payload.knowledge, id)
                 && stream.reusable_admissions.get(&self.generation).and_then(|admitted| admitted.get(parent)) == Some(&full.payload.plan_id)
                 && settled(&stream.decisions[parent]))
         }).cloned().collect::<Vec<_>>();
         if remaining.len() == full.payload.review_ids.len() {
             return Ok(full);
         }
-        work_package(stream, attempt, Some(&remaining), false)
+        let mut package = work_package(stream, attempt, Some(&remaining), false)?;
+        bind_knowledge(&mut package, &attempt.binding, selection)?;
+        Ok(package)
     }
 
     pub(super) fn prepare(
@@ -1543,10 +1624,11 @@ impl MemoryPreparation<'_> {
         skill: &str,
         provider: Option<&str>,
         retained: Option<Result<Option<RetainedBatch>, String>>,
+        selection: &KnowledgeSelection,
     ) -> Result<PreparedMemory, String> {
         let key = stream_key(self.repository_key, self.stream)?;
         let mut state = read_store(self.store, None)?;
-        let mut full = self.native_work(&mut state, &key)?;
+        let mut full = self.native_work(&mut state, &key, selection)?;
         if let Some(runtime) = &full.payload.runtime {
             validate_runtime_skill(runtime, Some(skill), provider, source)?;
         }
@@ -1593,7 +1675,7 @@ impl MemoryPreparation<'_> {
             memory = receipt["result"].clone();
             memory["replayed"] = receipt["replayed"].clone();
             state = read_store(self.store, None)?;
-            let current = self.native_work(&mut state, &key)?;
+            let current = self.native_work(&mut state, &key, selection)?;
             if current.payload.runtime != full.payload.runtime {
                 return Err(
                     "native runtime changed during memory preparation; request fresh work".into(),
@@ -1601,7 +1683,7 @@ impl MemoryPreparation<'_> {
             }
             full = current;
         }
-        let work = self.remaining_work(&mut state, &key, full)?;
+        let work = self.remaining_work(&mut state, &key, full, selection)?;
         memory["remaining_review_ids"] = json!(work.payload.review_ids);
         Ok(PreparedMemory {
             memory,
@@ -1617,6 +1699,7 @@ pub(super) fn reuse_memory(
     operation_key: &str,
     work: mehscan_core::ReviewWorkPackage,
     batch: RetainedBatch,
+    selection: &KnowledgeSelection,
 ) -> Result<Value, String> {
     let key = stream_key(
         work.payload
@@ -1626,7 +1709,27 @@ pub(super) fn reuse_memory(
             .ok_or("missing repository key")?,
         stream,
     )?;
-    transact(store, operation_key, reuse_command(key, owner, work, batch))
+    transact_checked(
+        store,
+        operation_key,
+        reuse_command(key.clone(), owner, work, batch),
+        |state, command| {
+            let Command::Reuse { work_package, .. } = command else {
+                unreachable!()
+            };
+            let attempt = state
+                .streams
+                .get(&key)
+                .and_then(|stream| stream.attempts.last())
+                .ok_or("state stream has no attempt")?;
+            if selection.context(&work_package.payload, &attempt.binding)?
+                != work_package.payload.knowledge
+            {
+                return Err("applicable knowledge changed; request fresh work".into());
+            }
+            Ok(())
+        },
+    )
 }
 
 fn reuse_command(
@@ -1967,8 +2070,15 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
         let skill = args.optional("--skill-root");
         let provider = args.optional("--provider-contract");
+        let (memory_store, temporary) = memory_options(&mut args)?;
         args.finish()?;
         let (_, binding) = inventory(&inventory_path, &root)?;
+        let reader = KnowledgeReader::lock(
+            &root,
+            &binding.repository,
+            memory_store.as_deref(),
+            temporary,
+        )?;
         let journal_path = store.join("transactions.jsonl");
         if fs::symlink_metadata(&journal_path)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -2009,7 +2119,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         } else {
             stream.available_reviews(attempt, requested.as_deref())?
         };
-        let package = work_package(stream, attempt, selected.as_deref(), resume_only)?;
+        let mut package = work_package(stream, attempt, selected.as_deref(), resume_only)?;
+        bind_knowledge(
+            &mut package,
+            &binding,
+            &reader.load(&root, &inventory_path)?,
+        )?;
         if let Some(runtime) = &package.payload.runtime {
             validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
         }
@@ -2057,6 +2172,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
             let skill = args.optional("--skill-root");
             let provider = args.optional("--provider-contract");
+            let (memory_store, temporary) = memory_options(&mut args)?;
             if let Some(runtime) = &package.payload.runtime {
                 validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
             }
@@ -2065,7 +2181,14 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 &stream,
             )?;
             let assignment = hash("mehscanAssignment/v1", &(&key, generation, &operation_key))?;
-            Command::Allocate {
+            args.finish()?;
+            let reader = KnowledgeReader::lock(
+                &root,
+                &binding.repository,
+                memory_store.as_deref(),
+                temporary,
+            )?;
+            let command = Command::Allocate {
                 key,
                 generation,
                 owner,
@@ -2073,7 +2196,20 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 worker,
                 reserve_calls,
                 work_package: package,
-            }
+            };
+            return super::print_json(&transact_checked(
+                &store,
+                &operation_key,
+                command,
+                |_, command| {
+                    let Command::Allocate { work_package, .. } = command else {
+                        unreachable!()
+                    };
+                    reader
+                        .load(&root, &inventory_path)?
+                        .validate(&work_package.payload, &binding)
+                },
+            )?);
         }
         "release" => Command::Release {
             key: stream_key(&args.required("--repository-key")?, &stream)?,
@@ -2156,6 +2292,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             let work_package = read_work_package(args.optional("--work-package"))?;
             let skill = args.optional("--skill-root");
             let provider = args.optional("--provider-contract");
+            let (memory_store, temporary) = memory_options(&mut args)?;
             args.finish()?;
             let (cache, binding) = inventory(&inventory_path, &root)?;
             let draft = serde_json::from_slice::<mehscan_core::ReviewCompletionDraft>(
@@ -2171,7 +2308,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             super::engine(mehscan_engine::investigation::validate_review_inventory(
                 &root, &cache,
             ))?;
-            Command::Plan {
+            let command = Command::Plan {
                 key: stream_key(
                     binding.repository.repository_key.as_deref().unwrap(),
                     &stream,
@@ -2181,7 +2318,36 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 expected_plan_id,
                 plan,
                 work_package,
+            };
+            let Command::Plan { work_package, .. } = &command else {
+                unreachable!()
+            };
+            if work_package.is_some() {
+                let reader = KnowledgeReader::lock(
+                    &root,
+                    &binding.repository,
+                    memory_store.as_deref(),
+                    temporary,
+                )?;
+                return super::print_json(&transact_checked(
+                    &store,
+                    &operation_key,
+                    command,
+                    |_, command| {
+                        let Command::Plan {
+                            work_package: Some(package),
+                            ..
+                        } = command
+                        else {
+                            unreachable!()
+                        };
+                        reader
+                            .load(&root, &inventory_path)?
+                            .validate(&package.payload, &binding)
+                    },
+                )?);
             }
+            command
         }
         "claim" => {
             let inventory_path = PathBuf::from(args.required("--inventory")?);
@@ -2238,6 +2404,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
             let reviewer = args.optional("--reviewer");
             let execution = args.optional("--review-execution");
+            let (memory_store, temporary) = memory_options(&mut args)?;
             if let Some(label_value) = &reviewer {
                 label(label_value)?;
             }
@@ -2311,7 +2478,13 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     "execution receipt requires a tiered runtime-bound work package".into(),
                 );
             }
-            Command::Record {
+            let reader = KnowledgeReader::lock(
+                &root,
+                &binding.repository,
+                memory_store.as_deref(),
+                temporary,
+            )?;
+            let command = Command::Record {
                 key,
                 generation,
                 owner,
@@ -2320,7 +2493,30 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 provenance,
                 work_package,
                 assignment,
-            }
+            };
+            let receipt = transact_checked(&store, &operation_key, command, |_, command| {
+                let Command::Record {
+                    work_package,
+                    records,
+                    ..
+                } = command
+                else {
+                    unreachable!()
+                };
+                let selection = reader.load(&root, &inventory_path)?;
+                if let Some(package) = work_package {
+                    selection.validate(&package.payload, &binding)?;
+                } else if records
+                    .iter()
+                    .any(|record| !selection.revisions_for(&record.identity).is_empty())
+                {
+                    return Err(
+                        "review with applicable knowledge requires its exact work package".into(),
+                    );
+                }
+                Ok(())
+            })?;
+            return super::print_json(&receipt);
         }
         "end" => {
             let repository_key = args.optional("--repository-key");
@@ -2363,16 +2559,76 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 _ => return Err("memory retention requires --source-root and --inventory".into()),
             };
             args.finish()?;
-            let mut receipt = transact(
+            let key = stream_key(&repository_key, &stream)?;
+            let reader = memory
+                .as_ref()
+                .filter(|_| status == ReviewAttemptStatus::Finished)
+                .map(|memory| {
+                    let (cache, _) = load_inventory(&memory.inventory)?;
+                    let repository = &cache
+                        .identity_catalog
+                        .as_ref()
+                        .ok_or("missing inventory identity")?
+                        .repository;
+                    KnowledgeReader::lock(
+                        &memory.source_root,
+                        repository,
+                        memory.store.as_deref(),
+                        false,
+                    )
+                })
+                .transpose();
+            let mut receipt = transact_checked(
                 &store,
                 &operation_key,
                 Command::End {
-                    key: stream_key(&repository_key, &stream)?,
+                    key: key.clone(),
                     generation,
                     owner,
                     status,
                 },
+                |state, _| {
+                    if status != ReviewAttemptStatus::Finished {
+                        return Ok(());
+                    }
+                    let stream = state.streams.get(&key).ok_or("unknown state stream")?;
+                    let attempt = stream
+                        .attempts
+                        .last()
+                        .ok_or("state stream has no attempt")?;
+                    if attempt.generation != generation {
+                        return Err("review completion belongs to a different generation".into());
+                    }
+                    let has_bindings = attempt
+                        .admissions
+                        .iter()
+                        .any(|id| !stream.knowledge_revisions(generation, id).is_empty());
+                    let selection = match (&reader, &memory) {
+                        (Ok(Some(reader)), Some(memory)) => reader.load(&memory.source_root, &memory.inventory),
+                        (Err(reason), _) => Err(reason.clone()),
+                        _ => Err("finishing a knowledge-bound review requires its memory store and inventory".into()),
+                    };
+                    let selection = match selection {
+                        Ok(selection) => selection,
+                        Err(reason) if has_bindings => return Err(reason),
+                        Err(_) => return Ok(()),
+                    };
+                    for id in &attempt.admissions {
+                        let record = &stream.decisions[id];
+                        if stream
+                            .heads
+                            .get(&subject_key(record)?)
+                            .is_some_and(|heads| heads.contains(id))
+                            && selection.revisions_for(&record.identity)
+                                != stream.knowledge_revisions(generation, id)
+                        {
+                            return Err("applicable knowledge changed after admission; refresh affected work before finishing".into());
+                        }
+                    }
+                    Ok(())
+                },
             )?;
+            drop(reader);
             if temporary {
                 receipt["memory"] = json!({"status":"skipped","reason":"temporary_mode"});
             } else if let Some(memory) = memory {

@@ -350,6 +350,61 @@ class LookupFailures(unittest.TestCase):
 
 
 class Worker(unittest.TestCase):
+    def test_source_first_review_uses_default_local_knowledge(self):
+        draft = self.base / "source-knowledge.json"
+        draft.write_text(json.dumps({
+            "key": "route-file", "author": "maintainer", "origin": "source_observation",
+            "statement": "Start tracing the operation from its entry point in this file.",
+            "scope": {"path": "app.js"}, "source_paths": ["app.js"],
+        }))
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(self.base / "memory-home")}):
+            saved = self.native("memory", "knowledge-put", "--source-root", str(self.root),
+                "--inventory", str(self.inventory), "--input", str(draft))
+            revision = saved["revision"]["revision_id"]
+            self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+            self.reviewer.write_text(self.reviewer.read_text().replace(
+                'if task["kind"]=="source_review":\n    packet=json.loads(Path(task["evidence_packet"]).read_text())\n',
+                'if task["kind"]=="source_review":\n    packet=json.loads(Path(task["evidence_packet"]).read_text())\n'
+                '    assert [item["revision_id"] for item in packet["work"]["knowledge"]]==' + repr([revision]) + '\n'))
+            result = self.invoke()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(list((self.base / "worker/source-review/jobs").glob("*/context.json")))
+
+    def test_local_knowledge_reaches_reviewer_and_retains_source_links(self):
+        db = self.base / "review-memory.turso"
+        draft = self.base / "knowledge.json"
+        draft.write_text(json.dumps({
+            "key": "route-context", "author": "developer", "origin": "assertion",
+            "statement": "Check the route registration before generalizing this behavior.",
+            "scope": {"path": "app.js"},
+        }))
+        memory = ["--source-root", str(self.root), "--inventory", str(self.inventory), "--store", str(db)]
+        saved = self.native("memory", "knowledge-put", *memory, "--input", str(draft))
+        revision = saved["revision"]["revision_id"]
+        work = self.native("state", "work", *self.common, "--memory-store", str(db))
+        self.package.write_text(json.dumps(work))
+        self.reviewer.write_text(self.reviewer.read_text().replace(
+            'task=json.load(sys.stdin)\n',
+            'task=json.load(sys.stdin)\n'
+            'packet=json.loads(Path(task["evidence_packet"]).read_text())\n'
+            'assert [item["revision_id"] for item in packet["work"]["knowledge"]]==' + repr([revision]) + '\n'))
+        run = self.invoke(extra=["--phase", "native", "--memory-store", str(db)])
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        history = self.native("state", "history", "--store", str(self.store), "--stream", "local-review",
+                              "--repository-key", "evaluation:worker")
+        self.assertTrue(history["admission_provenance"]["1"])
+        recorded = history["admission_provenance"]["1"][-1]["knowledge_revisions"]
+        self.assertEqual(recorded, {rid: [revision] for rid in self.ids})
+        end = ["state", "end", *self.common, "--memory-store", str(db),
+               "--status", "incomplete", "--operation-key", "close-with-knowledge"]
+        retained = self.native(*end)
+        self.assertGreater(retained["memory"]["new_knowledge_revisions"], 0)
+        self.assertEqual(self.native(*end)["memory"]["new_knowledge_revisions"], 0)
+        knowledge = self.native("memory", "knowledge-list", *memory)
+        observations = [row["revision"] for row in knowledge["items"]
+                        if row["revision"]["origin"] == "source_observation"]
+        self.assertTrue(all(row["evidence"] and row["source_sha256"] for row in observations))
+
     def test_native_worker_records_its_local_assignment(self):
         allocation = self.native("state", "allocate", *self.common, "--worker", "local-worker",
             "--work-package", str(self.package), "--skill-root", str(ROOT / "skills/mehscan-security"),

@@ -379,6 +379,8 @@ def run(args, legacy, worker):
     def native(arguments, timeout=900):
         if worker.digest_file(scanner) != scanner_sha:
             raise ValueError("trusted scanner changed during source review")
+        if arguments[:2] == ["state", "work"]:
+            arguments = [*arguments, *worker.memory_arguments(args, root)]
         try:
             return worker.execute(
                 [str(scanner), *map(str, arguments)], stage, env, timeout,
@@ -656,6 +658,7 @@ def run(args, legacy, worker):
     source_metrics = source_recovery.receipts(stage, worker) if source_resume else []
     inherited_source_calls = len(source_metrics)
     reuse_jobs = {}
+    stale_reuse_jobs = set()
     partial_windows = []
     reuse_paths = getattr(args, "reuse_source_results", None) or []
     if isinstance(reuse_paths, str):
@@ -682,6 +685,8 @@ def run(args, legacy, worker):
                 partial_windows.extend(old["windows"])
                 continue
             if previous.get("reuse"):
+                if directory.name in stale_reuse_jobs:
+                    continue
                 original = reuse_jobs.get(directory.name)
                 validate_reuse_alias(previous, old, original)
                 continue
@@ -697,6 +702,16 @@ def run(args, legacy, worker):
                 prior_context["work"]["runtime"] != prior_runtime or prior_context["work"]["review_ids"] != old["review_ids"] or
                 prior_context.get("source_assignment_id") != old["id"] or prior_windows != old["windows"]):
                 raise ValueError("prior source reviewer policy, provider or membership differs")
+            assignment_paths = [window["path"] for window in old["windows"]]
+            previous_knowledge = context.compact_work(prior_work, old["review_ids"],
+                source_paths=assignment_paths).get("knowledge", [])
+            current_knowledge = context.compact_work(payload, old["review_ids"],
+                source_paths=assignment_paths).get("knowledge", [])
+            if prior_context["work"].get("knowledge", []) != previous_knowledge:
+                raise ValueError("prior source reviewer knowledge differs from its work package")
+            if previous_knowledge != current_knowledge:
+                stale_reuse_jobs.add(directory.name)
+                continue
             if directory.name in reuse_jobs:
                 raise ValueError("duplicate independent completed source assignment")
             reuse_jobs[directory.name] = (old, previous, result_path, prior_plan["plan_id"])
@@ -883,7 +898,8 @@ def run(args, legacy, worker):
                     skill, [w["path"] for w in assignment["windows"]]
                 )
             ),
-            "work": context.compact_work(payload, assignment["review_ids"], include_active_gaps=question is None),
+            "work": context.compact_work(payload, assignment["review_ids"], include_active_gaps=question is None,
+                                         source_paths=[window["path"] for window in windows]),
             "native_questions": known,
             "primary": {"windows": windows, "limits": plan["limitations"]},
             "source_assignment_id": assignment["id"],

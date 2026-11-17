@@ -553,6 +553,15 @@ def outside(path, root, existing=True):
     return path
 
 
+def memory_arguments(args, root):
+    store, mode = getattr(args, "memory_store", None), getattr(args, "memory_mode", None)
+    if store and mode == "temporary":
+        raise ValueError("temporary memory mode does not accept a memory store")
+    if store:
+        return ["--memory-store", str(outside(store, root, False))]
+    return ["--memory-mode", "temporary"] if mode == "temporary" else []
+
+
 class NativeWrites:
     """Replay exact, typed native transactions; the native journal owns results.
 
@@ -1107,9 +1116,12 @@ def run_locked(args):
             raise ValueError("review provider changed; prepare a new native contract and plan")
     common = ["--store", str(store), "--stream", args.stream, "--inventory", str(inventory),
               "--source-root", str(root), "--generation", str(generation), "--owner", owner]
+    memory_options = memory_arguments(args, root)
     execution_trace = ReviewTrace(output / "review-trace.jsonl")
 
     def native(arguments, timeout=None):
+        if arguments[:2] in (["state", "work"], ["state", "plan"], ["state", "record"]):
+            arguments = [*arguments, *memory_options]
         if arguments[:2] in (["state", "work"], ["state", "plan"], ["state", "record"]):
             arguments = [*arguments, "--skill-root", str(skill_root)]
             if provider_path:
@@ -1335,7 +1347,9 @@ def run_locked(args):
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
                   "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role, tiered=bool(tiered_policy)),
                   "work": context.compact_work(payload, ids or requested,
-                      include_active_gaps=role == "investigator" and task["kind"] == "native_bundle"),
+                      include_active_gaps=role == "investigator" and task["kind"] == "native_bundle",
+                      source_paths=[window["path"] for window in prepared_changes["windows"]]
+                          if task["kind"] == "change_pass" else ()),
                   "native_questions": entries,
                   "primary": prepared_changes}
         if tiered_policy:
@@ -2820,6 +2834,8 @@ def main():
     parser.add_argument("--run")
     parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")
+    parser.add_argument("--memory-store", help="use the same local memory database as state work")
+    parser.add_argument("--memory-mode", choices=("temporary",), help="match temporary state work")
     parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--source-selection", help="source-bound coverage plan and zero to six additional AI operations; preserves the native Value queue")
     parser.add_argument("--domain-plan", help="opt-in source-bound domain cases with verify/cover/context evidence roles")
