@@ -618,6 +618,9 @@ mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream
 
 ### Carry evidence into future reviews
 
+See [Enrolled review sharing](review-sharing.md) for publishing retained
+reviews and reading shared history from another checkout.
+
 People and agents can add a fact to the local application knowledge store. Put
 the input file outside the checkout and use one key per claim and author.
 Repository-wide facts omit `scope`. Use a scan-root-relative path or the

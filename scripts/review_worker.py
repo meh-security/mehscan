@@ -562,6 +562,11 @@ def memory_arguments(args, root):
     return ["--memory-mode", "temporary"] if mode == "temporary" else []
 
 
+def review_child_environment():
+    return {key: value for key, value in os.environ.items()
+            if not key.upper().startswith(("ACTIONS_ID_TOKEN_", "MEHSCAN_SHARE_", "MEHSCAN_TURSO_"))}
+
+
 class NativeWrites:
     """Replay exact, typed native transactions; the native journal owns results.
 
@@ -1086,7 +1091,7 @@ def run_locked(args):
     scanner_hash = digest_file(scanner)
     source_profile_implementation = digest_file(source_profiles.__file__)
     attempt_key = hashlib.sha256(str(output).encode()).hexdigest()
-    native_env = {key: value for key, value in os.environ.items() if key not in ("GH_TOKEN", "GITHUB_TOKEN")
+    native_env = {key: value for key, value in review_child_environment().items() if key not in ("GH_TOKEN", "GITHUB_TOKEN")
                   and not key.startswith("GIT_CONFIG_") and not key.endswith("_API_KEY")}
     native_env.update(GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0")
     timings = []
@@ -1577,7 +1582,7 @@ def run_locked(args):
                      active_turn={"conversation_id":conversation_id,"round":round_index})
             succeeded = False
             try:
-                value = execute_provider(worker_command, output, dict(os.environ), remaining(), frame,
+                value = execute_provider(worker_command, output, review_child_environment(), remaining(), frame,
                     tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"), budget_path, lease=lease)
                 succeeded = True
             except CommandFailure as error:

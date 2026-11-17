@@ -311,6 +311,36 @@ fn load_local(store: &Path, selection: &Selection, batch: &str) -> Result<Public
     })
 }
 
+pub(super) fn export(
+    store: &Path,
+    snapshot: Snapshot,
+    stream: String,
+    batch: &str,
+) -> Result<Value, String> {
+    let repository = fingerprint(&snapshot.repository)?;
+    let source_snapshot = snapshot.id(&repository)?;
+    let selection = Selection {
+        snapshot,
+        repository,
+        source_snapshot,
+        stream,
+    };
+    let content = load_local(store, &selection, batch)?;
+    Ok(json!({
+        "schema_version": 1,
+        "batch": batch,
+        "repository": selection.snapshot.repository,
+        "repository_id": selection.repository,
+        "snapshot_id": selection.source_snapshot,
+        "source_fingerprint": selection.snapshot.source,
+        "inventory_fingerprint": selection.snapshot.inventory,
+        "stream": selection.stream,
+        "attempt_status": content.attempt_status,
+        "assessments": content.assessments,
+        "file_dependencies": content.dependencies,
+    }))
+}
+
 async fn open_replica(
     replica: &Path,
     remote: &str,

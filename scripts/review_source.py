@@ -337,7 +337,7 @@ def run(args, legacy, worker):
     args._source_attempt_created = True
     env = {
         k: v
-        for k, v in worker.os.environ.items()
+        for k, v in worker.review_child_environment().items()
         if k not in ("GH_TOKEN", "GITHUB_TOKEN")
         and not k.endswith("_API_KEY")
         and not k.startswith("GIT_CONFIG_")

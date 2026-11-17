@@ -185,7 +185,8 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             return Ok(());
         }
         Some(
-            "location" | "snapshot" | "retain" | "assessments" | "reuse" | "prepare" | "compare",
+            "location" | "snapshot" | "retain" | "assessments" | "reuse" | "prepare" | "compare"
+            | "export",
         ) => {}
         Some("import-legacy" | "legacy-history") => {
             return legacy::run(command.as_deref().unwrap(), arguments);
@@ -231,6 +232,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
     }
     let store = resolve_store(store.as_deref(), &root, &snapshot.repository)?;
+    if command.as_deref() == Some("export") {
+        let stream = args.required("--stream")?;
+        let batch = args.required("--batch")?;
+        args.finish()?;
+        return super::print_json(&upstream::export(&store, snapshot, stream, &batch)?);
+    }
     let operation = match command.as_deref() {
         Some("snapshot") => Operation::Snapshot {
             base: args.optional("--base"),
@@ -588,6 +595,9 @@ fn help() {
     );
     legacy::help();
     upstream::help();
+    println!(
+        "  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
+    );
     println!(
         "  mehscan memory knowledge-put --source-root ROOT --inventory DIR --input FILE [--store FILE]\n  mehscan memory knowledge-list --source-root ROOT --inventory DIR [--item ID] [--history true] [--store FILE]\n  mehscan memory knowledge-withdraw --source-root ROOT --inventory DIR --item ID --author NAME --expected-revision ID [--store FILE]"
     );
