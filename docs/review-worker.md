@@ -699,6 +699,14 @@ Each installation uses a separate replica file outside the checkout. Supply
 `MEHSCAN_TURSO_AUTH_TOKEN` through the environment for authenticated HTTPS or
 Turso endpoints. The official local sync server also supports HTTP on localhost.
 
+Have one maintainer initialize a new upstream database before writers stage
+publications. Run init with a writer token and the intended repository key.
+Repeat the same command to verify an existing initialization.
+
+```text
+mehscan memory sync init --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+```
+
 ```text
 mehscan memory sync pull --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
 mehscan memory sync stage --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH --publisher-label LABEL
@@ -706,11 +714,18 @@ mehscan memory sync push --replica REPLICA --remote URL --repository-key KEY --s
 mehscan memory sync context --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
 
-Stage an explicitly selected local batch after the first pull. Staging commits
-its assessments, questions, cited evidence metadata and file dependencies to
-the replica. Review
-summaries and questions travel with the publication. Push sends the staged
-records upstream. Retry the same stage and label to keep the publication ID.
+Each writer pulls the initialized schema before staging a local batch. Staging
+commits its assessments, questions, cited evidence metadata and file dependencies
+to the replica. Review summaries and questions travel with the publication.
+Push sends the staged records upstream. Retry the same stage and label to keep
+the publication ID.
+
+If the SDK reports a push error, Mehscan checks the publication IDs and their
+contents on a fresh replica. A confirmed push reports `reconciled: true`.
+If the SDK still reports pending changes, repeat push on the same replica to
+acknowledge them. If confirmation fails, the staged records remain available
+for retry.
+
 Use `status` and `checkpoint` with the same replica, endpoint and repository
 arguments to inspect sync counters and checkpoint the replica.
 

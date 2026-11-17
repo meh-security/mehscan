@@ -715,8 +715,10 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         let args = sync_args(operation, replica, extra);
         ok(&args.iter().map(String::as_str).collect::<Vec<_>>())
     };
-    sync("pull", &replicas[0], &[]);
-    sync("pull", &replicas[1], &[]);
+    for replica in &replicas[..2] {
+        assert_eq!(sync("pull", replica, &[])["initialized"], false);
+    }
+    let initializer = fixture.base.join("initializer.turso");
     let mut batches = Vec::new();
     for (index, verdict) in ["not_issue", "needs_review"].into_iter().enumerate() {
         let writer = Fixture {
@@ -746,6 +748,18 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
             "--store",
             db.to_str().unwrap(),
         ];
+        if index == 0 {
+            let before_init = sync_args("stage", &replicas[index], &args);
+            reject(
+                &before_init.iter().map(String::as_str).collect::<Vec<_>>(),
+                "upstream publication schema is uninitialized",
+            );
+            assert_eq!(sync("init", &initializer, &[])["created"], true);
+            assert_eq!(sync("init", &initializer, &[])["created"], false);
+            for replica in &replicas[..2] {
+                assert_eq!(sync("pull", replica, &[])["initialized"], true);
+            }
+        }
         let staged = sync("stage", &replicas[index], &args);
         assert_eq!(staged["assessments"], 1);
         let duplicate = sync("stage", &replicas[index], &args);
@@ -753,6 +767,20 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         assert_eq!(duplicate["publication"], staged["publication"]);
         batches.push((db, batch.to_owned()));
     }
+    assert_eq!(sync("init", &replicas[0], &[])["created"], false);
+    assert_eq!(
+        sync(
+            "context",
+            &initializer,
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:24"
+            ]
+        )["publications"],
+        json!([])
+    );
     sync("push", &replicas[1], &[]);
     sync("pull", &replicas[0], &[]);
     sync("push", &replicas[0], &[]);

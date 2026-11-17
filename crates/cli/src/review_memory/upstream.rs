@@ -7,7 +7,11 @@ use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use turso::{Connection, sync::Builder, transaction::TransactionBehavior};
+use turso::{
+    Connection,
+    sync::{Builder, Database},
+    transaction::TransactionBehavior,
+};
 
 use super::{
     Snapshot, assessments, check_store_file, db_error, fingerprint, load_snapshot, lock_store,
@@ -16,8 +20,8 @@ use super::{
 
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS upstream_repository (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        repository_key TEXT NOT NULL UNIQUE,
+        singleton INTEGER NOT NULL UNIQUE CHECK (singleton = 1),
+        repository_key TEXT PRIMARY KEY NOT NULL,
         version INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS assessment_batches (
@@ -52,6 +56,17 @@ const DEPENDENCY_SCHEMA: &str = "
     );
 ";
 
+const REQUIRED_TABLES: &[&str] = &[
+    "assessment_batches",
+    "assessment_evidence",
+    "assessment_questions",
+    "assessments",
+    "batch_assessments",
+    "published_file_dependencies",
+    "published_inputs",
+    "upstream_repository",
+];
+
 struct Selection {
     snapshot: Snapshot,
     repository: String,
@@ -76,6 +91,7 @@ struct Publication {
 }
 
 enum Operation {
+    Init,
     Pull,
     Push,
     Status,
@@ -91,7 +107,7 @@ enum Operation {
 
 pub(super) fn help() {
     println!(
-        "\n  mehscan memory sync pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
+        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream. Writers pull the initialized schema before staging.\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
     );
 }
 
@@ -145,9 +161,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 Operation::Context(selection)
             }
         }
-        Some("pull" | "push" | "status" | "checkpoint") => {
+        Some("init" | "pull" | "push" | "status" | "checkpoint") => {
             args.finish()?;
             match operation.as_deref() {
+                Some("init") => Operation::Init,
                 Some("pull") => Operation::Pull,
                 Some("push") => Operation::Push,
                 Some("status") => Operation::Status,
@@ -158,7 +175,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     };
     check_store_file(&replica)?;
     let _lock = lock_store(&replica)?;
-    let bootstrap = matches!(operation, Operation::Pull);
+    let bootstrap = matches!(operation, Operation::Init | Operation::Pull);
     bind_replica(&replica, &remote, &repository_key, bootstrap)?;
     let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -217,7 +234,7 @@ fn bind_replica(
         }
     } else {
         if !bootstrap || replica.exists() {
-            return Err("use memory sync pull with a new dedicated replica file".into());
+            return Err("use memory sync init or pull with a new dedicated replica file".into());
         }
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -289,6 +306,106 @@ fn load_local(store: &Path, selection: &Selection, batch: &str) -> Result<Public
     })
 }
 
+async fn open_replica(
+    replica: &Path,
+    remote: &str,
+    local_endpoint: bool,
+    bootstrap: bool,
+) -> Result<(Database, Connection), String> {
+    let path = replica.to_str().ok_or("replica path must be UTF-8")?;
+    let mut builder = Builder::new_remote(path)
+        .with_remote_url(remote)
+        .with_client_name("mehscan")
+        .bootstrap_if_empty(bootstrap);
+    if !local_endpoint && let Ok(token) = std::env::var("MEHSCAN_TURSO_AUTH_TOKEN") {
+        builder = builder.with_auth_token(token);
+    }
+    let db = builder.build().await.map_err(db_error)?;
+    let conn = db.connect().await.map_err(db_error)?;
+    conn.execute("PRAGMA foreign_keys = ON", ())
+        .await
+        .map_err(db_error)?;
+    Ok((db, conn))
+}
+
+fn upstream_scratch(replica: &Path) -> Result<tempfile::TempDir, String> {
+    let parent = replica
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    tempfile::Builder::new()
+        .prefix("mehscan-sync-")
+        .tempdir_in(parent)
+        .map_err(|error| error.to_string())
+}
+
+async fn initialize_upstream(
+    replica: &Path,
+    remote: &str,
+    repository_key: &str,
+    local_endpoint: bool,
+) -> Result<bool, String> {
+    // Provision on a separate replica so init never publishes queued assessments.
+    let scratch = upstream_scratch(replica)?;
+    let (db, mut conn) = open_replica(
+        &scratch.path().join("init.turso"),
+        remote,
+        local_endpoint,
+        true,
+    )
+    .await?;
+    db.pull().await.map_err(db_error)?;
+    if check_repository(&conn, repository_key).await? {
+        return Ok(false);
+    }
+    seed_schema(&mut conn, repository_key).await?;
+    let push = db.push().await.map_err(db_error);
+    let check = async {
+        let (verifier, upstream) = open_replica(
+            &scratch.path().join("verify.turso"),
+            remote,
+            local_endpoint,
+            true,
+        )
+        .await?;
+        verifier.pull().await.map_err(db_error)?;
+        check_repository(&upstream, repository_key).await
+    }
+    .await;
+    match (push, check) {
+        (_, Ok(true)) => Ok(true),
+        (Ok(()), Ok(false)) => Err("upstream did not confirm the publication schema".into()),
+        (Ok(()), Err(error)) => Err(format!("could not verify upstream initialization: {error}")),
+        (Err(error), Ok(false)) => Err(error),
+        (Err(push), Err(check)) => Err(format!(
+            "{push}; upstream initialization check failed: {check}"
+        )),
+    }
+}
+
+async fn seed_schema(conn: &mut Connection, repository_key: &str) -> Result<(), String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .map_err(db_error)?;
+    // Sync replays inserts as upserts on the primary key. A different
+    // repository key must collide with the singleton constraint instead.
+    tx.execute_batch(SCHEMA).await.map_err(db_error)?;
+    tx.execute_batch(assessments::CONTENT_SCHEMA)
+        .await
+        .map_err(db_error)?;
+    tx.execute_batch(DEPENDENCY_SCHEMA)
+        .await
+        .map_err(db_error)?;
+    tx.execute(
+        "INSERT INTO upstream_repository VALUES (1,?1,1)",
+        (repository_key,),
+    )
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)
+}
+
 async fn operate(
     replica: &Path,
     remote: &str,
@@ -297,21 +414,19 @@ async fn operate(
     operation: Operation,
 ) -> Result<Value, String> {
     let started = Instant::now();
-    let path = replica.to_str().ok_or("replica path must be UTF-8")?;
-    let mut builder = Builder::new_remote(path)
-        .with_remote_url(remote)
-        .with_client_name("mehscan")
-        .bootstrap_if_empty(matches!(operation, Operation::Pull));
-    if !local_endpoint && let Ok(token) = std::env::var("MEHSCAN_TURSO_AUTH_TOKEN") {
-        builder = builder.with_auth_token(token);
-    }
-    let db = builder.build().await.map_err(db_error)?;
-    let mut conn = db.connect().await.map_err(db_error)?;
-    conn.execute("PRAGMA foreign_keys = ON", ())
-        .await
-        .map_err(db_error)?;
+    let bootstrap = matches!(operation, Operation::Init | Operation::Pull);
+    let (db, mut conn) = open_replica(replica, remote, local_endpoint, bootstrap).await?;
     let initialized = check_repository(&conn, repository_key).await?;
     match operation {
+        Operation::Init => {
+            let created =
+                initialize_upstream(replica, remote, repository_key, local_endpoint).await?;
+            db.pull().await.map_err(db_error)?;
+            if !check_repository(&conn, repository_key).await? {
+                return Err("replica did not receive the upstream publication schema".into());
+            }
+            Ok(json!({"status":"initialized","initialized":true,"created":created}))
+        }
         Operation::Pull => {
             let changed = db.pull().await.map_err(db_error)?;
             let initialized = check_repository(&conn, repository_key).await?;
@@ -324,9 +439,24 @@ async fn operate(
             if !initialized {
                 return Err("replica contains no Mehscan publications to push".into());
             }
-            db.push().await.map_err(db_error)?;
+            let reconciled = match db.push().await {
+                Ok(()) => None,
+                Err(error) => {
+                    let original = db_error(error);
+                    let count =
+                        reconcile_push(&conn, replica, remote, repository_key, local_endpoint)
+                            .await
+                            .map_err(|check| {
+                                format!(
+                                    "{original}; could not confirm publications upstream: {check}"
+                                )
+                            })?;
+                    Some(count)
+                }
+            };
             let stats = db.stats().await.map_err(db_error)?;
-            Ok(json!({"status":"pushed","elapsed_ms":started.elapsed().as_millis(),"sync":stats}))
+            Ok(json!({"status":"pushed","reconciled":reconciled.is_some(),
+                "confirmed_publications":reconciled,"elapsed_ms":started.elapsed().as_millis(),"sync":stats}))
         }
         Operation::Checkpoint => {
             db.checkpoint().await.map_err(db_error)?;
@@ -343,22 +473,15 @@ async fn operate(
             label,
             content,
         } => {
+            if !initialized {
+                return Err("upstream publication schema is uninitialized; run memory sync init and pull before staging".into());
+            }
             let publication =
                 fingerprint(&("mehscan-publication/v1", repository_key, &batch, &label))?;
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
                 .map_err(db_error)?;
-            if !initialized {
-                tx.execute_batch(SCHEMA).await.map_err(db_error)?;
-                tx.execute_batch(assessments::CONTENT_SCHEMA)
-                    .await
-                    .map_err(db_error)?;
-                tx.execute_batch(DEPENDENCY_SCHEMA)
-                    .await
-                    .map_err(db_error)?;
-                tx.execute("INSERT INTO upstream_repository VALUES (1,?1,1) ON CONFLICT(singleton) DO NOTHING", (repository_key,)).await.map_err(db_error)?;
-            }
             let added = tx.execute(
                 "INSERT INTO assessment_batches VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",
                 (publication.as_str(), repository_key, selection.repository.as_str(), selection.source_snapshot.as_str(),
@@ -401,17 +524,15 @@ async fn check_repository(conn: &Connection, repository: &str) -> Result<bool, S
         )
         .await
         .map_err(db_error)?;
-    let mut empty = true;
-    let mut has_repository = false;
+    let mut names = BTreeSet::new();
     while let Some(row) = tables.next().await.map_err(db_error)? {
-        empty = false;
-        has_repository |= row.get::<String>(0).map_err(db_error)? == "upstream_repository";
+        names.insert(row.get::<String>(0).map_err(db_error)?);
     }
     drop(tables);
-    if empty {
+    if names.is_empty() {
         return Ok(false);
     }
-    if !has_repository {
+    if !names.contains("upstream_repository") {
         return Err("upstream is not a dedicated Mehscan publication database".into());
     }
     let mut rows = conn
@@ -431,7 +552,92 @@ async fn check_repository(conn: &Connection, repository: &str) -> Result<bool, S
     {
         return Err("upstream belongs to another repository or uses an unsupported schema".into());
     }
+    if REQUIRED_TABLES.iter().any(|table| !names.contains(*table)) {
+        return Err("upstream publication schema is incomplete".into());
+    }
     Ok(true)
+}
+
+async fn reconcile_push(
+    local: &Connection,
+    replica: &Path,
+    remote: &str,
+    repository_key: &str,
+    local_endpoint: bool,
+) -> Result<usize, String> {
+    // A pull on the writer can replay pending local changes over remote data.
+    // Check from a clean replica so only upstream content can confirm delivery.
+    let scratch = upstream_scratch(replica)?;
+    let (db, upstream) = open_replica(
+        &scratch.path().join("verify.turso"),
+        remote,
+        local_endpoint,
+        true,
+    )
+    .await?;
+    db.pull().await.map_err(db_error)?;
+    if !check_repository(&upstream, repository_key).await? {
+        return Err("upstream publication schema is uninitialized".into());
+    }
+    confirm_publications(local, &upstream).await
+}
+
+async fn confirm_publications(local: &Connection, upstream: &Connection) -> Result<usize, String> {
+    let mut ids = local
+        .query("SELECT id FROM assessment_batches ORDER BY id", ())
+        .await
+        .map_err(db_error)?;
+    let mut confirmed = 0;
+    while let Some(row) = ids.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        let expected = publication_fingerprint(local, &id).await?;
+        match publication_fingerprint(upstream, &id).await? {
+            None => return Err(format!("publication {id} is missing")),
+            Some(actual) if Some(actual.as_str()) != expected.as_deref() => {
+                return Err(format!("publication {id} content differs"));
+            }
+            Some(_) => confirmed += 1,
+        }
+    }
+    if confirmed == 0 {
+        return Err("replica contains no publications to confirm".into());
+    }
+    Ok(confirmed)
+}
+
+async fn publication_fingerprint(conn: &Connection, id: &str) -> Result<Option<String>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT repository_key, repository_id, snapshot_id, inventory_fingerprint, stream,
+                    publisher_label, attempt_status FROM assessment_batches WHERE id = ?1",
+            (id,),
+        )
+        .await
+        .map_err(db_error)?;
+    let Some(row) = rows.next().await.map_err(db_error)? else {
+        return Ok(None);
+    };
+    let metadata = (0..7)
+        .map(|column| row.get::<String>(column).map_err(db_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(rows);
+    let (assessments, dependencies) = published_contents(conn, id).await?;
+    fingerprint(&(metadata, assessments, dependencies)).map(Some)
+}
+
+async fn published_contents(
+    conn: &Connection,
+    id: &str,
+) -> Result<(Vec<assessments::Assessment>, Vec<FileDependency>), String> {
+    let assessments = assessments::read_assessments(conn, id).await?;
+    let dependencies = read_dependencies(conn, id,
+        "SELECT a.id, a.decision_id, d.role, d.path, f.sha256
+         FROM batch_assessments b JOIN assessments a ON a.id = b.assessment_id
+         JOIN published_file_dependencies d ON d.publication_id = b.batch_id AND d.assessment_id = a.id
+         JOIN published_inputs f ON f.snapshot_id = d.snapshot_id AND f.path = d.path
+         WHERE b.batch_id = ?1 ORDER BY a.id, d.role, d.path",
+    ).await?;
+    Ok((assessments, dependencies))
 }
 
 async fn context(
@@ -465,14 +671,7 @@ async fn context(
             .map_err(db_error)?;
         while let Some(row) = rows.next().await.map_err(db_error)? {
             let id: String = row.get(0).map_err(db_error)?;
-            let assessments = assessments::read_assessments(conn, &id).await?;
-            let dependencies = read_dependencies(conn, &id,
-                "SELECT a.id, a.decision_id, d.role, d.path, f.sha256
-                 FROM batch_assessments b JOIN assessments a ON a.id = b.assessment_id
-                 JOIN published_file_dependencies d ON d.publication_id = b.batch_id AND d.assessment_id = a.id
-                 JOIN published_inputs f ON f.snapshot_id = d.snapshot_id AND f.path = d.path
-                 WHERE b.batch_id = ?1 ORDER BY a.id, d.role, d.path",
-            ).await?;
+            let (assessments, dependencies) = published_contents(conn, &id).await?;
             for assessment in &assessments {
                 verdicts
                     .entry(assessment.subject_key.clone())
@@ -509,4 +708,56 @@ async fn read_dependencies(
         });
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replayed_initializer_cannot_replace_a_different_repository() {
+        super::super::local_runtime().unwrap().block_on(async {
+            let temp = tempfile::tempdir().unwrap();
+            let (_database, mut conn) = open_local(&temp.path().join("seed.db"), false)
+                .await
+                .unwrap();
+            seed_schema(&mut conn, "repo:1").await.unwrap();
+            let replay = "INSERT INTO upstream_repository VALUES (1, ?1, 1)
+                         ON CONFLICT(repository_key) DO UPDATE
+                         SET singleton = excluded.singleton, version = excluded.version";
+            conn.execute(replay, ("repo:1",)).await.unwrap();
+            assert!(conn.execute(replay, ("repo:2",)).await.is_err());
+            assert!(check_repository(&conn, "repo:1").await.unwrap());
+        });
+    }
+
+    #[test]
+    fn reconciliation_requires_the_full_publication_on_the_upstream() {
+        super::super::local_runtime().unwrap().block_on(async {
+            let temp = tempfile::tempdir().unwrap();
+            let (_local, mut writer) = open_local(&temp.path().join("writer.db"), false).await.unwrap();
+            let (_upstream, mut reader) = open_local(&temp.path().join("reader.db"), false).await.unwrap();
+            for conn in [&mut writer, &mut reader] {
+                seed_schema(conn, "repo:1").await.unwrap();
+            }
+            let publication = "
+                INSERT INTO assessment_batches VALUES ('batch','repo:1','repo','snap','inv','main','writer','finished');
+                INSERT INTO assessments VALUES ('assessment','decision','review','subject','basis','response','not_issue','medium','summary');
+                INSERT INTO batch_assessments VALUES ('batch','assessment');
+            ";
+            let proof = "
+                INSERT INTO assessment_evidence VALUES ('assessment','citation','ref','a.js',1,1,0,5,'hash');
+                INSERT INTO assessment_questions VALUES ('assessment','check',0,'Which control applies?');
+                INSERT INTO published_inputs VALUES ('snap','a.js','file-hash');
+                INSERT INTO published_file_dependencies VALUES ('batch','assessment','snap','primary','a.js');
+            ";
+            writer.execute_batch(publication).await.unwrap();
+            writer.execute_batch(proof).await.unwrap();
+            assert_eq!(confirm_publications(&writer, &reader).await.unwrap_err(), "publication batch is missing");
+            reader.execute_batch(publication).await.unwrap();
+            assert_eq!(confirm_publications(&writer, &reader).await.unwrap_err(), "publication batch content differs");
+            reader.execute_batch(proof).await.unwrap();
+            assert_eq!(confirm_publications(&writer, &reader).await.unwrap(), 1);
+        });
+    }
 }
