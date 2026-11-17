@@ -541,19 +541,22 @@ the second-pass summary records its own wall time separately. See
 
 ## Capture local review memory
 
-Persistent repository reviews use a local Turso database by default. Prepare
-the native inventory with a stable `--repository-key` and keep run artifacts
-outside the source checkout.
+Persistent reviews use a local Turso database by default. A full inventory
+outside a Git working tree derives a local repository key from the resolved
+source folder. Source edits keep the same key. Moving or copying the folder
+creates separate history. Keep run artifacts outside the source folder.
 
 ```text
-mehscan investigate review-inventory ROOT --repository-key KEY --output RUN/inventory
+mehscan investigate review-inventory ROOT --output RUN/inventory
 mehscan memory location --source-root ROOT --inventory RUN/inventory
 ```
 
 Use the returned `state_store` for native `state` commands and `--state-store`
 for memory commands that read the journal. Use a stable stream for successive
-reviews of the same branch and scope. The locations are shared by worktrees
-with matching repository identity, source repository identity and scan prefix.
+reviews of the same branch and scope. For Git worktrees, supply the same explicit
+`--repository-key` at inventory creation to share history when repository identity,
+source repository identity, and scan prefix match. Upstream sync uses a shared
+repository key configured explicitly.
 
 The default state home is `%LOCALAPPDATA%/mehscan` on Windows,
 `~/Library/Application Support/mehscan` on macOS, and `$XDG_STATE_HOME/mehscan`
@@ -591,7 +594,7 @@ To retain admitted, unambiguous assessments as part of ending a native attempt,
 use the effective inventory of the generation being closed:
 
 ```text
-mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
+mehscan state end --store STATE --stream STREAM --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
 
 The result reports `memory.status=retained` for a finished or incomplete attempt.

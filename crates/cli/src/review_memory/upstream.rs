@@ -121,6 +121,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let replica = PathBuf::from(args.required("--replica")?);
     let remote = args.required("--remote")?;
     let repository_key = args.required("--repository-key")?;
+    if super::is_local_folder_key(&repository_key) {
+        return Err(
+            "memory sync requires a shared repository key; local folder keys are local only".into(),
+        );
+    }
     let root = PathBuf::from(args.required("--source-root")?);
     let local_endpoint = validate_remote(&remote)?;
     crate::review_state::outside_source(&replica, &root)?;

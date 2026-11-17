@@ -67,7 +67,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
 | Changed inventory | `mehscan investigate review-inventory ROOT --changed-from BASE --diff-mode files --output RUN/inventory`; see [Changed review](changed-review.md) for PR/release comparisons, the change pass and freshness. |
-| Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
+| Native repository identity | Full standalone inventories outside Git get a local folder key. Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles) for linked namespaces. For a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit the inventory identity. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Original-source assignments | `mehscan investigate source-review-plan ROOT --inventory RUN/inventory` (save the returned plan; includes source without native questions). Add `--include-supporting-source true` only when explicitly including seed/performance tooling and declaration-only C# contracts. |
@@ -109,7 +109,7 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Locate persistent review state | `mehscan memory location --source-root ROOT --inventory DIR` uses the inventory's stable repository key. Use its `state_store` for state commands. |
 | Prepare unchanged native work | `mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security` returns the remaining `work_package`. |
 | Inspect dependencies after an edit | `mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH` compares cited files and lexical reference observations. Use its output to guide source checks under the current work package. |
-| Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
+| Inspect coordinator state | `mehscan state status --store STATE --stream KEY --inventory DIR` or pass `--repository-key ID` instead of the inventory. `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 | Reserve a subset for a local worker | Export a package with `state work --review-ids ID,ID`, then reserve it with `state allocate` and record against its `--assignment`. See [local worker assignments](../../../docs/review-state.md#assign-reviews-to-local-workers). |
 | Inspect shared Turso context | Use `memory sync pull` and `memory sync context` on an enrolled replica. See [Turso sync](../../../docs/review-worker.md#share-retained-context-with-turso-sync). Treat published assessments as historical context. |
 

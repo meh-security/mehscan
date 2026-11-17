@@ -2533,6 +2533,161 @@ fn partial_run_keeps_missing_subjects_unassessed_even_after_execution_finishes()
 }
 
 #[test]
+fn standalone_folder_keeps_local_memory_without_a_repository_key() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let other = temp.path().join("other");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&other).unwrap();
+    let app = source.join("app.js");
+    fs::write(&app, "export const greeting = 'hello';\n").unwrap();
+    let state_home = temp.path().join("state");
+    let cli = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .env("MEHSCAN_STATE_HOME", &state_home)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let run = |args: &[&str]| successful_json(cli(args), args);
+    let prepare = |root: &Path, name: &str| {
+        let path = temp.path().join(name);
+        run(&[
+            "investigate",
+            "review-inventory",
+            root.to_str().unwrap(),
+            "--output",
+            path.to_str().unwrap(),
+        ]);
+        path
+    };
+    let location = |root: &Path, inventory: &Path| {
+        run(&[
+            "memory",
+            "location",
+            "--source-root",
+            root.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+        ])
+    };
+
+    let first = prepare(&source, "first");
+    let first_location = location(&source, &first);
+    let state = first_location["state_store"].as_str().unwrap();
+    let first_args = [
+        "--source-root",
+        source.to_str().unwrap(),
+        "--inventory",
+        first.to_str().unwrap(),
+    ];
+    let mut args = vec!["memory", "snapshot"];
+    args.extend(&first_args);
+    let snapshot = run(&args);
+    let mut args = vec![
+        "state",
+        "claim",
+        "--store",
+        state,
+        "--stream",
+        "full",
+        "--attempt-id",
+        "first",
+        "--expected-generation",
+        "0",
+        "--operation-key",
+        "claim-first",
+    ];
+    args.extend(&first_args);
+    let claim = run(&args);
+    let mut args = vec![
+        "state",
+        "end",
+        "--store",
+        state,
+        "--stream",
+        "full",
+        "--generation",
+        "1",
+        "--owner",
+        claim["result"]["owner"].as_str().unwrap(),
+        "--status",
+        "finished",
+        "--operation-key",
+        "end-first",
+    ];
+    args.extend(&first_args);
+    assert_eq!(run(&args)["memory"]["status"], "retained");
+    let status = run(&[
+        "state",
+        "status",
+        "--store",
+        state,
+        "--stream",
+        "full",
+        "--inventory",
+        first.to_str().unwrap(),
+    ]);
+    assert_eq!(status["attempt_status"], "finished");
+
+    let repeated = prepare(&source.join("."), "repeated");
+    assert_eq!(location(&source, &repeated), first_location);
+    fs::write(&app, "export const greeting = 'good morning';\n").unwrap();
+    let edited = prepare(&source, "edited");
+    assert_eq!(location(&source, &edited), first_location);
+    let mut args = vec![
+        "memory",
+        "snapshot",
+        "--base",
+        snapshot["snapshot"].as_str().unwrap(),
+    ];
+    args.extend([
+        "--source-root",
+        source.to_str().unwrap(),
+        "--inventory",
+        edited.to_str().unwrap(),
+    ]);
+    assert_eq!(run(&args)["changes"]["modified"], json!(["app.js"]));
+
+    fs::copy(&app, other.join("app.js")).unwrap();
+    let copied = prepare(&other, "copied");
+    assert_ne!(location(&other, &copied), first_location);
+    let rejected = cli(&[
+        "memory",
+        "location",
+        "--source-root",
+        other.to_str().unwrap(),
+        "--inventory",
+        edited.to_str().unwrap(),
+    ]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("different source folder"));
+
+    let key =
+        read(&edited.join("inventory.json"))["identity_catalog"]["repository"]["repository_key"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    let replica = temp.path().join("replica.db");
+    let rejected = cli(&[
+        "memory",
+        "sync",
+        "init",
+        "--source-root",
+        source.to_str().unwrap(),
+        "--remote",
+        "http://127.0.0.1:8080",
+        "--replica",
+        replica.to_str().unwrap(),
+        "--repository-key",
+        &key,
+    ]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("requires a shared repository key"));
+    assert!(!replica.exists());
+}
+
+#[test]
 fn state_inside_source_and_legacy_or_foreign_inventory_cannot_be_admitted() {
     let fixture = Fixture::new("boundaries");
     let inside = fixture.source.join("state");
@@ -2559,12 +2714,16 @@ fn state_inside_source_and_legacy_or_foreign_inventory_cannot_be_admitted() {
     );
     assert!(!inside.exists());
     let unscoped = fixture.base.join("unscoped");
+    let changed_paths = fixture.base.join("changed-paths.txt");
+    fs::write(&changed_paths, "app.js\n").unwrap();
     ok(&[
         "investigate",
         "review-inventory",
         fixture.source.to_str().unwrap(),
         "--output",
         unscoped.to_str().unwrap(),
+        "--files-from",
+        changed_paths.to_str().unwrap(),
     ]);
     reject(
         &[
