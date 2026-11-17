@@ -812,7 +812,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "review-inventory" => {
             let continue_from = parsed.optional("--continue-from").map(PathBuf::from);
             let marker_page = parsed.optional_usize("--marker-page")?;
-            let repository_key = parsed.optional("--repository-key");
+            let mut repository_key = parsed.optional("--repository-key");
             let source_repository_key = parsed.optional("--source-repository-key");
             let output = PathBuf::from(parsed.required("--output")?);
             let review_material_option = parsed.optional_bool("--include-review-material")?;
@@ -877,6 +877,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 merge_base,
                 mehscan_engine::ImpactDiffMode::Files,
             )?;
+            if continue_from.is_none()
+                && impact_scope.is_none()
+                && repository_key.is_none()
+                && source_repository_key.is_none()
+            {
+                repository_key = review_memory::standalone_repository_key(&root)?;
+            }
             let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
             let mut inventory = if let Some(directory) = continue_from {
                 let started = std::time::Instant::now();
@@ -4690,7 +4697,7 @@ USAGE:
 
 Changed inventories default to 'files': whole changed files without expansion or full fallback. Use '--merge-base' for a branch comparison and '--target REF' for a clean pinned checkout; omit merge-base for release endpoints. Optional compiler inputs require full analysis. Selected review-bundles inherit inventory scope; change flags must be supplied at review-inventory. Keep output outside the source worktree. Scoped finalization, triage, summary and report require --source-root and the run's input-binding.json; stale source or Git comparisons require a new inventory. Zero IDs does not complete a diff review.
 
-Native identity: add --repository-key STABLE_ID to review-inventory, review-jobs, review-tasks or direct review-bundles. Use the assessed/base repository's stable platform ID or configured namespace; optional --source-repository-key ID records fork/head provenance. Selected bundles inherit identity and reject overrides. Unknown namespaces are explicitly unscoped. Identity matching never authorizes verdict reuse; canonical reports retain native decision records for issue, not_issue and needs_review.
+Native identity: full review-inventory outside a Git working tree defaults to a local folder key. For linked or coordinated reviews, add --repository-key STABLE_ID to review-inventory, review-jobs, review-tasks or direct review-bundles. Use the assessed/base repository's stable platform ID or configured namespace; optional --source-repository-key ID records fork/head provenance. Selected bundles inherit identity and reject overrides. Other unknown namespaces are explicitly unscoped. Identity matching never authorizes verdict reuse; canonical reports retain native decision records for issue, not_issue and needs_review.
 
 Add --journal FILE to a code-evidence lookup (such as source, outline or references) to append its exact arguments, output or error, and elapsed time as JSONL. Bundle/card/sweep operations do not accept --journal. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
     );

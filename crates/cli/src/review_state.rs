@@ -1737,6 +1737,14 @@ pub(super) fn load_inventory(
     Ok((cache, fingerprint))
 }
 
+fn inventory_repository_key(path: &Path) -> Result<String, String> {
+    let (cache, _) = load_inventory(path)?;
+    cache
+        .identity_catalog
+        .and_then(|catalog| catalog.repository.repository_key)
+        .ok_or_else(|| "state requires a repository identity; regenerate a standalone inventory or supply --repository-key".into())
+}
+
 fn inventory(
     path: &Path,
     root: &Path,
@@ -1755,9 +1763,10 @@ fn inventory(
         .identity_catalog
         .as_ref()
         .ok_or("state requires native identity; regenerate inventory")?;
-    if catalog.repository.repository_key.is_none() {
-        return Err("state requires --repository-key at inventory creation".into());
-    }
+    let key = catalog.repository.repository_key.as_deref().ok_or(
+        "state requires a repository identity; regenerate a standalone inventory or supply --repository-key",
+    )?;
+    super::review_memory::validate_repository_root(root, key)?;
     let binding = ReviewStateBinding {
         repository: catalog.repository.clone(),
         assessment_context: catalog.assessment_context.clone(),
@@ -2007,7 +2016,19 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return super::print_json(&package);
     }
     if matches!(operation.as_str(), "status" | "history") {
-        let repository_key = args.required("--repository-key")?;
+        let repository_key = match (
+            args.optional("--repository-key"),
+            args.optional("--inventory"),
+        ) {
+            (Some(key), None) => key,
+            (None, Some(path)) => inventory_repository_key(Path::new(&path))?,
+            _ => {
+                return Err(
+                    "state status or history requires one of --repository-key or --inventory"
+                        .into(),
+                );
+            }
+        };
         args.finish()?;
         let state = read_store(&store, None)?;
         return super::print_json(&state.view(
@@ -2302,7 +2323,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
         }
         "end" => {
-            let repository_key = args.required("--repository-key")?;
+            let repository_key = args.optional("--repository-key");
             let generation = args.required_usize("--generation")? as u64;
             let owner = args.required("--owner")?;
             let status = match args.required("--status")?.as_str() {
@@ -2317,6 +2338,18 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 super::review_memory::temporary_mode(mode.as_deref(), memory_store.is_some())?;
             let source_root = args.optional("--source-root").map(PathBuf::from);
             let inventory = args.optional("--inventory").map(PathBuf::from);
+            let repository_key = if let Some(key) = repository_key {
+                key
+            } else {
+                let path = inventory
+                    .as_deref()
+                    .ok_or("state end requires --repository-key or --inventory")?;
+                let key = inventory_repository_key(path)?;
+                if let Some(root) = source_root.as_deref() {
+                    super::review_memory::validate_repository_root(root, &key)?;
+                }
+                key
+            };
             let memory = match (source_root, inventory) {
                 (Some(source_root), Some(inventory)) if !temporary => {
                     Some(super::review_memory::EndRetention {
@@ -2681,7 +2714,7 @@ fn help() {
         "Pending facts and handoff:\n  mehscan state pending|pending-batch|fact --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID\n  mehscan state work --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN [--review-ids ID,ID] [--resume-only true|false]\nPending questions attach to exact current needs_review checks or a current change-pass question. Source-bound evidence updates request revalidation; they never change verdicts. Work exports a provider-neutral package without ownership credentials. Pass --work-package FILE to plan/record to reject changed parents, facts, plans or generations. Record accepts --reviewer LABEL as unauthenticated provenance. External/deployment fact authority remains unsupported.\n"
     );
     println!(
-        "USAGE:\n  mehscan state claim --store DIR --stream KEY --inventory DIR --source-root ROOT --attempt-id ID --expected-generation N --operation-key ID [--retry true|false]\n  mehscan state record --store DIR --stream KEY --inventory DIR --source-root ROOT --run DIR --generation N --owner TOKEN --operation-key ID [--supersessions FILE] [--allow-partial true|false]\n  mehscan state end --store DIR --stream KEY --repository-key KEY --generation N --owner TOKEN --status finished|cancelled|incomplete --operation-key ID\n  mehscan state status|history --store DIR --stream KEY --repository-key KEY\n\nLocal trusted-worker state, not an authorization or merge gate. Store outside source. Claim uses compare-and-swap generation; duplicate snapshots coalesce without granting ownership. Retry receipts retain original generation and may be stale. Record validates current inventory, native bundle evidence and all three verdicts. Supersessions is an array of {{decision_id, parents, reason}}; exact unresolved parents and same subject/context are required. History never clears newly discovered or missing work. Finished is execution state, not complete security coverage. Hash-chained durable journal rejects corrupt/torn data instead of guessing recovery. Hosted generation coordination, authenticated provenance and cross-revision verdict reuse remain unsupported."
+        "USAGE:\n  mehscan state claim --store DIR --stream KEY --inventory DIR --source-root ROOT --attempt-id ID --expected-generation N --operation-key ID [--retry true|false]\n  mehscan state record --store DIR --stream KEY --inventory DIR --source-root ROOT --run DIR --generation N --owner TOKEN --operation-key ID [--supersessions FILE] [--allow-partial true|false]\n  mehscan state end --store DIR --stream KEY --generation N --owner TOKEN --status finished|cancelled|incomplete --operation-key ID (--repository-key KEY | --inventory DIR --source-root ROOT)\n  mehscan state status|history --store DIR --stream KEY (--repository-key KEY | --inventory DIR)\n\nLocal trusted-worker state, not an authorization or merge gate. Store outside source. Claim uses compare-and-swap generation; duplicate snapshots coalesce without granting ownership. Retry receipts retain original generation and may be stale. Record validates current inventory, native bundle evidence and all three verdicts. Supersessions is an array of {{decision_id, parents, reason}}; exact unresolved parents and same subject/context are required. History never clears newly discovered or missing work. Finished is execution state, not complete security coverage. Hash-chained durable journal rejects corrupt/torn data instead of guessing recovery. Hosted generation coordination, authenticated provenance and cross-revision verdict reuse remain unsupported."
     );
     println!(
         "\nOptional claim: --coordination-key KEY binds a trusted coordinator's opaque lifecycle/tool contract into the snapshot. It does not authenticate that assertion."

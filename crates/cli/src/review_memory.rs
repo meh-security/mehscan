@@ -15,6 +15,40 @@ mod dependencies;
 mod legacy;
 mod upstream;
 
+const LOCAL_FOLDER_KEY_PREFIX: &str = "mehscan-local-folder:v1:";
+
+fn local_folder_key(root: &Path) -> String {
+    let digest = Sha256::digest(root.as_os_str().as_encoded_bytes());
+    format!("{LOCAL_FOLDER_KEY_PREFIX}{digest:x}")
+}
+
+pub(super) fn standalone_repository_key(root: &Path) -> Result<Option<String>, String> {
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    if !root.is_dir() || root.ancestors().any(|parent| parent.join(".git").exists()) {
+        return Ok(None);
+    }
+    Ok(Some(local_folder_key(&root)))
+}
+
+fn is_local_folder_key(key: &str) -> bool {
+    key.strip_prefix(LOCAL_FOLDER_KEY_PREFIX)
+        .is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+pub(super) fn validate_repository_root(root: &Path, key: &str) -> Result<(), String> {
+    if is_local_folder_key(key) {
+        let root = root.canonicalize().map_err(|error| error.to_string())?;
+        if key != local_folder_key(&root) {
+            return Err(
+                "local inventory belongs to a different source folder; regenerate inventory".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
 const SCHEMA: &str = "
     CREATE TABLE review_memory_schema (
         version INTEGER PRIMARY KEY
@@ -174,7 +208,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     if command.as_deref() == Some("location") {
         args.finish()?;
         let (cache, _) = super::review_state::load_inventory(&inventory)?;
-        let locations = default_locations(&root, &inventory_catalog(&cache)?.repository)?;
+        let locations = default_locations(&root, &inventory_catalog(&cache, &root)?.repository)?;
         create_private_directory(locations.memory_store.parent().unwrap())?;
         return super::print_json(&json(locations)?);
     }
@@ -347,7 +381,7 @@ fn prepare_native(
 
 fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Snapshot, String> {
     let (cache, inventory) = super::review_state::load_inventory(inventory)?;
-    let catalog = inventory_catalog(&cache)?;
+    let catalog = inventory_catalog(&cache, root)?;
     let sources = super::engine(mehscan_engine::investigation::review_memory_sources(
         root, &cache,
     ))?;
@@ -361,14 +395,19 @@ fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Sn
     })
 }
 
-fn inventory_catalog(
-    cache: &mehscan_engine::investigation::ReviewInventory,
-) -> Result<&mehscan_core::ReviewIdentityCatalog, String> {
-    cache
+fn inventory_catalog<'a>(
+    cache: &'a mehscan_engine::investigation::ReviewInventory,
+    root: &Path,
+) -> Result<&'a mehscan_core::ReviewIdentityCatalog, String> {
+    let catalog = cache
         .identity_catalog
         .as_ref()
-        .filter(|catalog| catalog.repository.repository_key.is_some())
-        .ok_or_else(|| "memory requires --repository-key at inventory creation".into())
+        .ok_or("memory requires native identity; regenerate inventory")?;
+    let key = catalog.repository.repository_key.as_deref().ok_or(
+        "memory requires a repository identity; regenerate a standalone inventory or supply --repository-key",
+    )?;
+    validate_repository_root(root, key)?;
+    Ok(catalog)
 }
 
 pub(super) fn temporary_mode(mode: Option<&str>, explicit_store: bool) -> Result<bool, String> {

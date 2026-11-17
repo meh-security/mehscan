@@ -33,10 +33,11 @@ Existing explicitly requested native/AI mixes use the ordinary source-selection
 path; an origin allocation is not a severity rank.
 
 Use [local review memory](../../docs/review-worker.md#capture-local-review-memory)
-by default for persistent repository reviews. After preparing the inventory with
-a stable `--repository-key`, use `mehscan memory location` to get the journal
-path and keep the same stream for successive reviews of the same branch and
-scope. For native-only work, use `mehscan memory prepare` after binding the plan
+by default for persistent reviews. Full standalone inventories outside Git get
+a local folder key automatically. Supply a stable `--repository-key` for linked
+repositories. Use `mehscan memory location` to get the journal path and keep
+the same stream for successive reviews of the same branch and scope. For
+native-only work, use `mehscan memory prepare` after binding the plan
 and pass its returned `work_package` to the worker. Skip model dispatch when
 the native selection is already accounted for. Review remaining IDs, including
 pending checks. For source-first plans, use `state work` so all declared source

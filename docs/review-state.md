@@ -20,7 +20,9 @@ ledger projects this state, while existing budget receipts govern execution.
 See [work-goal evidence and completion](../skills/mehscan-security/references/work-goals.md#read-the-ledger)
 for dependencies, partial factual results and source validation.
 
-Create a current native inventory with an explicit stable repository namespace.
+Create a current native inventory with a stable repository namespace. Full
+standalone inventories outside a Git working tree get a local folder key
+automatically. Supply `--repository-key` when coordinating a linked repository.
 For a fork PR, use the base product's repository ID and preserve the fork ID as
 source provenance. Keep inventory, bundles and state outside the source root.
 
@@ -109,9 +111,12 @@ validated bundle run using the claim receipt's generation and owner:
 
 ```text
 mehscan state record --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --run RUN/chunk-1 --generation 1 --owner OWNER --operation-key record-chunk-1
-mehscan state status --store STATE --stream pr:24 --repository-key repo:123
-mehscan state history --store STATE --stream pr:24 --repository-key repo:123
+mehscan state status --store STATE --stream pr:24 --inventory RUN/inventory
+mehscan state history --store STATE --stream pr:24 --inventory RUN/inventory
 ```
+
+`status` and `history` also accept `--repository-key` in place of `--inventory`.
+`state end` reads the key from the inventory when one is supplied for retention.
 
 The importer checks current inventory/source, native bundle identity and complete
 response contracts, then builds native decision records. Arbitrary report JSON,

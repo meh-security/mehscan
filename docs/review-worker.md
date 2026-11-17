@@ -541,19 +541,22 @@ the second-pass summary records its own wall time separately. See
 
 ## Capture local review memory
 
-Persistent repository reviews use a local Turso database by default. Prepare
-the native inventory with a stable `--repository-key` and keep run artifacts
-outside the source checkout.
+Persistent reviews use a local Turso database by default. A full inventory
+outside a Git working tree derives a local repository key from the resolved
+source folder. Source edits keep the same key. Moving or copying the folder
+creates separate history. Keep run artifacts outside the source folder.
 
 ```text
-mehscan investigate review-inventory ROOT --repository-key KEY --output RUN/inventory
+mehscan investigate review-inventory ROOT --output RUN/inventory
 mehscan memory location --source-root ROOT --inventory RUN/inventory
 ```
 
 Use the returned `state_store` for native `state` commands and `--state-store`
 for memory commands that read the journal. Use a stable stream for successive
-reviews of the same branch and scope. The locations are shared by worktrees
-with matching repository identity, source repository identity and scan prefix.
+reviews of the same branch and scope. For Git worktrees, supply the same explicit
+`--repository-key` at inventory creation to share history when repository identity,
+source repository identity, and scan prefix match. Upstream sync uses a shared
+repository key configured explicitly.
 
 The default state home is `%LOCALAPPDATA%/mehscan` on Windows,
 `~/Library/Application Support/mehscan` on macOS, and `$XDG_STATE_HOME/mehscan`
@@ -591,7 +594,7 @@ To retain admitted, unambiguous assessments as part of ending a native attempt,
 use the effective inventory of the generation being closed:
 
 ```text
-mehscan state end --store STATE --stream STREAM --repository-key KEY --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
+mehscan state end --store STATE --stream STREAM --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
 
 The result reports `memory.status=retained` for a finished or incomplete attempt.
@@ -699,6 +702,14 @@ Each installation uses a separate replica file outside the checkout. Supply
 `MEHSCAN_TURSO_AUTH_TOKEN` through the environment for authenticated HTTPS or
 Turso endpoints. The official local sync server also supports HTTP on localhost.
 
+Have one maintainer initialize a new upstream database before writers stage
+publications. Run init with a writer token and the intended repository key.
+Repeat the same command to verify an existing initialization.
+
+```text
+mehscan memory sync init --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
+```
+
 ```text
 mehscan memory sync pull --replica REPLICA --remote URL --repository-key KEY --source-root ROOT
 mehscan memory sync stage --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM --batch BATCH --publisher-label LABEL
@@ -706,11 +717,18 @@ mehscan memory sync push --replica REPLICA --remote URL --repository-key KEY --s
 mehscan memory sync context --replica REPLICA --remote URL --repository-key KEY --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
 
-Stage an explicitly selected local batch after the first pull. Staging commits
-its assessments, questions, cited evidence metadata and file dependencies to
-the replica. Review
-summaries and questions travel with the publication. Push sends the staged
-records upstream. Retry the same stage and label to keep the publication ID.
+Each writer pulls the initialized schema before staging a local batch. Staging
+commits its assessments, questions, cited evidence metadata and file dependencies
+to the replica. Review summaries and questions travel with the publication.
+Push sends the staged records upstream. Retry the same stage and label to keep
+the publication ID.
+
+If the SDK reports a push error, Mehscan checks the publication IDs and their
+contents on a fresh replica. A confirmed push reports `reconciled: true`.
+If the SDK still reports pending changes, repeat push on the same replica to
+acknowledge them. If confirmation fails, the staged records remain available
+for retry.
+
 Use `status` and `checkpoint` with the same replica, endpoint and repository
 arguments to inspect sync counters and checkpoint the replica.
 
