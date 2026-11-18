@@ -32,6 +32,11 @@ environment variable name to `--writer-env`. The example uses
 `MEHSCAN_TURSO_WRITE_TOKEN_TEAM`. The Actions Scanner authenticates to the
 sharing service with GitHub OIDC and receives short-lived read credentials.
 
+Keep pilot credentials in development. **Before deploying to production,**
+mint a fresh Platform API token with `read` and `db:mint-token` for the
+production Turso group, and create a fresh database-scoped SQL write token for
+each production enrollment.
+
 ```sh
 python -m pip install -r scripts/review-host-requirements.txt
 python scripts/review_host.py --registry /var/lib/mehscan/registry.sqlite enroll \
