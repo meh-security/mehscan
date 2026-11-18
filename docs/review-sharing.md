@@ -17,10 +17,20 @@ available when sharing fails.
 
 Install the service dependencies and run the service behind an HTTPS reverse
 proxy. The service listens on loopback. Keep its registry and credentials on the
-service host. Set `MEHSCAN_TURSO_PLATFORM_TOKEN` for database lookup and
-read-token issuance. Use a separate, database-scoped write token for each
-enrollment. In this example, its environment variable is
-`MEHSCAN_TURSO_WRITE_TOKEN_TEAM`.
+service host.
+
+In the [Turso dashboard](https://app.turso.tech/), select the organization that
+owns the database and open **Settings → API Tokens → Create Token**. Choose the
+database's group and grant `read` and `db:mint-token` when the form offers
+individual scopes. Those scopes cover database lookup and read-token issuance.
+The [Turso CLI](https://docs.turso.tech/cli/auth/api-tokens/mint) can also mint a
+token with these exact scopes. Store the Platform API token as
+`MEHSCAN_TURSO_PLATFORM_TOKEN` in the sharing service's environment.
+
+Use a separate, database-scoped SQL write token for each enrollment. Pass its
+environment variable name to `--writer-env`. The example uses
+`MEHSCAN_TURSO_WRITE_TOKEN_TEAM`. The Actions Scanner authenticates to the
+sharing service with GitHub OIDC and receives short-lived read credentials.
 
 ```sh
 python -m pip install -r scripts/review-host-requirements.txt
