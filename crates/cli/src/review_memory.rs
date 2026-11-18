@@ -105,6 +105,7 @@ struct Snapshot {
     files: BTreeMap<String, String>,
     subjects: BTreeMap<String, mehscan_core::ReviewSubjectIdentity>,
     sources: Option<mehscan_engine::investigation::ReviewMemorySources>,
+    comparison: Option<mehscan_core::ChangeComparison>,
     razor_render_bindings: Option<mehscan_core::RazorRenderBindings>,
 }
 
@@ -419,6 +420,7 @@ fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Sn
         sources: keep_sources.then_some(sources),
         repository: catalog.repository.clone(),
         source: catalog.source_fingerprint.clone(),
+        comparison: cache.scan.impact_scope.and_then(|scope| scope.comparison),
         razor_render_bindings: cache.scan.razor_render_bindings.filter(|_| keep_sources),
         inventory,
     })

@@ -11,8 +11,10 @@ import secrets
 import sqlite3
 import time
 
+from github_action import resolve_pr
 from review_share_storage import (
     MAX_DOCUMENT, ShareError, canonical, cloud_database, cloud_reader, cloud_store, digest, parse_document,
+    request_json,
 )
 
 
@@ -41,6 +43,13 @@ REGISTRY = """
     CREATE TABLE IF NOT EXISTS workflows (
         enrollment TEXT PRIMARY KEY REFERENCES enrollments(id),
         policy TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS approved_pull_requests (
+        enrollment TEXT NOT NULL REFERENCES enrollments(id),
+        run_id TEXT NOT NULL,
+        run_attempt TEXT NOT NULL,
+        approval TEXT NOT NULL,
+        PRIMARY KEY (enrollment, run_id, run_attempt)
     );
 """
 
@@ -96,9 +105,34 @@ def stream_name(value):
     return matching(value, r"[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,127}")
 
 
+def workflow_run(value):
+    return tuple(matching(value[key], r"[1-9][0-9]{0,19}") for key in ("run_id", "run_attempt"))
+
+
+def pull_number(value):
+    if type(value) is not int or not 1 <= value < 2**31:
+        raise ShareError(400, "a positive GitHub pull request number is required")
+    return value
+
+
+def commit_sha(value):
+    return matching(value, r"[a-f0-9]{40}")
+
+
+def github_pull_request(repository, number):
+    token = os.environ.get("MEHSCAN_GITHUB_READ_TOKEN")
+    def get(resource):
+        return request_json("https://api.github.com" + resource, token=token)
+    try:
+        return resolve_pr(get, repository, number, "https://github.com")
+    except (TypeError, KeyError, ValueError):
+        raise ShareError(502, "GitHub returned an invalid pull request binding") from None
+
+
 def verify_batch(batch, repo, stream):
     fields(batch, ("schema_version", "batch", "repository", "repository_id", "snapshot_id", "source_fingerprint",
-                   "inventory_fingerprint", "stream", "attempt_status", "assessments", "file_dependencies"), ("sharing",))
+                   "inventory_fingerprint", "stream", "attempt_status", "assessments", "file_dependencies"),
+           ("sharing", "comparison"))
     if type(batch["schema_version"]) is not int or batch["schema_version"] != 1:
         raise ShareError(400, "unsupported retained batch schema")
     identity = fields(batch["repository"], ("repository_key", "path_prefix"), ("source_repository_key",))
@@ -150,6 +184,18 @@ def verify_batch(batch, repo, stream):
         path(dependency["path"])
         if dependency["sha256"] is not None:
             fingerprint(dependency["sha256"])
+    if "comparison" in batch:
+        comparison = fields(batch["comparison"], ("requested_base", "base_commit", "head_commit",
+                            "target_commit", "working_tree"), ("requested_target", "merge_base_commit"))
+        for name in ("base_commit", "head_commit", "target_commit"):
+            commit_sha(comparison[name])
+        bounded(comparison["requested_base"], 512)
+        if "requested_target" in comparison:
+            bounded(comparison["requested_target"], 512)
+        if "merge_base_commit" in comparison:
+            commit_sha(comparison["merge_base_commit"])
+        if type(comparison["working_tree"]) is not bool:
+            raise ShareError(400, "invalid retained Git comparison")
 
 
 def verify_fact(value, at):
@@ -278,6 +324,24 @@ def workflow_policy(policy):
     return policy
 
 
+def enrolled_policy(db, enrollment):
+    row = db.execute("SELECT policy FROM workflows WHERE enrollment = ?", (enrollment,)).fetchone()
+    return parse_document(row["policy"]) if row else None
+
+
+def saved_approval(db, enrollment, run):
+    row = db.execute("SELECT approval FROM approved_pull_requests WHERE enrollment = ? AND run_id = ? AND run_attempt = ?",
+                     (enrollment, *run)).fetchone()
+    return parse_document(row["approval"]) if row else None
+
+
+def validate_approved_run(approval, policy, claims, number):
+    if (claims["event_name"] != "workflow_dispatch" or not approval or approval["pull_request"] != number
+            or approval["policy"] != digest(policy)):
+        raise ShareError(403, "Manager approval for this pull request and workflow run is required")
+    return approval
+
+
 def authorize(db, enrolled, token, verified):
     enrollment = enrolled["id"]
     if verified is None:
@@ -287,8 +351,7 @@ def authorize(db, enrolled, token, verified):
         if not row:
             raise ShareError(403, "active sharing grant required")
         return row["actor"], row["role"], None
-    row = db.execute("SELECT policy FROM workflows WHERE enrollment = ?", (enrollment,)).fetchone()
-    policy = parse_document(row["policy"]) if row else None
+    policy = enrolled_policy(db, enrollment)
     if (not policy or verified["repository_id"] != enrolled["repository_id"]
             or any(verified[key] != policy[key] for key in ("workflow_ref", "ref", "environment"))
             or verified["event_name"] not in policy["events"]
@@ -300,8 +363,10 @@ def authorize(db, enrolled, token, verified):
 
 
 class Service:
-    def __init__(self, registry, verify_actions, reader=cloud_reader, storage=cloud_store):
+    def __init__(self, registry, verify_actions, reader=cloud_reader, storage=cloud_store,
+                 pull_request=github_pull_request):
         self.registry, self.verify_actions, self.reader, self.storage = registry, verify_actions, reader, storage
+        self.pull_request = pull_request
 
     def dispatch(self, route, token, data):
         if not token or len(token) > 16000 or any(ord(char) < 33 or ord(char) > 126 for char in token):
@@ -310,7 +375,7 @@ class Service:
         repo, audience = data["repository_id"], data["audience"]
         identifier = enrollment_id(repo, audience)
         verified = None if token.startswith("msk_") else self.verify_actions(token)
-        with self.registry.connect(write=route != "/v1/link") as db:
+        with self.registry.connect(write=route not in ("/v1/link", "/v1/pr-target")) as db:
             enrollment = db.execute("SELECT * FROM enrollments WHERE id = ? AND active = 1", (identifier,)).fetchone()
             if not enrollment:
                 raise ShareError(403, "active sharing grant required")
@@ -322,9 +387,11 @@ class Service:
             if route == "/v1/read-token":
                 return {**link, **self.reader(enrollment)}
             body = data.get("submission")
-            if route in ("/v1/grant", "/v1/workflow"):
+            if route in ("/v1/grant", "/v1/workflow", "/v1/approve-pr"):
                 if role != "Manager":
                     raise ShareError(403, "Manager grant required")
+                if route == "/v1/approve-pr":
+                    return self.approve_pr(db, enrollment, actor, body)
                 if route == "/v1/workflow":
                     if body is None:
                         db.execute("DELETE FROM workflows WHERE enrollment = ?", (identifier,))
@@ -333,10 +400,16 @@ class Service:
                                (identifier, canonical(workflow_policy(body))))
                     return {"workflow": body["workflow_ref"], "stream": body["stream"]}
                 return self.grant(db, identifier, actor, body)
-            if route == "/v1/publish":
+            if route in ("/v1/publish", "/v1/pr-target"):
                 if role != "Scanner" or verified is None:
                     raise ShareError(403, "enrolled GitHub Actions Scanner required")
-                return self.publish(enrollment, actor, policy, verified, body)
+                approval = saved_approval(db, identifier, workflow_run(verified))
+                if route == "/v1/pr-target":
+                    fields(body, ("pull_request",))
+                    approved = validate_approved_run(approval, policy, verified, pull_number(body["pull_request"]))
+                    self.check_pr_current(enrollment, policy, approved)
+                    return approved
+                return self.publish(enrollment, actor, policy, verified, body, approval)
             if route == "/v1/fact":
                 if role not in ("Contributor", "Manager"):
                     raise ShareError(403, "Contributor or Manager grant required")
@@ -361,15 +434,66 @@ class Service:
                        (enrollment, actor, role))
         return {"actor": actor, "role": role}
 
-    def publish(self, enrollment, actor, policy, claims, body):
-        fields(body, ("commit", "run_id", "run_attempt", "batch"))
-        commit = matching(body["commit"], r"[a-f0-9]{40}")
-        for key in ("run_id", "run_attempt"):
-            matching(body[key], r"[1-9][0-9]{0,19}")
-        if commit != claims["sha"] or any(body[key] != claims[key] for key in ("run_id", "run_attempt")):
+    def pr_commits(self, enrollment, policy, number):
+        repo = policy["workflow_ref"].split("/.github/workflows/", 1)[0]
+        pr = self.pull_request(repo, number)
+        repositories = (pr["base_repository"], pr["source_repository"])
+        if pr["state"] != "open":
+            raise ShareError(409, "the approved pull request is no longer open")
+        if (pr["pull_request"] != number or "refs/heads/" + pr["base_ref"] != policy["ref"]
+                or any(not entry or str(entry["id"]) != enrollment["repository_id"] for entry in repositories)):
+            raise ShareError(403, "pull request must target the protected branch of the enrolled repository")
+        return {"base_sha": commit_sha(pr["base_commit"]), "head_sha": commit_sha(pr["target_commit"])}
+
+    def check_pr_current(self, enrollment, policy, approval):
+        observed = self.pr_commits(enrollment, policy, approval["pull_request"])
+        if any(approval[key] != value for key, value in observed.items()):
+            raise ShareError(409, "pull request endpoints changed since approval")
+
+    def approve_pr(self, db, enrollment, actor, body):
+        fields(body, ("pull_request", "head_sha", "run_id", "run_attempt"))
+        number, expected_head = pull_number(body["pull_request"]), commit_sha(body["head_sha"])
+        run = workflow_run(body)
+        policy = enrolled_policy(db, enrollment["id"])
+        if not policy or "workflow_dispatch" not in policy["events"]:
+            raise ShareError(403, "configure a protected manual workflow before approving pull requests")
+        previous = saved_approval(db, enrollment["id"], run)
+        if previous:
+            if previous["pull_request"] != number or previous["head_sha"] != expected_head or previous["policy"] != digest(policy):
+                raise ShareError(409, "workflow run already has a different pull request approval")
+            return previous
+        commits = self.pr_commits(enrollment, policy, number)
+        if commits["head_sha"] != expected_head:
+            raise ShareError(409, "pull request head changed before approval")
+        approval = {"pull_request": number, **commits, "approved_by": actor, "approved_at": int(time.time()),
+                    "run_id": run[0], "run_attempt": run[1], "stream": f"pr:{number}", "policy": digest(policy)}
+        db.execute("INSERT INTO approved_pull_requests VALUES (?, ?, ?, ?)",
+                   (enrollment["id"], *run, canonical(approval)))
+        return approval
+
+    def publish(self, enrollment, actor, policy, claims, body, approval):
+        fields(body, ("commit", "run_id", "run_attempt", "batch"), ("pull_request",))
+        commit = commit_sha(body["commit"])
+        if workflow_run(body) != workflow_run(claims):
             raise ShareError(403, "retained review must bind the authenticated run and source commit")
-        stream = policy["stream"]
+        pull_request = "pull_request" in body
+        if pull_request:
+            approved = validate_approved_run(approval, policy, claims, pull_number(body["pull_request"]))
+            if commit != approved["head_sha"]:
+                raise ShareError(403, "retained review does not match the approved pull request head")
+            stream = approved["stream"]
+        else:
+            if approval or commit != claims["sha"]:
+                raise ShareError(403, "retained review must bind the authenticated branch run and source commit")
+            stream = policy["stream"]
         verify_batch(body["batch"], enrollment["repository_id"], stream)
+        comparison = body["batch"].get("comparison")
+        if comparison and (comparison["target_commit"] != commit or comparison["head_commit"] != commit):
+            raise ShareError(403, "retained Git comparison must bind the pinned checkout commit")
+        if pull_request and (not comparison or comparison["working_tree"] or comparison["base_commit"] != approved["base_sha"]
+                or comparison["requested_base"] != approved["base_sha"] or comparison.get("requested_target") != commit
+                or comparison.get("merge_base_commit") is None):
+            raise ShareError(403, "pull request publication requires the approved Git comparison and merge base")
         if "sharing" in body["batch"] and body["batch"]["sharing"] != {
                 "enrollment": enrollment["id"], "database_id": enrollment["database_id"]}:
             raise ShareError(403, "retained review belongs to a different sharing audience")
@@ -378,6 +502,15 @@ class Service:
         store.check_binding()
         payload = {"authority": "advisory", "run_id": body["run_id"], "run_attempt": body["run_attempt"],
                    "workflow_ref": claims["workflow_ref"], "ref": claims["ref"], "batch": body["batch"]}
+        if pull_request:
+            payload["pull_request"] = approved
+            payload["workflow_sha"] = claims["workflow_sha"]
+            saved = store.get(event_id)
+            if saved:
+                if saved["digest"] != digest(payload) or saved["commit_sha"] != commit:
+                    raise ShareError(409, "sharing operation ID was already used for a different submission")
+                return receipt(saved)
+            self.check_pr_current(enrollment, policy, approved)
         return receipt(store.append(event_id=event_id, request_digest=digest(payload), kind="review",
                                     actor=actor, stream=stream, commit=commit, payload=payload))
 

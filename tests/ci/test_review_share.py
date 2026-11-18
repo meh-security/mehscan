@@ -27,6 +27,7 @@ AUDIENCE = "team"
 WORKFLOW = "owner/repo/.github/workflows/review.yml@refs/heads/main"
 REF = "refs/heads/main"
 COMMIT = "a" * 40
+PR_COMMIT = "c" * 40
 SHA = "b" * 64
 POLICY = {"workflow_ref": WORKFLOW, "ref": REF, "environment": "Review", "stream": "main",
           "events": ["push", "schedule", "workflow_dispatch"]}
@@ -57,6 +58,11 @@ def batch():
                     "start_line": 1, "end_line": 1, "start_byte": 0, "end_byte": 15, "excerpt_sha256": None}]}],
             "file_dependencies": [{"decision_id": "mehscanDecision/v1:" + SHA,
                                    "role": "primary", "path": "src/app.js", "sha256": SHA}]}
+
+
+def pr_comparison(base, head):
+    return {"requested_base": base, "base_commit": base, "requested_target": head,
+            "head_commit": head, "target_commit": head, "merge_base_commit": base, "working_tree": False}
 
 
 def save_fixture_responses(run, decision):
@@ -94,8 +100,12 @@ class ReviewSharing(unittest.TestCase):
         self.viewer = self.registry.issue("vic", 1)["token"]
         self.contributor = self.registry.issue("cam", 1)["token"]
         self.claims = CLAIMS.copy()
+        repo = {"name": "owner/repo", "id": int(REPO)}
+        self.pull = {"pull_request": 75, "state": "open", "base_ref": "main", "base_commit": COMMIT,
+                     "target_commit": PR_COMMIT, "base_repository": repo, "source_repository": repo}
         self.leases = []
-        service = host.Service(self.registry, self.verify, reader=self.reader, storage=self.storage)
+        service = host.Service(self.registry, self.verify, reader=self.reader, storage=self.storage,
+                               pull_request=self.resolve_pull)
         self.server = host.http_server(service, ("127.0.0.1", 0))
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -133,6 +143,11 @@ class ReviewSharing(unittest.TestCase):
         if token != "test-actions-jwt":
             raise storage.ShareError(401, "invalid test identity")
         return self.claims.copy()
+
+    def resolve_pull(self, repository, number):
+        self.assertEqual(repository, "owner/repo")
+        self.assertEqual(number, self.pull["pull_request"])
+        return copy.deepcopy(self.pull)
 
     def post(self, route, token, body=None, audience=AUDIENCE, repo=REPO):
         request = {"repository_id": repo, "audience": audience}
@@ -211,6 +226,61 @@ class ReviewSharing(unittest.TestCase):
                 reader.execute("UPDATE mehscan_shared_events SET stream = 'other'")
         self.post("workflow", self.manager)
         self.rejected(403, "publish", "test-actions-jwt", submission)
+
+    def test_manager_approved_pull_request_binds_commit_comparison_and_run(self):
+        self.claims["event_name"] = "workflow_dispatch"
+        lookup = {"pull_request": 75}
+        request = {**lookup, "run_id": CLAIMS["run_id"], "run_attempt": CLAIMS["run_attempt"], "head_sha": PR_COMMIT}
+        submission = {**lookup, "run_id": CLAIMS["run_id"], "run_attempt": CLAIMS["run_attempt"],
+                      "commit": PR_COMMIT, "batch": {**batch(), "stream": "pr:75", "comparison": pr_comparison(COMMIT, PR_COMMIT)}}
+        self.rejected(403, "pr-target", "test-actions-jwt", lookup)
+        self.rejected(403, "publish", "test-actions-jwt", submission)
+        self.rejected(403, "approve-pr", self.contributor, request)
+        self.rejected(409, "approve-pr", self.manager, {**request, "head_sha": COMMIT})
+        self.pull["source_repository"] = {"name": "other/repo", "id": 888}
+        self.rejected(403, "approve-pr", self.manager, request)
+        self.pull["source_repository"] = self.pull["base_repository"]
+        self.pull["base_ref"] = "other"
+        self.rejected(403, "approve-pr", self.manager, request)
+        self.pull["base_ref"] = "main"
+        approved = self.post("approve-pr", self.manager, request)
+        self.assertEqual(self.post("approve-pr", self.manager, request), approved)
+        self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup), approved)
+        self.rejected(409, "approve-pr", self.manager, {**request, "head_sha": "d" * 40})
+        self.claims["run_attempt"] = "2"
+        self.rejected(403, "pr-target", "test-actions-jwt", lookup)
+        self.rejected(403, "publish", "test-actions-jwt", {**submission, "run_attempt": "2"})
+        self.claims["run_attempt"] = "1"
+        self.claims["event_name"] = "push"
+        self.rejected(403, "publish", "test-actions-jwt", submission)
+        self.claims["event_name"] = "workflow_dispatch"
+        self.rejected(403, "publish", "test-actions-jwt", {**submission, "commit": COMMIT})
+        branch = {key: value for key, value in submission.items() if key != "pull_request"}
+        self.rejected(403, "publish", "test-actions-jwt", {**branch, "commit": COMMIT, "batch": batch()})
+        self.rejected(403, "publish", "test-actions-jwt", {**submission, "batch": {**batch(), "stream": "pr:75"}})
+        wrong = copy.deepcopy(submission)
+        wrong["batch"]["comparison"]["base_commit"] = "d" * 40
+        self.rejected(403, "publish", "test-actions-jwt", wrong)
+        wrong["batch"]["comparison"] = {**pr_comparison(COMMIT, PR_COMMIT), "working_tree": True}
+        self.rejected(403, "publish", "test-actions-jwt", wrong)
+        self.pull["base_commit"] = "d" * 40
+        self.rejected(409, "pr-target", "test-actions-jwt", lookup)
+        self.rejected(409, "publish", "test-actions-jwt", submission)
+        self.pull["base_commit"] = COMMIT
+
+        result = self.post("publish", "test-actions-jwt", submission)
+        self.assertEqual((result["stream"], result["commit_sha"]), ("pr:75", PR_COMMIT))
+        db = self.storage({"database_name": "publications", "id": host.enrollment_id(REPO, AUDIENCE)})
+        saved = db.get(result["id"])["payload"]
+        self.assertEqual(saved["pull_request"], approved)
+        self.assertEqual(saved["workflow_sha"], COMMIT)
+        self.pull["target_commit"] = "e" * 40
+        self.rejected(409, "pr-target", "test-actions-jwt", lookup)
+        self.assertEqual(self.post("publish", "test-actions-jwt", submission), result)
+        newer = copy.deepcopy(submission)
+        newer["batch"]["batch"] = "d" * 64
+        self.rejected(409, "publish", "test-actions-jwt", newer)
+        self.assertEqual(len(db.list(0)), 1)
 
     def test_shared_revisions_reach_normal_review_and_reopen_only_affected_work(self):
         project = Path(__file__).resolve().parents[2]
@@ -388,6 +458,12 @@ class ReviewSharing(unittest.TestCase):
         self.assertEqual(len(event_db.list(0)), 4)
 
     def test_native_retention_publishes_through_client_without_sharing_credentials(self):
+        self.publish_native()
+
+    def test_native_pinned_comparison_publishes_to_approved_pr(self):
+        self.publish_native(self.pull["pull_request"])
+
+    def publish_native(self, number=None):
         project = Path(__file__).resolve().parents[2]
         scanner = Path(os.environ.get("MEHSCAN_TEST_SCANNER", project / "target/debug"
                                      / ("mehscan.exe" if os.name == "nt" else "mehscan")))
@@ -395,7 +471,8 @@ class ReviewSharing(unittest.TestCase):
             self.skipTest("build the native CLI to exercise actual retained batches")
         root = self.base / "checkout"
         root.mkdir()
-        (root / "app.js").write_text("function handle(request) { eval(request.query.code); }\n", encoding="utf-8")
+        application = "function handle(request) { eval(request.query.code); }\n"
+        (root / "app.js").write_text(application if number is None else "function handle() {}\n", encoding="utf-8")
 
         def git(*args):
             return subprocess.check_output(["git", "-C", str(root), *args], text=True, timeout=20).strip()
@@ -409,13 +486,29 @@ class ReviewSharing(unittest.TestCase):
         git("init", "--quiet")
         git("add", "app.js")
         git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "source")
-        commit = git("rev-parse", "HEAD")
-        self.claims.update(sha=commit, workflow_sha=commit)
+        controller = git("rev-parse", "HEAD")
+        commit, stream, comparison_args = controller, "main", []
+        self.claims.update(sha=controller, workflow_sha=controller)
+        approved = None
+        if number is not None:
+            (root / "app.js").write_text(application, encoding="utf-8")
+            git("add", "app.js")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "topic")
+            commit = git("rev-parse", "HEAD")
+            self.claims["event_name"] = "workflow_dispatch"
+            self.pull.update(base_commit=controller, target_commit=commit)
+            approved = self.post("approve-pr", self.manager, {"pull_request": number, "head_sha": commit,
+                                  "run_id": self.claims["run_id"], "run_attempt": self.claims["run_attempt"]})
+            target = self.post("pr-target", "test-actions-jwt", {"pull_request": number})
+            self.assertEqual(target, approved)
+            stream = target["stream"]
+            comparison_args = ["--changed-from", target["base_sha"], "--target", target["head_sha"],
+                               "--diff-mode", "files", "--merge-base"]
         inventory, run, journal, memory = [self.base / name for name in ("inventory", "run", "journal", "memory.turso")]
         native("investigate", "review-inventory", root, "--repository-key", host.repository_key(REPO),
-               "--source-repository-key", host.repository_key(REPO), "--output", inventory)
+               "--source-repository-key", host.repository_key(REPO), "--output", inventory, *comparison_args)
         source = ["--source-root", root, "--inventory", inventory]
-        state = ["--store", journal, "--stream", "main", *source]
+        state = ["--store", journal, "--stream", stream, *source]
         claim = native("state", "claim", *state, "--attempt-id", "first", "--expected-generation", "0", "--operation-key", "claim")
         owner = ["--owner", claim["result"]["owner"], "--generation", "1"]
         entries = storage.parse_document((inventory / "inventory.json").read_bytes())["entries"]
@@ -430,23 +523,32 @@ class ReviewSharing(unittest.TestCase):
         self.assertEqual(retained["status"], "retained")
         link = {**self.post("link", self.viewer), "host": self.url, "repository_id": REPO}
         args = SimpleNamespace(scanner=scanner, source_root=root, inventory=inventory,
-                               store=memory, stream="main", batch=retained["batch"], link=self.base / "link.json")
-        environment = {"GITHUB_SHA": commit, "GITHUB_RUN_ID": "45", "GITHUB_RUN_ATTEMPT": "1",
-                       "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "fixture", "MEHSCAN_TURSO_WRITE_TOKEN_TEST": "fixture"}
+                               store=memory, stream=stream, pull_request=number, batch=retained["batch"],
+                               link=self.base / "link.json")
+        environment = {"GITHUB_SHA": controller, "GITHUB_RUN_ID": "45", "GITHUB_RUN_ATTEMPT": "1",
+                       "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "fixture", "MEHSCAN_TURSO_WRITE_TOKEN_TEST": "fixture",
+                       "MEHSCAN_GITHUB_READ_TOKEN": "fixture"}
         with patch.dict(os.environ, environment), patch.object(client, "app_credential", return_value="test-actions-jwt"):
             self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_TOKEN", client.child_env())
             self.assertNotIn("MEHSCAN_TURSO_WRITE_TOKEN_TEST", client.child_env())
+            self.assertNotIn("MEHSCAN_GITHUB_READ_TOKEN", client.child_env())
             result = client.publish(args, link)
             self.assertEqual(client.publish(args, link), result)
             (root / "app.js").write_text("// changed\n", encoding="utf-8")
             with self.assertRaisesRegex(storage.ShareError, "clean checkout"):
                 client.publish(args, link)
         database = self.storage({"database_name": "publications", "id": link["enrollment"]})
-        saved = database.get(result["id"])["payload"]["batch"]
+        publication = database.get(result["id"])["payload"]
+        saved = publication["batch"]
         self.assertEqual(saved["batch"], retained["batch"])
         self.assertEqual(saved["attempt_status"], "incomplete")
         self.assertTrue(saved["assessments"])
         self.assertEqual(saved["assessments"][0]["verdict"], "needs_review")
+        if approved:
+            self.assertEqual(publication["pull_request"], approved)
+            self.assertEqual(publication["workflow_sha"], controller)
+            self.assertEqual(saved["comparison"], pr_comparison(controller, commit))
+            self.assertNotEqual(result["commit_sha"], controller)
 
     def test_stale_or_non_dedicated_database_is_refused(self):
         database = self.base / "extra.sqlite"
@@ -460,6 +562,28 @@ class ReviewSharing(unittest.TestCase):
 
 
 class CredentialAdapters(unittest.TestCase):
+    def test_pr_lookup_reads_the_live_base_ref_and_fixed_github_origin(self):
+        calls = []
+        repo = {"full_name": "owner/repo", "id": int(REPO)}
+
+        def get(url, token=None):
+            calls.append((url, token))
+            if url.endswith("/pulls/75"):
+                return {"state": "open", "draft": False, "number": 75,
+                        "base": {"sha": "f" * 40, "ref": "main", "repo": repo},
+                        "head": {"sha": PR_COMMIT, "ref": "topic", "repo": repo}}
+            return {"object": {"sha": COMMIT}}
+
+        with patch.dict(os.environ, {"MEHSCAN_GITHUB_READ_TOKEN": "fixture-read-token"}), \
+                patch.object(host, "request_json", get):
+            source = host.github_pull_request("owner/repo", 75)
+            self.assertEqual(source["base_commit"], COMMIT)
+            self.assertEqual(source["target_commit"], PR_COMMIT)
+        self.assertEqual(calls, [
+            ("https://api.github.com/repos/owner/repo/pulls/75", "fixture-read-token"),
+            ("https://api.github.com/repos/owner/repo/git/ref/heads/main", "fixture-read-token"),
+        ])
+
     def test_turso_mint_uses_pinned_database_id_and_read_only_lease(self):
         calls = []
         enrollment = {"organization": "org", "database_name": "db", "database_id": "id:db",

@@ -564,7 +564,7 @@ def memory_arguments(args, root):
 
 def review_child_environment():
     return {key: value for key, value in os.environ.items()
-            if not key.upper().startswith(("ACTIONS_ID_TOKEN_", "MEHSCAN_SHARE_", "MEHSCAN_TURSO_"))}
+            if not key.upper().startswith(("ACTIONS_ID_TOKEN_", "MEHSCAN_SHARE_", "MEHSCAN_TURSO_", "MEHSCAN_GITHUB_"))}
 
 
 class NativeWrites:

@@ -150,3 +150,52 @@ The publication carries assessment summaries, pending questions, source
 references, and dependency fingerprints. Provider transcripts, raw source
 archives, and run-control artifacts stay local. Read shared events as advisory
 history. A local verdict still needs a source-bound review.
+
+## Publish an approved pull request
+
+Dispatch the enrolled workflow from its protected base branch. A Manager
+approves the PR for that run and attempt. Include the exact head SHA in the
+approval. The service checks the open PR through GitHub and records its head
+and the current base branch tip. Both sides must belong to the enrolled
+repository. For a private repository, give the service a repository-scoped
+`MEHSCAN_GITHUB_READ_TOKEN` with read access to pull requests and contents.
+[GitHub REST pull request lookup](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request)
+
+```json
+{
+  "pull_request": 75,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "run_id": "123456789",
+  "run_attempt": "1"
+}
+```
+
+```sh
+python scripts/review_share.py approve-pr --link LINK.json --input APPROVAL.json
+```
+
+In the approved job, use its OIDC identity to retrieve the pinned comparison.
+Check out the returned `head_sha`, with Git history available for the base and
+merge base. Prepare the inventory for those exact endpoints.
+
+```sh
+python scripts/review_share.py pr-target --link LINK.json --pull-request 75
+mehscan investigate review-inventory CHECKOUT \
+  --repository-key github.com/repositories/REPOSITORY_ID \
+  --source-repository-key github.com/repositories/REPOSITORY_ID \
+  --changed-from BASE_SHA --target HEAD_SHA --diff-mode files --merge-base --output INVENTORY
+```
+
+Sync the shared facts, review in the returned stream, and close the native
+attempt with its effective inventory. Publish the retained batch using the
+same run attempt and checkout.
+
+```sh
+python scripts/review_share.py publish --link LINK.json --scanner MEHSCAN \
+  --source-root CHECKOUT --inventory INVENTORY --stream pr:75 --batch BATCH_ID --pull-request 75
+```
+
+A changed head, changed base, or closed PR blocks new publication. A retry of
+an already accepted batch returns its original receipt while the run's grant
+remains active. That publication retains its original Git comparison and head
+commit.

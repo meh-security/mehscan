@@ -354,6 +354,9 @@ pub(super) fn export(
     if let Some(binding) = content.sharing {
         result["sharing"] = json!(binding);
     }
+    if let Some(comparison) = selection.snapshot.comparison {
+        result["comparison"] = json!(comparison);
+    }
     Ok(result)
 }
 

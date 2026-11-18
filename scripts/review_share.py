@@ -65,7 +65,7 @@ def outside(path, root):
 
 def child_env():
     return {key: value for key, value in os.environ.items()
-            if not key.upper().startswith(("GIT_", "MEHSCAN_TURSO_", "MEHSCAN_SHARE_", "ACTIONS_ID_TOKEN_"))
+            if not key.upper().startswith(("GIT_", "MEHSCAN_TURSO_", "MEHSCAN_SHARE_", "ACTIONS_ID_TOKEN_", "MEHSCAN_GITHUB_"))
             and key.upper() not in ("GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY")}
 
 
@@ -86,8 +86,11 @@ def publish(args, link):
     outside(args.link, root)
     env = child_env()
     commit = git_state(root, env)
-    if commit != os.environ.get("GITHUB_SHA"):
+    number = getattr(args, "pull_request", None)
+    if number is None and commit != os.environ.get("GITHUB_SHA"):
         raise ShareError(409, "checkout commit differs from the protected job source commit")
+    if number is not None and args.stream != f"pr:{number}":
+        raise ShareError(409, "pull request publication requires its approved PR stream")
     command = [str(scanner), "memory", "export", "--source-root", str(root), "--inventory", str(inventory),
                "--stream", args.stream, "--batch", args.batch]
     if args.store:
@@ -100,8 +103,11 @@ def publish(args, link):
     batch = parse_document(completed.stdout)
     if batch["repository"]["repository_key"] != link["repository_key"]:
         raise ShareError(403, "inventory does not belong to the linked repository")
-    return send(link, "publish", {"commit": commit, "batch": batch,
-        "run_id": os.environ.get("GITHUB_RUN_ID"), "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT")})
+    submission = {"commit": commit, "batch": batch, "run_id": os.environ.get("GITHUB_RUN_ID"),
+                  "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT")}
+    if number is not None:
+        submission["pull_request"] = number
+    return send(link, "publish", submission)
 
 
 def read_store(link):
@@ -177,7 +183,7 @@ def main():
     connect.add_argument("--oidc-audience")
     connect.add_argument("--source-root", type=Path, required=True)
     connect.add_argument("--output", type=Path, required=True)
-    for name in ("list", "get", "sync", "publish", "fact", "grant", "workflow"):
+    for name in ("list", "get", "sync", "publish", "fact", "grant", "workflow", "approve-pr", "pr-target"):
         command = commands.add_parser(name)
         command.add_argument("--link", type=Path, required=True)
         if name == "list":
@@ -191,7 +197,10 @@ def main():
             command.add_argument("--store", type=Path)
             command.add_argument("--stream", required=True)
             command.add_argument("--batch", required=True)
-        if name in ("fact", "grant", "workflow"):
+            command.add_argument("--pull-request", type=int)
+        if name == "pr-target":
+            command.add_argument("--pull-request", type=int, required=True)
+        if name in ("fact", "grant", "workflow", "approve-pr"):
             command.add_argument("--input", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -210,6 +219,8 @@ def main():
                 result = publish(args, link)
             elif args.command == "sync":
                 result = sync_facts(args, link)
+            elif args.command == "pr-target":
+                result = send(link, "pr-target", {"pull_request": args.pull_request})
             elif args.command == "list":
                 if not 0 <= args.after < 2**63:
                     raise ShareError(400, "invalid sharing cursor")
