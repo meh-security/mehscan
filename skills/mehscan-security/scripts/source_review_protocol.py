@@ -248,7 +248,7 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
         value += active_gaps
     else:
         value = "Continue this source assignment using the previously inspected source and the new deciding evidence."
-    if packet["work"].get("knowledge"):
+    if packet.get("work", {}).get("knowledge"):
         value += KNOWLEDGE_NOTICE
     if source_presentation != "raw":
         notice = SOURCE_VIEW_NOTICE

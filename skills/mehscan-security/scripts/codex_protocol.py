@@ -462,7 +462,7 @@ Use status=collected when the requested implementation and relevant caller bindi
 Follow explicit imports and base classes when a member is absent in the subclass. Search for the named method in a known source file, not the entire class body. Avoid limit=1 discovery, repeated empty queries and rereading supplied source. Use returned locations for dependent reads. No arbitrary dispatch inference or exhaustive caller hunt.
 Use outline on a known class file to locate imports and relevant overrides without reading an arbitrary class prefix. definition is a declaration lookup, not a compiler resolver: use native-reported names and the defining file, not Class.member spelling or an importing file as context.
 """
-    if packet["work"].get("knowledge"):
+    if packet.get("work", {}).get("knowledge"):
         instructions += KNOWLEDGE_NOTICE
     instructions += "\nUse evidence_agenda to prioritize decisive missing evidence before side helpers. Its questions are review obligations, not detected defects or proof that every item applies. declaration_query_gaps records ranges absent from carried query source; check primary/prepared windows before rereading. These are not semantic gaps; an unread irrelevant branch need not block a verdict. Source coverage never proves a control works. For a claimed control, check the caller conditions that activate it. Preserve every remaining decisive question in collection.remaining, knowledge.limits or final checks; a complete helper body alone cannot establish caller applicability. Do not expand into exhaustive transitive review.\n"
     if state is None:
