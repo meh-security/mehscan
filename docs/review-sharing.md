@@ -151,32 +151,40 @@ references, and dependency fingerprints. Provider transcripts, raw source
 archives, and run-control artifacts stay local. Read shared events as advisory
 history. A local verdict still needs a source-bound review.
 
-## Publish an approved pull request
+## Review pull requests from enrolled Actions
 
-Dispatch the enrolled workflow from its protected base branch. A Manager
-approves the PR for that run and attempt. Include the exact head SHA in the
-approval. The service checks the open PR through GitHub and records its head
-and the current base branch tip. Both sides must belong to the enrolled
-repository. For a private repository, give the service a repository-scoped
+Install the [hosted review example](examples/mehscan-hosted-review.yml) on the
+protected default branch. Enroll its workflow once as a Manager. Include
+`pull_request_target` and `workflow_dispatch` in the workflow policy's `events`
+and use the workflow path and `Review` environment from the example. Set the
+repository variables `MEHSCAN_COMMIT` to a reviewed Mehscan commit,
+`MEHSCAN_SHARE_HOST` to the service origin, `MEHSCAN_SHARE_AUDIENCE` to the
+enrolled audience, and `MEHSCAN_OIDC_AUDIENCE` to the service's OIDC audience.
+Configure the `MEHSCAN_CODEX_AUTH_JSON` secret on the protected environment.
+GitHub may require enabling `pull_request_target` through its Actions event
+policy. For private repositories, give the sharing service a repository-scoped
 `MEHSCAN_GITHUB_READ_TOKEN` with read access to pull requests and contents.
-[GitHub REST pull request lookup](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request)
+[GitHub privileged PR workflow guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
 
-```json
-{
-  "pull_request": 75,
-  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "run_id": "123456789",
-  "run_attempt": "1"
-}
-```
+The protected workflow reviews ready same-repository PRs on open, reopen,
+transition out of draft, and new pushes. It skips drafts and forks. The runner
+builds the pinned Mehscan tool and reads target source from a separate checkout.
+Keep provider configuration and executable workflow steps on trusted revisions.
+Run the workflow manually from the same branch to review a PR on demand. Select
+**Review the full PR diff comprehensively** to use Comprehensive for the
+current diff. Runs sync applicable facts and publish retained work. A duplicate
+automatic run can reuse a finished publication of the same snapshot. An explicit
+re-review starts fresh. On a compatible subsequent push, the default Value
+review prioritizes files changed since the previous reviewed head and keeps the
+rest of the native review queue accounted for. Shared results remain advisory
+history, with verdict admission performed by the current review.
+If fact sync fails after the run binds to a PR, the run keeps its local review
+artifacts in Actions and reports that shared facts were unavailable.
 
-```sh
-python scripts/review_share.py approve-pr --link LINK.json --input APPROVAL.json
-```
-
-In the approved job, use its OIDC identity to retrieve the pinned comparison.
-Check out the returned `head_sha`, with Git history available for the base and
-merge base. Prepare the inventory for those exact endpoints.
+For a custom protected dispatch job, use the job's OIDC identity to bind the
+run to a PR. The service resolves the current head and base through GitHub.
+Check out the returned `head_sha` with Git history available and prepare the
+inventory for those exact endpoints. Use `--path-prefix` for a nested scan root.
 
 ```sh
 python scripts/review_share.py pr-target --link LINK.json --pull-request 75
@@ -195,7 +203,12 @@ python scripts/review_share.py publish --link LINK.json --scanner MEHSCAN \
   --source-root CHECKOUT --inventory INVENTORY --stream pr:75 --batch BATCH_ID --pull-request 75
 ```
 
-A changed head, changed base, or closed PR blocks new publication. A retry of
-an already accepted batch returns its original receipt while the run's grant
-remains active. That publication retains its original Git comparison and head
-commit.
+A completed review stays attached to its pinned comparison. If the PR changes
+or closes during the review, the publication is historical. A retry of an
+already accepted batch returns its original receipt while the run's grant
+remains active. The Actions summary reports freshness at publication. Use
+`pr-current` for a fresh lookup and `get` to read the returned publication.
+
+```sh
+python scripts/review_share.py pr-current --link LINK.json --pull-request 75
+```

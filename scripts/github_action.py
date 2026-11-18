@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -140,17 +141,20 @@ def resolve_release(get, repo_name, base_ref, target_ref, forge):
             "base_commit": resolve(base_ref), "target_commit": resolve(target_ref)}
 
 
-def route(event_name, event, explicit_pr, base_ref, target_ref):
-    if event_name in ("pull_request_target", "issue_comment", "merge_group", "push"):
+def route(event_name, event, explicit_pr, base_ref, target_ref, hosted=False):
+    if event_name in ("issue_comment", "merge_group", "push") or (event_name == "pull_request_target" and not hosted):
         raise ValueError("unsupported advisory event; use pull_request or explicit workflow_dispatch")
-    if event_name == "pull_request":
+    if event_name in ("pull_request", "pull_request_target"):
         if explicit_pr or base_ref or target_ref:
             raise ValueError("pull_request inputs cannot override event identity")
         number = event.get("number")
         if type(number) is not int or number <= 0:
             raise ValueError("event is missing its PR number")
         action = event.get("action")
-        if action not in ("opened", "reopened", "synchronize", "ready_for_review", "converted_to_draft", "edited", "closed"):
+        actions = ("opened", "reopened", "synchronize", "ready_for_review")
+        if event_name == "pull_request":
+            actions += ("converted_to_draft", "edited", "closed")
+        if action not in actions:
             raise ValueError("unsupported pull_request activity")
         skip_edit = action == "edited" and not event.get("changes", {}).get("base")
         return "pr", number, "metadata_only_edit" if skip_edit else None
@@ -312,7 +316,8 @@ def resolve_delivery(get=None):
     """Read current authoritative endpoints without source/config/credential setup."""
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     kind, number, skip = route(os.environ["GITHUB_EVENT_NAME"], event,
-                               os.environ.get("MEHSCAN_PR", ""), os.environ.get("MEHSCAN_BASE", ""), os.environ.get("MEHSCAN_TARGET", ""))
+                               os.environ.get("MEHSCAN_PR", ""), os.environ.get("MEHSCAN_BASE", ""), os.environ.get("MEHSCAN_TARGET", ""),
+                               hosted=bool(os.environ.get("MEHSCAN_SHARE_LINK")))
     forge = server_url(os.environ.get("GITHUB_SERVER_URL", "https://github.com"))
     get = get or GitHub(os.environ.get("GITHUB_API_URL", "https://api.github.com"), os.environ.get("GH_TOKEN", "")).get
     repo_name = os.environ["GITHUB_REPOSITORY"]
@@ -335,6 +340,61 @@ def model_lane(get=None):
     return {"allowed":bool(allowed), "reason":reason or skip or ("model_setup_allowed" if allowed else "native_only")}
 
 
+def sharing_client():
+    # The Action runs Python in isolated mode. Load siblings from the pinned
+    # Action package, with the workflow workspace outside the import path.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import review_share
+        return review_share
+    finally:
+        sys.path.pop(0)
+
+
+def load_sharing(sharing):
+    client = sharing_client()
+    link = Path(sharing["link"])
+    if file_digest(link) != sharing["link_sha256"]:
+        raise ValueError("sharing link changed during the run")
+    return client, client.read_json(link, 16 * 1024)
+
+
+def bind_hosted_pr(link_path, checkout, endpoints, scan_root):
+    event_name = os.environ["GITHUB_EVENT_NAME"]
+    if event_name not in ("workflow_dispatch", "pull_request_target") or endpoints["kind"] != "pull_request":
+        raise ValueError("hosted PR reviews require an enrolled protected PR trigger or dispatch")
+    if endpoints["state"] != "open" or endpoints["draft"]:
+        return None, "pull_request_not_ready"
+    if endpoints["source_repository"]["id"] != endpoints["base_repository"]["id"]:
+        return None, "pull_request_outside_enrollment"
+    link_path = link_path.resolve(strict=True)
+    if link_path.is_relative_to(checkout):
+        raise ValueError("sharing link must stay outside the target checkout")
+    sharing = {"link": str(link_path), "link_sha256": file_digest(link_path)}
+    client, link = load_sharing(sharing)
+    if link["repository_id"] != str(endpoints["base_repository"]["id"]) or endpoints["forge"] != "https://github.com":
+        raise ValueError("sharing link differs from the workflow repository")
+    scope = Path(scan_root).as_posix()
+    request = {"pull_request": endpoints["pull_request"], "path_prefix": "" if scope == "." else scope}
+    if event_name == "pull_request_target":
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        head = event["pull_request"]["head"]
+        if (head["repo"]["id"] != endpoints["base_repository"]["id"]
+                or event["pull_request"]["base"]["ref"] != endpoints["base_ref"]
+                or head["sha"] != endpoints["target_commit"]):
+            return None, "superseded_pull_request_event"
+        request["event_head_sha"] = head["sha"]
+    binding = client.send(link, "pr-target", request)
+    if binding.get("status") == "already_reviewed":
+        return None, "already_reviewed"
+    if (binding["run_id"] != os.environ["GITHUB_RUN_ID"] or binding["run_attempt"] != os.environ["GITHUB_RUN_ATTEMPT"]
+            or binding["pull_request"] != request["pull_request"] or binding["path_prefix"] != request["path_prefix"]
+            or binding["stream"] != f"pr:{request['pull_request']}"):
+        raise ValueError("sharing service returned a different run binding")
+    endpoints.update(base_commit=sha(binding["base_sha"]), target_commit=sha(binding["head_sha"]))
+    return {**sharing, "binding": binding}, None
+
+
 def prepare(get=None, execute=run_command):
     checkout, scan_root, scanner = load_options()
     mode = os.environ.get("MEHSCAN_REVIEW_MODE", "native")
@@ -346,6 +406,11 @@ def prepare(get=None, execute=run_command):
     if mode != "native" and os.environ.get("MEHSCAN_STATE_STORE", ""):
         raise ValueError("review handoff currently requires fresh one-run state; persistent review is unsupported")
     endpoints, skip = resolve_delivery(get)
+    sharing = None
+    if link := os.environ.get("MEHSCAN_SHARE_LINK"):
+        if mode == "native" or not os.environ.get("MEHSCAN_PROVIDER_CONFIG"):
+            raise ValueError("a hosted PR review requires a configured reviewer")
+        sharing, skip = bind_hosted_pr(Path(link), checkout, endpoints, scan_root)
     mode, model_config, ai_skip = model_options(mode, endpoints)
     run_id, attempt = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]
     if not run_id.isdigit() or not attempt.isdigit():
@@ -358,12 +423,14 @@ def prepare(get=None, execute=run_command):
             "checkout": str(checkout), "scanner": str(scanner), "run_id": run_id, "run_attempt": attempt,
             "scanner_sha256": file_digest(scanner),
             "adapter_sha256": file_digest(__file__)}
+    if sharing:
+        plan["sharing"] = sharing
     plan["state"] = state_options()
     if require_coverage == "true":
         plan["require_complete_delta_coverage"] = True
     if ai_skip:
         plan["ai_skip_reason"] = ai_skip
-    if mode != "native":
+    if mode != "native" and (not link or not skip):
         skill = Path(os.environ.get("MEHSCAN_SKILL_ROOT") or Path(__file__).resolve().parents[1] / "skills/mehscan-security").resolve(strict=True)
         if skill.is_relative_to(checkout):
             raise ValueError("review skill must stay outside source")
@@ -418,11 +485,12 @@ def prepare(get=None, execute=run_command):
 
 def fetch_base(plan, execute=run_command):
     endpoints = plan["endpoints"]
-    env = dict(os.environ)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("ACTIONS_ID_TOKEN_") and key not in ("GH_TOKEN", "GITHUB_TOKEN", "MEHSCAN_SHARE_TOKEN")}
     # No persisted credentials, target-controlled helpers, recursive submodules,
     # hooks or tag discovery. Only the pinned base object/history is fetched.
     url = endpoints["forge"] + "/" + endpoints["base_repository"]["name"] + ".git"
-    token = env.get("GH_TOKEN", "")
+    token = os.environ.get("GH_TOKEN", "")
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_COUNT"] = "1" if token else "0"
     if token:
@@ -548,6 +616,8 @@ def state_json(plan, execute, operation, args, cleanup=False):
     kwargs = {"env": native_environment()}
     if cleanup:
         kwargs["cancellable"] = False
+    if operation in ("plan", "work") and (store := hosted_memory(plan)):
+        args = [*args, "--memory-store", store]
     result = json.loads(execute([plan["scanner"], "state", operation, *args], **kwargs))
     if not isinstance(result, dict):
         raise ValueError("native state returned an invalid receipt")
@@ -817,14 +887,38 @@ def review_lane(plan, directory):
     if not control.is_dir() or control.is_relative_to(Path(plan["checkout"]).resolve()) or control.is_relative_to(directory.resolve()):
         raise ValueError("private review control must stay outside source and artifacts")
     key = plan["endpoints"]["forge"].split("://", 1)[1] + "/repositories/" + str(plan["endpoints"]["base_repository"]["id"])
-    stream = "action-review:" + directory.name
+    stream = plan["sharing"]["binding"]["stream"] if plan.get("sharing") else "action-review:" + directory.name
     return control, ["--store", str(control / "state"), "--stream", stream], key
 
 
-def end_review(plan, execute, common, key, receipt, status):
+def hosted_memory(plan):
+    if not plan.get("sharing"):
+        return None
+    return (Path(plan["review_control"]) / "memory-store.txt").read_text(encoding="utf-8")
+
+
+def sync_hosted_facts(plan, inventory):
+    sharing = plan["sharing"]
+    client, link = load_sharing(sharing)
+    control = Path(plan["review_control"])
+    try:
+        result = client.sync_facts(SimpleNamespace(link=Path(sharing["link"]), scanner=Path(plan["scanner"]),
+            source_root=Path(plan["checkout"]) / plan["scan_root"], inventory=inventory), link)
+        store, status = result["memory_store"], "synced"
+    except (client.ShareError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+        store, status = str(control / "review-memory.turso"), "unavailable"
+    (control / "memory-store.txt").write_text(store, encoding="utf-8")
+    return status
+
+
+def end_review(plan, execute, common, key, receipt, status, inventory=None):
+    retention = []
+    if inventory and status in ("finished", "incomplete") and (store := hosted_memory(plan)):
+        retention = ["--inventory", str(inventory), "--source-root", str(Path(plan["checkout"]) / plan["scan_root"]),
+                     "--memory-store", store]
     return state_json(plan, execute, "end", [*common, "--repository-key", key,
         "--generation", str(receipt["generation"]), "--owner", receipt["owner"],
-        "--status", status, "--operation-key", "review-end:" + status], cleanup=True)
+        "--status", status, "--operation-key", "review-end:" + status, *retention], cleanup=True)
 
 
 def prepare_review(plan, directory, record, get, execute, cancelled):
@@ -838,6 +932,8 @@ def prepare_review(plan, directory, record, get, execute, cancelled):
         if not is_current(plan["endpoints"], observe(plan, get)):
             record.update(status="stale", reason="endpoints_changed_before_review_claim")
             return save_result(directory, record)
+        if plan.get("sharing"):
+            record["shared_facts"] = sync_hosted_facts(plan, directory / "inventory")
         root = str(Path(plan["checkout"]) / plan["scan_root"])
         source_args = ["--inventory", str(directory / "inventory"), "--source-root", root]
         claim = state_json(plan, execute, "claim", [*common, *source_args, "--attempt-id", directory.name,
@@ -897,6 +993,38 @@ def review_environment():
     return env
 
 
+def hosted_value_selection(plan, inventory, work, control, execute):
+    ids = work["payload"]["review_ids"]
+    root = Path(plan["checkout"]) / plan["scan_root"]
+    env = native_environment()
+    source = json.loads(execute([plan["scanner"], "investigate", "source-review-plan", str(root),
+        "--inventory", str(inventory), "--review-ids", ",".join(ids)], env=env))
+    selection = {"source_plan_id": source["plan_id"], "source_fingerprint": source["source_fingerprint"],
+                 "assignment_ids": [], "assignments": []}
+    binding = plan["sharing"]["binding"]
+    if previous := binding.get("previous_head_sha"):
+        head = binding["head_sha"]
+        try:
+            options = {"cwd": plan["checkout"], "env": env}
+            ancestor = execute(["git", "merge-base", sha(previous), sha(head)], **options).strip()
+            if ancestor == previous:
+                names = execute(["git", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", previous, head, "--"], **options)
+                changed = set(names.split("\0"))
+                excluded = {rid for row in source.get("excluded_sources", []) for rid in row["review_ids"]}
+                selected = set(ids) - excluded
+                ranked = [row for row in source["assignments"] if selected.intersection(row["review_ids"])]
+                prefix = binding["path_prefix"]
+                ranked.sort(key=lambda row: not any("/".join(filter(None, (prefix, window["path"]))) in changed
+                                                   for window in row["windows"]))
+                selection["native_assignment_ids"] = [row["id"] for row in ranked]
+        except (RuntimeError, subprocess.SubprocessError):
+            # A force push or unavailable prior object leaves the ordinary queue.
+            pass
+    path = control / "source-selection.json"
+    write_json(path, selection)
+    return path
+
+
 def run_model(plan_path, get=None, execute=run_command, cancelled=is_cancelled):
     plan_path = Path(plan_path).resolve(strict=True)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -940,6 +1068,7 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
         raise ValueError("review handoff is not pending for this snapshot")
     get = get or GitHub(os.environ.get("GITHUB_API_URL", "https://api.github.com"), os.environ.get("GH_TOKEN", "")).get
     terminal = "incomplete"
+    effective_inventory = directory / "inventory"
     try:
         if cancelled():
             raise CancelledRun()
@@ -963,6 +1092,11 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 "--artifact-root", str(directory), *provider_arguments(plan)]
             if (directory / "bundles").exists():
                 argv += ["--run", str(directory / "bundles")]
+            if store := hosted_memory(plan):
+                argv += ["--memory-store", store]
+                if plan["review"]["policy"] == "value":
+                    selection = hosted_value_selection(plan, effective_inventory, work, control, execute)
+                    argv += ["--source-selection", str(selection), "--native-share", "100"]
             # The native worker owns finalization/report validation and admission.
             worker_error = None
             try:
@@ -998,6 +1132,7 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 if owned["generation"]!=derived["generation"] or owned["snapshot_id"]!=derived["snapshot_id"]:
                     raise ValueError("source review generation changed before result")
                 receipt=derived
+                effective_inventory = augmented
                 if admitted:
                     state_json(plan,execute,"work",[*common,"--inventory",str(augmented),"--source-root",str(Path(plan["checkout"])/plan["scan_root"]),
                         "--generation",str(derived["generation"]),"--owner",derived["owner"],"--skill-root",plan["review"]["skill_root"],*provider_arguments(plan)])
@@ -1019,6 +1154,8 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 raise CancelledRun()
             if not is_current(plan["endpoints"], observe(plan, get)):
                 record.update(status="stale", reason="endpoints_changed_during_review")
+                if plan.get("sharing") and admitted:
+                    terminal = "finished"
             elif worker_error is not None or not admitted:
                 record.update(status="incomplete", reason="review_worker_incomplete")
             else:
@@ -1036,7 +1173,8 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                     raise CancelledRun()
                 if not is_current(plan["endpoints"], observe(plan, get)):
                     record.update(status="stale", reason="endpoints_changed_during_export")
-                    terminal = "incomplete"
+                    if not plan.get("sharing"):
+                        terminal = "incomplete"
     except CancelledRun:
         record.update(status="cancelled", reason="attempt_cancelled")
         terminal = "cancelled"
@@ -1046,13 +1184,49 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
     finally:
         record.pop("review_handoff", None)
         try:
-            end_review(plan, execute, common, key, receipt, terminal)
+            ended = end_review(plan, execute, common, key, receipt, terminal, effective_inventory)
+            if plan.get("sharing") and ended.get("memory", {}).get("status") == "retained":
+                record["retention"] = {"batch": ended["memory"]["batch"], "inventory": str(effective_inventory)}
             record["coordination"]["state"] = "owned_" + terminal
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
             record.update(status="incomplete", reason="review_end_failed")
             record["coordination"]["state"] = "incomplete"
         save_result(directory, record)
     return record
+
+
+def publish_hosted(plan_path):
+    plan_path = Path(plan_path).resolve(strict=True)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    record = json.loads((plan_path.parent / "run.json").read_text(encoding="utf-8"))
+    if not plan.get("sharing") or not record.get("retention") or record.get("shared_facts") != "synced":
+        return
+    sharing, retained = plan["sharing"], record["retention"]
+    client, link = load_sharing(sharing)
+    binding = sharing["binding"]
+    args = SimpleNamespace(link=Path(sharing["link"]), scanner=Path(plan["scanner"]),
+        source_root=Path(plan["checkout"]) / plan["scan_root"], inventory=Path(retained["inventory"]),
+        store=Path(hosted_memory(plan)), pull_request=binding["pull_request"], stream=binding["stream"], batch=retained["batch"])
+    try:
+        result = client.publish(args, link)
+    except (client.ShareError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+        record["publication"] = {"status": "failed"}
+        detail = "Shared publication failed. The review artifacts remain available in this run."
+    else:
+        try:
+            current = client.send(link, "pr-current", {key: binding[key] for key in ("pull_request", "path_prefix")})
+            status = current["status"]
+            if status == "current" and current["result"]["id"] != result["id"]:
+                status = "historical"
+        except (client.ShareError, OSError, ValueError, KeyError):
+            status = "unconfirmed"
+        record["publication"] = {"status": status, "receipt": result}
+        detail = f"Shared review: **{status}**. Publication: `{result['id']}`."
+    persist_result(plan_path.parent, record)
+    for filename in (plan_path.parent / "summary.md", os.environ.get("GITHUB_STEP_SUMMARY")):
+        if filename:
+            with open(filename, "a", encoding="utf-8") as handle:
+                handle.write(f"\n{detail}\n")
 
 
 def finish(plan_path, get=None, execute=run_command, cancelled=is_cancelled):
@@ -1119,6 +1293,8 @@ def summary(directory, record):
             text += f"\nReview work complete: `{str(record['completion']['review_work_complete']).lower()}`. Security resolution: `{record['completion']['security_resolution']}`.\n"
     if record.get("reason"):
         text += f"\nReason: `{record['reason']}`.\n"
+    if record.get("shared_facts") == "unavailable":
+        text += "\nShared facts were unavailable. This run uses local review memory and keeps its results in Actions.\n"
     coverage = record["delta_coverage"]
     text += f"\nDelta coverage: **{coverage['status']}** (`{coverage['reason']}`). Gate: `{coverage['gate']}`.\n"
     if "native_inventory" in record:
@@ -1172,14 +1348,17 @@ if __name__ == "__main__":
                 sys.exit(1)
         elif len(sys.argv) == 3 and sys.argv[1] == "run-model":
             result = run_model(sys.argv[2])
-            if result["status"] not in ("reviewed", "selection_required"):
+            if result["status"] not in ("reviewed", "selection_required") and not (
+                    result["status"] == "stale" and result.get("retention")):
                 sys.exit(2)
+        elif len(sys.argv) == 3 and sys.argv[1] == "publish-hosted":
+            publish_hosted(sys.argv[2])
         elif len(sys.argv) == 7 and sys.argv[1] == "review" and sys.argv[3] == "--reviewer-command" and sys.argv[5] == "--reviewer-label":
             result = review(sys.argv[2], sys.argv[4], sys.argv[6])
             if result["status"] not in ("reviewed", "selection_required"):
                 sys.exit(2)
         else:
-            raise ValueError("expected prepare, finish PLAN, require-coverage PLAN, run-model PLAN or review HANDOFF --reviewer-command FILE --reviewer-label LABEL")
+            raise ValueError("expected prepare, finish PLAN, require-coverage PLAN, run-model PLAN, publish-hosted PLAN or review HANDOFF --reviewer-command FILE --reviewer-label LABEL")
     except Exception as error:
         print(f"Mehscan advisory adapter could not prepare artifacts ({type(error).__name__}).", file=sys.stderr)
         sys.exit(2)

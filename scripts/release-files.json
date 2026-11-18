@@ -12,6 +12,7 @@
   "docs/github-acceptance.md",
   "docs/examples/mehscan-advisory.yml",
   "docs/examples/mehscan-byok-advisory.yml",
+  "docs/examples/mehscan-hosted-review.yml",
   "docs/installation.md",
   "docs/kotlin-coverage.md",
   "docs/output-contract.md",

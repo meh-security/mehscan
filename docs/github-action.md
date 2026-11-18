@@ -37,6 +37,7 @@ The composite Action accepts:
 | `skill-root` | Trusted security skill outside target source; defaults to the pinned Action package. |
 | `provider-contract` | Optional descriptor for a separate trusted handoff consumer. Mutually exclusive with `provider-config`. |
 | `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and invoke the bundled worker; Value can stop at its zero-AI selection checkpoint. |
+| `sharing-link` | Link file outside the target checkout for an enrolled hosted PR workflow. Requires a configured reviewer and the job's OIDC identity. |
 | `allow-fork-review` | Default `false`. `true` authorizes fork model execution only on explicit `workflow_dispatch`; automatic fork events prepare native inventory only. |
 | `token` | Read-only metadata/private-source token; defaults to `github.token`. |
 | `state-store` | Optional pre-existing persistent local directory, absolute and outside workspace/runner temp. All coordinated workers must share one trusted host and store. |
@@ -153,8 +154,9 @@ PRs with merge conflicts and fork approval rules can prevent automatic
 `pull_request` runs. A manually authorized PR run can prepare head-source evidence
 when it is accessible; it still does not assess the prospective merged tree.
 Private forks may require read permission beyond the default token. The Action
-rejects `pull_request_target`, generic comment events, push events and merge-group
-events instead of silently scanning a different ref. Model authentication is selected explicitly through a trusted configuration file;
+accepts `pull_request_target` for the [enrolled hosted PR workflow](review-sharing.md#review-pull-requests-from-enrolled-actions).
+Generic comment events, push events and merge-group events are unsupported.
+Model authentication is selected explicitly through a trusted configuration file;
 comment-triggered work is unsupported. See
 [GitHub's privileged PR workflow guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
 

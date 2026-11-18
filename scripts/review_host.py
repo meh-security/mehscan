@@ -496,6 +496,8 @@ class Service:
         store = self.storage(enrollment)
         store.check_binding()
         latest = store.latest_pr(stream, scope)
+        if not latest:
+            return {"status": "pending", "result": None}
         try:
             pr = self.enrolled_pr(enrollment, policy, number) if policy else None
         except ShareError as error:
@@ -503,11 +505,10 @@ class Service:
         if not pr:
             return {"status": "unconfirmed", "result": latest}
         if pr["state"] != "open" or pr["draft"]:
-            return {"status": "historical" if latest else "pending", "result": latest}
+            return {"status": "historical", "result": latest}
         base, head = commit_sha(pr["base_commit"]), commit_sha(pr["target_commit"])
         current = store.latest_pr(stream, scope, base=base, head=head)
-        return {"status": "current" if current else "historical" if latest else "pending",
-                "head_sha": head, "base_sha": base, "result": current or latest}
+        return {"status": "current" if current else "historical", "result": current or latest}
 
     def publish(self, enrollment, actor, policy, claims, body, binding):
         fields(body, ("commit", "run_id", "run_attempt", "batch"), ("pull_request",))

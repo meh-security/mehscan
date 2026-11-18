@@ -1,7 +1,9 @@
 """Configured Action review: deterministic CLI/native Git, no inference or GitHub writes."""
+from contextlib import closing
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import unittest
 from unittest.mock import patch
@@ -24,6 +26,42 @@ class Routing(fixtures.FixtureBase):
         self.assertIn("steps.review.outputs.status",action["outputs"]["status"]["value"])
         self.assertIn("incomplete",action["outputs"]["status"]["value"])
         self.assertIn("steps.review.outcome == 'skipped'",action["outputs"]["review-handoff"]["value"])
+
+    def test_hosted_delivery_skips_drafts_forks_and_superseded_events(self):
+        os.environ.update(GITHUB_EVENT_NAME="pull_request_target", MEHSCAN_REVIEW_MODE="value",
+                          MEHSCAN_SHARE_LINK=str(self.workspace / "unused-link.json"), MEHSCAN_PROVIDER_CONFIG="unused")
+        for current, reason in ((fixtures.pr(draft=True), "pull_request_not_ready"),
+                                (fixtures.pr(fork=True), "pull_request_outside_enrollment"),
+                                (fixtures.pr(), "superseded_pull_request_event")):
+            self.delivery.pr = current
+            # The queued event carries a prior head. No sharing or reviewer work starts.
+            if reason == "superseded_pull_request_event":
+                client = adapter.sharing_client()
+                link = Path(os.environ["MEHSCAN_SHARE_LINK"])
+                link.write_text(json.dumps({"repository_id": "123"}))
+                with patch.object(client, "send") as send:
+                    _, plan = self.prepare()
+                    send.assert_not_called()
+            else:
+                _, plan = self.prepare()
+            self.assertFalse(plan["should_scan"])
+            self.assertEqual(plan["skip_reason"], reason)
+
+    def test_hosted_value_prioritizes_new_paths_within_scan_root_without_dropping_work(self):
+        plan = {"checkout": str(self.checkout), "scan_root": "src", "scanner": str(self.scanner),
+                "sharing": {"binding": {"previous_head_sha": fixtures.B, "head_sha": fixtures.H, "path_prefix": "src"}}}
+        work = {"payload": {"review_ids": ["old", "new"]}}
+        source = {"plan_id": "plan", "source_fingerprint": "source", "assignments": [
+            {"id": "older", "review_ids": ["old"], "windows": [{"path": "old.js"}]},
+            {"id": "updated", "review_ids": ["new"], "windows": [{"path": "new.js"}]}]}
+
+        def execute(args, **_):
+            return {"investigate": json.dumps(source), "merge-base": fixtures.B, "diff": "src/new.js\0"}[args[1]]
+
+        path = adapter.hosted_value_selection(plan, self.workspace / "inventory", work, self.workspace, execute)
+        selection = json.loads(path.read_text())
+        self.assertEqual(selection["native_assignment_ids"], ["updated", "older"])
+        self.assertEqual(selection["assignment_ids"], [])
 
     def test_fork_event_never_reads_config_or_launches_model(self):
         endpoints = {"kind":"pull_request", "base_repository":{"id":123}, "source_repository":{"id":777}}
@@ -145,6 +183,67 @@ else:
         record = adapter.finish(directory / "plan.json",self.delivery.get,self.execute)
         self.assertEqual(record["status"],"review_ready",record)
         return directory,plan,record
+
+    def test_hosted_value_review_publishes_retained_result_after_base_moves(self):
+        client = adapter.sharing_client()
+        with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
+            import review_host as host
+        db = self.workspace / "shared.sqlite"
+
+        def sql(query, *args):
+            with closing(sqlite3.connect(db)) as connection, connection:
+                connection.row_factory = sqlite3.Row
+                return [dict(row) for row in connection.execute(query, args).fetchall()]
+
+        def store(enrollment):
+            return client.EventStore(sql, enrollment["id"])
+
+        registry = host.Registry(self.workspace / "registry.sqlite")
+        enrollment = registry.enroll("123", "team", "org", "review", "MEHSCAN_TURSO_WRITE_TOKEN_TEST", "manager",
+                                     storage=store, lookup=lambda *_: ("fixture-database", "https://fixture.turso.io"))
+        workflow = "owner/project/.github/workflows/hosted.yml@refs/heads/main"
+        claims = {"repository_id": "123", "workflow_ref": workflow, "workflow_sha": self.base, "sha": self.base,
+                  "ref": "refs/heads/main", "environment": "Review", "event_name": "pull_request_target",
+                  "run_id": "42", "run_attempt": "1", "head_ref": "topic", "base_ref": "main"}
+        service = host.Service(registry, lambda _: claims, storage=store,
+            reader=lambda _: {"database_id": enrollment["database_id"], "remote": enrollment["remote"], "token": "fixture"},
+            pull_request=lambda repo, number: adapter.resolve_pr(self.delivery.get, repo, number, "https://github.com"))
+        request = {"repository_id": "123", "audience": "team"}
+        token = registry.issue("manager", 1)["token"]
+        service.dispatch("/v1/workflow", token, {**request, "submission": {
+            "workflow_ref": workflow, "ref": "refs/heads/main", "environment": "Review", "stream": "main",
+            "events": ["pull_request_target", "workflow_dispatch"]}})
+        link = {**service.dispatch("/v1/link", "fixture-oidc", request), **request, "host": "https://sharing.example"}
+        path = self.workspace / "link.json"
+        path.write_text(json.dumps(link))
+        self.event.write_text(json.dumps({"number": 24, "action": "ready_for_review", "pull_request": self.delivery.pr}))
+        os.environ.update(GITHUB_EVENT_NAME="pull_request_target", MEHSCAN_SHARE_LINK=str(path), MEHSCAN_REVIEW_MODE="value")
+
+        def send(_link, operation, body=None):
+            return service.dispatch("/v1/" + operation, "fixture-oidc",
+                                    request if body is None else {**request, "submission": body})
+
+        def execute(args, **kwargs):
+            result = self.execute(args, **kwargs)
+            if len(args) > 1 and str(args[1]).endswith("review_worker.py"):
+                self.delivery.base = fixtures.B
+            return result
+
+        with patch.object(client, "send", side_effect=send), patch.object(client, "sql_database", return_value=sql):
+            directory, plan, _ = self.ready()
+            plan_path = directory / "plan.json"
+            self.assertEqual(plan["sharing"]["binding"]["head_sha"], self.head)
+            result = adapter.run_model(plan_path, self.delivery.get, execute)
+            self.assertEqual((result["status"], result["review_execution"]), ("stale", "admitted"), result)
+            adapter.publish_hosted(plan_path)
+            published = json.loads((directory / "run.json").read_text())["publication"]
+            self.assertEqual(published["status"], "historical")
+            self.assertIn("Shared review: **historical**", (directory / "summary.md").read_text())
+            adapter.publish_hosted(plan_path)
+            self.assertEqual(len(store(enrollment).list(0)), 1)
+            self.delivery.base = self.base
+            current = send(link, "pr-current", {"pull_request": 24})
+            self.assertEqual((current["status"], current["result"]["id"]), ("current", published["receipt"]["id"]))
 
     def test_configured_model_runs_native_admission_and_exports_completion(self):
         directory,plan,record = self.ready()

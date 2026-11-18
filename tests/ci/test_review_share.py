@@ -312,7 +312,12 @@ class ReviewSharing(unittest.TestCase):
                   "batch": {**batch(), "stream": "pr:75", "attempt_status": "finished", "comparison": pr_comparison(COMMIT, PR_COMMIT)}})
         self.claims["run_id"] = "46"
         self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup)["status"], "already_reviewed")
+        self.claims["run_id"] = "47"
+        self.pull["target_commit"] = "d" * 40
+        updated = self.post("pr-target", "test-actions-jwt", {**lookup, "event_head_sha": "d" * 40})
+        self.assertEqual(updated["previous_head_sha"], PR_COMMIT)
         self.claims["run_attempt"] = "2"
+        self.pull["target_commit"] = PR_COMMIT
         self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup)["head_sha"], PR_COMMIT)
 
     def test_shared_revisions_reach_normal_review_and_reopen_only_affected_work(self):
