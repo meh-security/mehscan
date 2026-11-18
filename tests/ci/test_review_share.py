@@ -30,7 +30,7 @@ COMMIT = "a" * 40
 PR_COMMIT = "c" * 40
 SHA = "b" * 64
 POLICY = {"workflow_ref": WORKFLOW, "ref": REF, "environment": "Review", "stream": "main",
-          "events": ["push", "schedule", "workflow_dispatch"]}
+          "events": ["push", "schedule", "workflow_dispatch", "pull_request_target"]}
 CLAIMS = {"sub": "repo:owner/repo:environment:Review", "repository_id": REPO,
           "workflow_ref": WORKFLOW, "workflow_sha": COMMIT, "sha": COMMIT, "ref": REF,
           "environment": "Review", "event_name": "push", "run_id": "45", "run_attempt": "1"}
@@ -101,7 +101,8 @@ class ReviewSharing(unittest.TestCase):
         self.contributor = self.registry.issue("cam", 1)["token"]
         self.claims = CLAIMS.copy()
         repo = {"name": "owner/repo", "id": int(REPO)}
-        self.pull = {"pull_request": 75, "state": "open", "base_ref": "main", "base_commit": COMMIT,
+        self.pull = {"pull_request": 75, "state": "open", "draft": False, "base_ref": "main", "base_commit": COMMIT,
+                     "source_ref": "topic",
                      "target_commit": PR_COMMIT, "base_repository": repo, "source_repository": repo}
         self.leases = []
         service = host.Service(self.registry, self.verify, reader=self.reader, storage=self.storage,
@@ -227,28 +228,29 @@ class ReviewSharing(unittest.TestCase):
         self.post("workflow", self.manager)
         self.rejected(403, "publish", "test-actions-jwt", submission)
 
-    def test_manager_approved_pull_request_binds_commit_comparison_and_run(self):
+    def test_protected_pr_binding_preserves_history_and_rechecks_freshness(self):
         self.claims["event_name"] = "workflow_dispatch"
         lookup = {"pull_request": 75}
-        request = {**lookup, "run_id": CLAIMS["run_id"], "run_attempt": CLAIMS["run_attempt"], "head_sha": PR_COMMIT}
         submission = {**lookup, "run_id": CLAIMS["run_id"], "run_attempt": CLAIMS["run_attempt"],
                       "commit": PR_COMMIT, "batch": {**batch(), "stream": "pr:75", "comparison": pr_comparison(COMMIT, PR_COMMIT)}}
-        self.rejected(403, "pr-target", "test-actions-jwt", lookup)
+        self.rejected(403, "pr-target", self.manager, lookup)
         self.rejected(403, "publish", "test-actions-jwt", submission)
-        self.rejected(403, "approve-pr", self.contributor, request)
-        self.rejected(409, "approve-pr", self.manager, {**request, "head_sha": COMMIT})
         self.pull["source_repository"] = {"name": "other/repo", "id": 888}
-        self.rejected(403, "approve-pr", self.manager, request)
+        self.rejected(403, "pr-target", "test-actions-jwt", lookup)
         self.pull["source_repository"] = self.pull["base_repository"]
         self.pull["base_ref"] = "other"
-        self.rejected(403, "approve-pr", self.manager, request)
-        self.pull["base_ref"] = "main"
-        approved = self.post("approve-pr", self.manager, request)
-        self.assertEqual(self.post("approve-pr", self.manager, request), approved)
-        self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup), approved)
-        self.rejected(409, "approve-pr", self.manager, {**request, "head_sha": "d" * 40})
-        self.claims["run_attempt"] = "2"
         self.rejected(403, "pr-target", "test-actions-jwt", lookup)
+        self.pull["base_ref"] = "main"
+        self.pull["draft"] = True
+        self.rejected(409, "pr-target", "test-actions-jwt", lookup)
+        self.pull["draft"] = False
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            bindings = list(pool.map(lambda _: self.post("pr-target", "test-actions-jwt", lookup), range(2)))
+        bound = bindings[0]
+        self.assertEqual(bindings[1], bound)
+        self.assertEqual((bound["head_sha"], bound["base_sha"], bound["path_prefix"]), (PR_COMMIT, COMMIT, ""))
+        self.rejected(409, "pr-target", "test-actions-jwt", {**lookup, "path_prefix": "different"})
+        self.claims["run_attempt"] = "2"
         self.rejected(403, "publish", "test-actions-jwt", {**submission, "run_attempt": "2"})
         self.claims["run_attempt"] = "1"
         self.claims["event_name"] = "push"
@@ -259,28 +261,59 @@ class ReviewSharing(unittest.TestCase):
         self.rejected(403, "publish", "test-actions-jwt", {**branch, "commit": COMMIT, "batch": batch()})
         self.rejected(403, "publish", "test-actions-jwt", {**submission, "batch": {**batch(), "stream": "pr:75"}})
         wrong = copy.deepcopy(submission)
+        wrong["batch"]["repository"]["path_prefix"] = "different"
+        self.rejected(403, "publish", "test-actions-jwt", wrong)
+        wrong = copy.deepcopy(submission)
         wrong["batch"]["comparison"]["base_commit"] = "d" * 40
         self.rejected(403, "publish", "test-actions-jwt", wrong)
+        wrong = copy.deepcopy(submission)
         wrong["batch"]["comparison"] = {**pr_comparison(COMMIT, PR_COMMIT), "working_tree": True}
         self.rejected(403, "publish", "test-actions-jwt", wrong)
         self.pull["base_commit"] = "d" * 40
-        self.rejected(409, "pr-target", "test-actions-jwt", lookup)
-        self.rejected(409, "publish", "test-actions-jwt", submission)
-        self.pull["base_commit"] = COMMIT
-
-        result = self.post("publish", "test-actions-jwt", submission)
+        self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup), bound)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            publications = list(pool.map(lambda _: self.post("publish", "test-actions-jwt", submission), range(2)))
+        result = publications[0]
+        self.assertEqual(publications[1], result)
         self.assertEqual((result["stream"], result["commit_sha"]), ("pr:75", PR_COMMIT))
         db = self.storage({"database_name": "publications", "id": host.enrollment_id(REPO, AUDIENCE)})
         saved = db.get(result["id"])["payload"]
-        self.assertEqual(saved["pull_request"], approved)
+        self.assertEqual(saved["pull_request"], bound)
         self.assertEqual(saved["workflow_sha"], COMMIT)
+        self.assertEqual(self.post("pr-current", self.viewer, lookup)["status"], "historical")
+        self.pull["base_commit"] = COMMIT
+        self.assertEqual(self.post("pr-current", self.viewer, lookup)["status"], "current")
+        self.assertEqual(self.post("pr-current", self.viewer, {**lookup, "path_prefix": "other"})["status"], "pending")
         self.pull["target_commit"] = "e" * 40
-        self.rejected(409, "pr-target", "test-actions-jwt", lookup)
+        self.assertEqual(self.post("pr-current", self.viewer, lookup)["status"], "historical")
+        self.claims["run_attempt"] = "2"
+        next_bound = self.post("pr-target", "test-actions-jwt", lookup)
+        next_batch = {**submission["batch"], "comparison": pr_comparison(COMMIT, next_bound["head_sha"])}
+        current_result = self.post("publish", "test-actions-jwt", {**submission, "run_attempt": "2",
+                                   "commit": next_bound["head_sha"], "batch": next_batch})
+        self.assertEqual(self.post("pr-current", self.viewer, lookup)["result"]["id"], current_result["id"])
+        self.claims["run_attempt"] = "1"
+        self.pull["state"] = "closed"
         self.assertEqual(self.post("publish", "test-actions-jwt", submission), result)
-        newer = copy.deepcopy(submission)
-        newer["batch"]["batch"] = "d" * 64
-        self.rejected(409, "publish", "test-actions-jwt", newer)
-        self.assertEqual(len(db.list(0)), 1)
+        historical = {**submission, "batch": {**submission["batch"], "batch": "d" * 64}}
+        self.assertEqual(self.post("publish", "test-actions-jwt", historical)["commit_sha"], PR_COMMIT)
+        self.assertEqual(self.post("pr-current", self.viewer, lookup)["status"], "historical")
+        self.assertEqual(len(db.list(0)), 3)
+
+    def test_automatic_review_checks_trigger_refs_and_coalesces_finished_snapshot(self):
+        lookup = {"pull_request": 75, "event_head_sha": PR_COMMIT}
+        self.claims.update(event_name="pull_request_target", base_ref="main", head_ref="other")
+        self.rejected(403, "pr-target", "test-actions-jwt", lookup)
+        self.claims["head_ref"] = "topic"
+        self.rejected(409, "pr-target", "test-actions-jwt", {**lookup, "event_head_sha": COMMIT})
+        self.rejected(403, "publish", "test-actions-jwt", {"commit": COMMIT, "run_id": "45", "run_attempt": "1", "batch": batch()})
+        self.post("pr-target", "test-actions-jwt", lookup)
+        self.post("publish", "test-actions-jwt", {"pull_request": 75, "commit": PR_COMMIT, "run_id": "45", "run_attempt": "1",
+                  "batch": {**batch(), "stream": "pr:75", "attempt_status": "finished", "comparison": pr_comparison(COMMIT, PR_COMMIT)}})
+        self.claims["run_id"] = "46"
+        self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup)["status"], "already_reviewed")
+        self.claims["run_attempt"] = "2"
+        self.assertEqual(self.post("pr-target", "test-actions-jwt", lookup)["head_sha"], PR_COMMIT)
 
     def test_shared_revisions_reach_normal_review_and_reopen_only_affected_work(self):
         project = Path(__file__).resolve().parents[2]
@@ -460,7 +493,7 @@ class ReviewSharing(unittest.TestCase):
     def test_native_retention_publishes_through_client_without_sharing_credentials(self):
         self.publish_native()
 
-    def test_native_pinned_comparison_publishes_to_approved_pr(self):
+    def test_native_pinned_comparison_publishes_to_bound_pr(self):
         self.publish_native(self.pull["pull_request"])
 
     def publish_native(self, number=None):
@@ -489,7 +522,7 @@ class ReviewSharing(unittest.TestCase):
         controller = git("rev-parse", "HEAD")
         commit, stream, comparison_args = controller, "main", []
         self.claims.update(sha=controller, workflow_sha=controller)
-        approved = None
+        target = None
         if number is not None:
             (root / "app.js").write_text(application, encoding="utf-8")
             git("add", "app.js")
@@ -497,10 +530,7 @@ class ReviewSharing(unittest.TestCase):
             commit = git("rev-parse", "HEAD")
             self.claims["event_name"] = "workflow_dispatch"
             self.pull.update(base_commit=controller, target_commit=commit)
-            approved = self.post("approve-pr", self.manager, {"pull_request": number, "head_sha": commit,
-                                  "run_id": self.claims["run_id"], "run_attempt": self.claims["run_attempt"]})
             target = self.post("pr-target", "test-actions-jwt", {"pull_request": number})
-            self.assertEqual(target, approved)
             stream = target["stream"]
             comparison_args = ["--changed-from", target["base_sha"], "--target", target["head_sha"],
                                "--diff-mode", "files", "--merge-base"]
@@ -544,8 +574,8 @@ class ReviewSharing(unittest.TestCase):
         self.assertEqual(saved["attempt_status"], "incomplete")
         self.assertTrue(saved["assessments"])
         self.assertEqual(saved["assessments"][0]["verdict"], "needs_review")
-        if approved:
-            self.assertEqual(publication["pull_request"], approved)
+        if target:
+            self.assertEqual(publication["pull_request"], target)
             self.assertEqual(publication["workflow_sha"], controller)
             self.assertEqual(saved["comparison"], pr_comparison(controller, commit))
             self.assertNotEqual(result["commit_sha"], controller)

@@ -1,4 +1,4 @@
-"""Link a checkout, read shared review history, or submit an approved publication."""
+"""Link a checkout, read shared review history, or publish from enrolled CI."""
 
 import argparse
 import os
@@ -32,7 +32,7 @@ def app_credential(oidc_audience):
     if (not request_token or not oidc_audience or parsed.scheme != "https"
             or not parsed.hostname or not parsed.hostname.endswith(".actions.githubusercontent.com")
             or parsed.username or parsed.password or parsed.fragment):
-        raise ShareError(401, "provide a Mehscan token or an approved GitHub Actions identity")
+        raise ShareError(401, "provide a Mehscan token or an enrolled GitHub Actions identity")
     query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
     query["audience"] = oidc_audience
     url = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
@@ -90,7 +90,7 @@ def publish(args, link):
     if number is None and commit != os.environ.get("GITHUB_SHA"):
         raise ShareError(409, "checkout commit differs from the protected job source commit")
     if number is not None and args.stream != f"pr:{number}":
-        raise ShareError(409, "pull request publication requires its approved PR stream")
+        raise ShareError(409, "pull request publication requires its bound PR stream")
     command = [str(scanner), "memory", "export", "--source-root", str(root), "--inventory", str(inventory),
                "--stream", args.stream, "--batch", args.batch]
     if args.store:
@@ -183,7 +183,7 @@ def main():
     connect.add_argument("--oidc-audience")
     connect.add_argument("--source-root", type=Path, required=True)
     connect.add_argument("--output", type=Path, required=True)
-    for name in ("list", "get", "sync", "publish", "fact", "grant", "workflow", "approve-pr", "pr-target"):
+    for name in ("list", "get", "sync", "publish", "fact", "grant", "workflow", "pr-target", "pr-current"):
         command = commands.add_parser(name)
         command.add_argument("--link", type=Path, required=True)
         if name == "list":
@@ -198,9 +198,10 @@ def main():
             command.add_argument("--stream", required=True)
             command.add_argument("--batch", required=True)
             command.add_argument("--pull-request", type=int)
-        if name == "pr-target":
+        if name in ("pr-target", "pr-current"):
             command.add_argument("--pull-request", type=int, required=True)
-        if name in ("fact", "grant", "workflow", "approve-pr"):
+            command.add_argument("--path-prefix", default="")
+        if name in ("fact", "grant", "workflow"):
             command.add_argument("--input", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -219,8 +220,8 @@ def main():
                 result = publish(args, link)
             elif args.command == "sync":
                 result = sync_facts(args, link)
-            elif args.command == "pr-target":
-                result = send(link, "pr-target", {"pull_request": args.pull_request})
+            elif args.command in ("pr-target", "pr-current"):
+                result = send(link, args.command, {"pull_request": args.pull_request, "path_prefix": args.path_prefix})
             elif args.command == "list":
                 if not 0 <= args.after < 2**63:
                     raise ShareError(400, "invalid sharing cursor")

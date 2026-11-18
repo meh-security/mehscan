@@ -218,6 +218,28 @@ class EventStore:
     def list(self, after):
         return self.execute(f"SELECT {EVENT_COLUMNS} FROM mehscan_shared_events WHERE seq > ? ORDER BY seq LIMIT 100", after)
 
+    def latest_pr(self, stream, scope, *, base=None, head=None, policy=None, workflow_sha=None):
+        query = f"""SELECT {EVENT_COLUMNS},
+                     json_extract(payload, '$.batch.attempt_status') AS attempt_status,
+                     json_extract(payload, '$.pull_request.base_sha') AS base_sha
+                     FROM mehscan_shared_events WHERE kind = 'review' AND stream = ?
+                     AND json_extract(payload, '$.batch.repository.path_prefix') = ?
+                     AND json_extract(payload, '$.pull_request.pull_request') IS NOT NULL"""
+        params = [stream, scope]
+        if base is not None:
+            query += " AND json_extract(payload, '$.pull_request.base_sha') = ?"
+            params.append(base)
+        if head is not None:
+            query += " AND commit_sha = ?"
+            params.append(head)
+        if policy is not None:
+            query += """ AND json_extract(payload, '$.pull_request.policy') = ?
+                         AND json_extract(payload, '$.workflow_sha') = ?
+                         AND json_extract(payload, '$.batch.attempt_status') = 'finished'"""
+            params.extend((policy, workflow_sha))
+        rows = self.execute(query + " ORDER BY seq DESC LIMIT 1", *params)
+        return rows[0] if rows else None
+
     def fact_head(self):
         return self.execute("SELECT coalesce(max(seq), 0) AS head FROM mehscan_shared_events WHERE kind = 'fact'")[0]["head"]
 
