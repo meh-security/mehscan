@@ -27,9 +27,8 @@ def usage(path, runtime, unobserved_provider_calls=0):
                 raise ValueError("invalid provider metrics record")
             identity = (row["conversation_id"], row["round"])
             provider = row["provider"]
-            if not isinstance(provider, dict):
-                raise ValueError("invalid provider metrics binding")
-            usage_basis = "request" if provider.get("provider") == "openai-responses" else "conversation_delta"
+            usage_basis = ("request" if isinstance(provider, dict) and provider.get("provider") == "openai-responses"
+                           else "conversation_delta")
             if (row["schema_version"] != "1" or row["provider"] not in allowed or identity in seen
                     or row.get("usage_basis") != usage_basis):
                 raise ValueError("provider metrics are incompatible or duplicated")

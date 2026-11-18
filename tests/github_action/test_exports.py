@@ -91,6 +91,18 @@ class UsageTests(unittest.TestCase):
         self.put(self.row(usage_basis="conversation_total"))
         with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
 
+    def test_request_usage_and_unbound_reviewer_metrics(self):
+        self.runtime["provider"] = {"provider": "openai-responses"}
+        self.put(self.row(usage_basis="request", usage={"input_tokens": 7}),
+                 self.row(1, usage_basis="request", usage={"input_tokens": 3}))
+        result = export.usage(self.path, self.runtime)
+        self.assertEqual(result["reported_token_sums"]["input_tokens"], 10)
+        self.assertEqual(result["token_accounting"], "reported_per_call")
+
+        self.runtime["provider"] = None
+        self.put(self.row(usage={"input_tokens": 2}))
+        self.assertEqual(export.usage(self.path, self.runtime)["reported_token_sums"]["input_tokens"], 2)
+
     def test_negative_boolean_and_noninteger_counts_are_rejected(self):
         for value in (-1, True, "7", 1.5):
             with self.subTest(value=value):
