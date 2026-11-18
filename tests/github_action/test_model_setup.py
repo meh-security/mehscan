@@ -99,6 +99,23 @@ class PinnedSetup(unittest.TestCase):
         with self.assertRaises(ValueError): setup.setup(self.root,"0.162.0","gpt-6-luna",'{"key":"test"}',self.fetch)
         self.assertFalse((self.root / "auth.json").exists())
 
+    def test_api_key_uses_responses_without_installing_codex(self):
+        key = "sk-test-project-fixture-only"
+        mixed = json.dumps({"OPENAI_API_KEY": key, "tokens": {"access_token": "fixture"}})
+        with self.assertRaises(ValueError):
+            setup.setup(self.root, "0.162.0", "gpt-6.1-terra", mixed, self.fetch)
+        self.assertFalse(self.root.exists())
+        auth = json.dumps({"OPENAI_API_KEY": key, "tokens": None})
+        path = setup.setup(self.root, "0.162.0", "gpt-6.1-terra", auth, self.fetch)
+        config = json.loads(path.read_text())
+        self.assertEqual(config["transport"], "openai-responses")
+        self.assertEqual(config["executable_version"], "responses-v1")
+        self.assertEqual(config["reasoning_effort"], "medium")
+        self.assertNotIn("executable", config)
+        self.assertNotIn(key, path.read_text())
+        self.assertEqual(json.loads(Path(config["auth_file"]).read_text()), {"OPENAI_API_KEY": key})
+        self.assertFalse(self.calls)
+
     def test_caller_only_exposes_auth_to_authorized_setup(self):
         import yaml
         value = yaml.safe_load((fixtures.ROOT / "docs/examples/mehscan-byok-advisory.yml").read_text(encoding="utf-8"))

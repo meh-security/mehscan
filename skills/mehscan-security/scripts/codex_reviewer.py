@@ -264,7 +264,13 @@ def initialize_store(private, expected):
     private.chmod(0o700)
 
 
-def run(config, task, launcher_factory=Launcher):
+def run(config, task, launcher_factory=None):
+    if launcher_factory is None:
+        if config.get("transport") == "openai-responses":
+            from openai_responses import ResponsesLauncher
+            launcher_factory = ResponsesLauncher
+        else:
+            launcher_factory = Launcher
     if task.get("domain_session") is None:
         return run_bound(config, task, launcher_factory)
     packet = read(task["evidence_packet"])
@@ -337,8 +343,8 @@ def run_bound(config, task, launcher_factory=Launcher):
     private = Path(config["private_directory"]).resolve()
     if private.is_relative_to(root) or private.is_relative_to(artifact_root):
         raise ValueError("provider sessions/auth must stay outside source and exported artifacts")
-    for path in (config["auth_file"], config["executable"]):
-        if Path(path).resolve(strict=True).is_relative_to(root):
+    for name in ("auth_file", "executable"):
+        if name in config and Path(config[name]).resolve(strict=True).is_relative_to(root):
             raise ValueError("provider code/auth cannot come from target source")
     if Path(config["auth_file"]).resolve(strict=True).is_relative_to(artifact_root):
         raise ValueError("provider authentication cannot be an exported artifact")
@@ -423,7 +429,9 @@ def run_bound(config, task, launcher_factory=Launcher):
     # the launcher's answer.json is overwritten by the next continuation.
     save(log / "response.json", response)
     thread, usage = parse_events(events, (state or {}).get("thread_id"))
-    delta, unknown = usage_delta(usage, state["reported_conversation_usage"] if state else None, state is not None)
+    request_usage = expected["provider"] == "openai-responses"
+    delta, unknown = usage_delta(usage, state["reported_conversation_usage"] if state else None,
+                                 state is not None and not request_usage)
     next_state = {"binding": binding, "round": round_index, "thread_id": thread,
                       "sent_facts": [fact["result_id"] for fact in facts], "sent_results": len(task["research"]["results"]),
                       "reported_conversation_usage":usage}
@@ -445,8 +453,9 @@ def run_bound(config, task, launcher_factory=Launcher):
               "resumed": state is not None, "elapsed_ms": round((time.monotonic()-started)*1000),
               "source_presentation":presentation, "schema_mode":"stable" if stable_schema else "dynamic",
               "boundary_checks":boundary_checks,
-              "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
-              "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
+              "prompt_bytes": len(prompt.encode()), "usage":delta,
+              "usage_basis":"request" if request_usage else "conversation_delta", "unknown_delta_counters":unknown}
+    metric["reported_request_usage" if request_usage else "reported_conversation_usage"] = usage
     if domain:
         metric.update(domain_session_id=domain["id"], domain_case_id=domain["case_id"],
                       domain_case_index=domain["case_index"], domain_turn=domain_turn,
@@ -534,5 +543,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("BYOK Codex reviewer failed (" + type(error).__name__ + ").", file=sys.stderr)
+        print("BYOK reviewer failed (" + type(error).__name__ + ").", file=sys.stderr)
         sys.exit(2)

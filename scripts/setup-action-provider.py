@@ -1,4 +1,4 @@
-"""Install a pinned Linux x64 Codex client and private config for the BYOK example."""
+"""Prepare private Responses API or pinned Codex CLI settings for Actions."""
 import argparse
 import base64
 import hashlib
@@ -20,19 +20,9 @@ def fetch(url):
     return data
 
 
-def setup(root, version, model, auth_json, retrieve=fetch):
+def install_codex(root, version, retrieve):
     if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
         raise ValueError("this example installs the Linux x64 client")
-    if not root.is_absolute() or not re.fullmatch(r"[0-9][0-9A-Za-z.-]{0,127}", version):
-        raise ValueError("absolute private setup root and pinned client version required")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", model):
-        raise ValueError("invalid selected model")
-    if not auth_json or len(auth_json.encode()) > 64 * 1024:
-        raise ValueError("explicit authentication JSON is missing or oversized")
-    auth = json.loads(auth_json)
-    if not isinstance(auth, dict) or not auth:
-        raise ValueError("explicit authentication must be a nonempty JSON object")
-    root.mkdir(mode=0o700, parents=True, exist_ok=False)
     metadata = json.loads(retrieve("https://registry.npmjs.org/@openai/codex/" + version + "-linux-x64"))
     url = metadata["dist"]["tarball"]
     if not isinstance(url, str) or not url.startswith("https://registry.npmjs.org/@openai/codex/-/"):
@@ -48,13 +38,34 @@ def setup(root, version, model, auth_json, retrieve=fetch):
     if not executable.is_file():
         raise ValueError("pinned package lacks the expected client")
     executable.chmod(0o755)
+    return executable
+
+
+def setup(root, version, model, auth_json, retrieve=fetch):
+    if not root.is_absolute() or not re.fullmatch(r"[0-9][0-9A-Za-z.-]{0,127}", version):
+        raise ValueError("absolute private setup root and valid client pin required")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", model):
+        raise ValueError("invalid selected model")
+    if not auth_json or len(auth_json.encode()) > 64 * 1024:
+        raise ValueError("explicit authentication JSON is missing or oversized")
+    auth = json.loads(auth_json)
+    if not isinstance(auth, dict) or not auth:
+        raise ValueError("explicit authentication must be a nonempty JSON object")
+    api_key = auth.get("OPENAI_API_KEY")
+    if api_key is not None and (not isinstance(api_key, str) or not re.fullmatch(r"sk-[A-Za-z0-9_-]{16,512}", api_key)
+                                or auth.get("tokens")):
+        raise ValueError("invalid or ambiguous project API authentication")
+    root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    if api_key is not None:
+        config = {"transport":"openai-responses", "executable_version":"responses-v1"}
+        auth = {"OPENAI_API_KEY": api_key}
+    else:
+        config = {"executable":str(install_codex(root, version, retrieve)), "executable_version":version}
     auth_file = root / "auth.json"
     auth_file.write_text(json.dumps(auth), encoding="utf-8")
     auth_file.chmod(0o600)
-    config = {"schema_version":"1", "executable":str(executable), "executable_version":version,
-              "model":model, "reasoning_effort":"medium", "auth_file":str(auth_file),
-              "private_directory":str(root / "sessions"),
-              "schema_mode":"stable", "source_presentation":"line-addressed-v1"}
+    config.update(schema_version="1", model=model, reasoning_effort="medium", auth_file=str(auth_file),
+                  private_directory=str(root / "sessions"), schema_mode="stable", source_presentation="line-addressed-v1")
     path = root / "config.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     path.chmod(0o600)

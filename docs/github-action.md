@@ -243,8 +243,8 @@ it, the composite exposes the prepared `review_ready` handoff.
 
 The controller receives a small explicit environment allowlist without GitHub or
 provider tokens, Python path overrides or arbitrary workflow secrets. The bundled
-[BYOK Codex adapter](codex-reviewer.md) consumes provider-bound work with explicit
-private authentication and upstream analysis-only settings on every start/resume.
+[BYOK OpenAI adapter](codex-reviewer.md) consumes provider-bound work using the
+Responses API without tools or the Codex CLI with upstream analysis-only controls.
 It does not add a process sandbox; runner isolation belongs to the company.
 Export its provider descriptor before preparation and supply `provider-contract`.
 The worker checks the bundled adapter config against native provider/model/effort/
@@ -260,11 +260,10 @@ before receiving company model credentials.
 
 ## Opt-in BYOK Action execution
 
-Prepare the [trusted provider configuration](codex-reviewer.md) in a prior company-
-approved setup step. Install the chosen Codex CLI outside target source and provide
-one explicit supported authentication JSON file; keep auth, config and sessions
-outside the complete artifact upload root. The Action does not install a provider,
-log in automatically or discover model keys from the workflow environment.
+Prepare the [trusted provider configuration](codex-reviewer.md) in a prior
+company-approved setup step. Use an explicit project API key for direct Responses
+or install the pinned CLI outside target source and supply its supported Codex
+authentication file. Keep auth, config and sessions outside the artifact upload root.
 
 ```yaml
 - name: Review changed files with the company model

@@ -176,6 +176,8 @@ repository variables `MEHSCAN_COMMIT` to a reviewed Mehscan commit,
 `MEHSCAN_SHARE_HOST` to the service origin, `MEHSCAN_SHARE_AUDIENCE` to the
 enrolled audience, and `MEHSCAN_OIDC_AUDIENCE` to the service's OIDC audience.
 Configure the `MEHSCAN_CODEX_AUTH_JSON` secret on the protected environment.
+A JSON object containing `OPENAI_API_KEY` selects direct Responses API inference.
+A supported signed-in Codex auth JSON selects the pinned CLI.
 GitHub may require enabling `pull_request_target` through its Actions event
 policy. For private repositories, give the sharing service a repository-scoped
 `MEHSCAN_GITHUB_READ_TOKEN` with read access to pull requests and contents.

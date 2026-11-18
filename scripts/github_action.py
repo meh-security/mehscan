@@ -294,18 +294,21 @@ def configure_model(path, skill, control, checkout, directory):
     spec.loader.exec_module(module)
     config = module.load_config(config_path)
     for name in ("auth_file", "executable", "private_directory"):
+        if name not in config:
+            continue
         actual = Path(config[name]).resolve()
         if actual.is_relative_to(checkout) or actual.is_relative_to(directory):
             raise ValueError("provider code/auth/sessions must stay outside source and artifacts")
     descriptor = control / "provider.json"
-    write_json(descriptor, module.provider_contract(config))
+    contract = module.provider_contract(config)
+    write_json(descriptor, contract)
     command = control / "reviewer-command.json"
     write_json(command, [sys.executable, str(skill / "scripts/codex_reviewer.py"), "--config", str(config_path)])
     descriptor.chmod(0o600)
     command.chmod(0o600)
     return str(descriptor), {"config":str(config_path), "config_sha256":file_digest(config_path),
         "command":str(command), "command_sha256":file_digest(command),
-        "label":"codex-cli/" + config["model"] + "/" + config["reasoning_effort"]}
+        "label":"/".join(contract[key] for key in ("provider", "model", "reasoning_effort"))}
 
 
 def native_environment():

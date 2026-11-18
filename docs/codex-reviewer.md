@@ -1,12 +1,28 @@
-# BYOK Codex reviewer
+# BYOK OpenAI reviewer
 
 The bundled adapter, `skills/mehscan-security/scripts/codex_reviewer.py`, reviews
-Mehscan evidence using a company-selected Codex CLI and explicit authentication.
+Mehscan evidence through the OpenAI Responses API or an explicitly configured
+Codex CLI.
 It returns structured drafts and research requests to the native engine; the
 engine controls queries, findings, fingerprints, finalization and admission.
 Value/Comprehensive research profiles remain configurable.
 
 ## Configuration
+
+For the Actions examples, configure `MEHSCAN_CODEX_AUTH_JSON` as the protected
+secret. Supply a project API key as `{"OPENAI_API_KEY":"YOUR_KEY"}` to select
+the Responses API. Supply a supported signed-in Codex authentication file to
+select the pinned CLI. The setup script keeps the credential in a private file
+outside the review artifacts and selects exactly one transport. Platform API
+credits apply to eligible direct Responses requests. [OpenAI API credit coverage](https://developers.openai.com/api/docs/guides/chatgpt-api-credits#what-the-credits-cover)
+
+For a manually configured Responses reviewer, set `"transport": "openai-responses"`
+and `"executable_version": "responses-v1"` in the private adapter configuration.
+Keep `auth_file`, `private_directory`, `model`, `reasoning_effort`, and
+`schema_version` as shown below and omit `executable`. The provider descriptor
+binds the transport to the native work. Direct requests use strict structured
+output, an empty tool list and `store: false`. Continuations reuse the private
+local transcript, and usage counters cover one request each.
 
 Detailed authorization/token evidence tables are opt-in with
 `"boundary_checks": true` in trusted adapter configuration (default: false).

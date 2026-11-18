@@ -373,12 +373,12 @@ def validate_provider_command(argv, expected, skill_root, root, artifact_root):
         return
     expected_adapter = (skill_root / "scripts/codex_reviewer.py").resolve(strict=True)
     if len(argv) != 4 or Path(argv[1]).resolve(strict=True) != expected_adapter or argv[2] != "--config":
-        raise ValueError("bound Codex provider requires the bundled BYOK adapter")
+        raise ValueError("bound provider requires the bundled BYOK adapter")
     provider_config_path = outside(argv[3], root)
     if provider_config_path.is_relative_to(artifact_root):
         raise ValueError("provider configuration must stay outside exported artifacts")
     config = read(provider_config_path)
-    actual = {"schema_version": config["schema_version"], "provider": "codex-cli",
+    actual = {"schema_version": config["schema_version"], "provider": config.get("transport", "codex-cli"),
         **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
     if actual != expected:
         raise ValueError("actual provider configuration differs from the native work binding")
