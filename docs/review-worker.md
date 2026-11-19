@@ -564,7 +564,8 @@ or `~/.local/state/mehscan` on Linux. Set `MEHSCAN_STATE_HOME` to an absolute
 directory outside the source root to choose a different state home. The
 controller creates the repository directory on location lookup and initializes
 the Turso database on the first write. Use `--store FILE` for a specific database
-with `memory` commands and `--memory-store FILE` with `state end`.
+with `memory` commands. Pass the same database as `--memory-store FILE` to
+`state work`, the review worker, and `state end` when you override its location.
 
 [Claim a generation](review-state.md#claim-a-generation) with that journal and
 bind the review plan. Use `memory prepare` for native-only work and `state work`
@@ -597,15 +598,15 @@ use the effective inventory of the generation being closed:
 mehscan state end --store STATE --stream STREAM --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
 
-The result reports `memory.status=retained` for a finished or incomplete attempt.
-If the database or source validation fails, the native attempt stays closed and
-the result reports `memory.status=pending` with the reason. Correct the cause
+The result reports `memory.status=retained` after persisting a finished or
+incomplete attempt. If applicable knowledge changes before a finished attempt
+closes, refresh the affected reviews and retry the close. If retention fails
+after the native close, the result reports `memory.status=pending`. Correct the cause
 and retry with the same end operation key, effective inventory, source snapshot,
 and state home. The controller retains the original terminal generation even if
 another attempt has since started. Cancelled attempts report skipped retention.
-For a one-shot run, use a temporary journal and pass `--memory-mode temporary`
-to `state end` to skip Turso retention. Use `state work` or pass the same mode
-to `memory prepare` to skip Turso lookup.
+For a one-shot run with a temporary journal, use `--memory-mode temporary`
+for preparation, the review worker, and close to skip Turso.
 
 For an attempt already ended without memory, retain its current terminal
 generation explicitly:
@@ -614,6 +615,59 @@ generation explicitly:
 mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
 mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
+
+### Carry evidence into future reviews
+
+See [Enrolled review sharing](review-sharing.md) for publishing retained
+reviews and reading shared history from another checkout.
+
+People and agents can add a fact to the local application knowledge store. Put
+the input file outside the checkout and use one key per claim and author.
+Repository-wide facts omit `scope`. Use a scan-root-relative path or the
+`subject_key` from `state history` to narrow it. A subject-scoped fact can name
+a different source path where its supporting evidence lives.
+
+```json
+{
+  "key": "entry-routing",
+  "author": "developer",
+  "origin": "assertion",
+  "statement": "The production ingress routes this endpoint through a separate policy.",
+  "scope": {"path": "src/routes.js", "environment": "production"},
+  "observed_at": 1794873600,
+  "evidence": ["OPS-42"]
+}
+```
+
+```text
+mehscan memory knowledge-put --source-root ROOT --inventory RUN/inventory --input FACT.json
+mehscan memory knowledge-list --source-root ROOT --inventory RUN/inventory
+```
+
+Use `source_observation` with `source_paths` to pin an observation to source
+bytes, or `inference` to record an attributed hypothesis. `observed_at` and
+`expires_at` use Unix seconds. Environment claims carry their observation time
+and reach the reviewer as attributed claims to verify. The local author is a
+label supplied by the contributor. Record independent claims under each author's
+own key. Reviews retain links to deciding source from admitted investigations
+as they close, including when an incomplete attempt contains accepted results.
+
+Use `parent_revision` in an updated input to revise the current record. Use
+`knowledge-list --item ITEM --history true` to read its revisions. Withdraw a
+fact with the recorded author and the latest revision.
+
+```text
+mehscan memory knowledge-withdraw --source-root ROOT --inventory RUN/inventory --item ITEM --author NAME --expected-revision REVISION
+```
+
+The write returns the directly affected review IDs. After a completed scan,
+claim a fresh generation and use `memory prepare` to keep eligible decisions
+and schedule fresh work where applicable facts changed. For a focused
+reassessment, request those IDs from `state work` and run the worker with
+`--phase native --supersede`. The review supplies the verdict and the journal preserves the
+previous decisions. For a full rescan, build a fresh inventory and use
+`state work` for the full selected scope. It carries current scoped knowledge
+and requests fresh review work.
 
 Retention reads the native journal for the specified generation and inventory.
 Each saved batch links verdicts to their check text and source references.

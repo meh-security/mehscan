@@ -4,7 +4,7 @@ use mehscan_core::{ReviewAttemptStatus, ReviewDecisionRecord, ReviewWorkPackage}
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::{Attempt, Stream, settled, validate_work_package};
+use super::{Attempt, Stream, premise_revisions, settled, validate_work_package};
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,10 +109,17 @@ impl Stream {
             return Err("assignment requires a fresh ID and at least one review".into());
         }
         self.available_reviews(attempt, Some(&package.payload.review_ids))?;
-        if package.payload.expected_parents.values().any(|parents| {
-            matches!(parents.as_slice(), [parent]
-                if attempt.admissions.contains(parent) && settled(&self.decisions[parent]))
-        }) {
+        if package
+            .payload
+            .expected_parents
+            .iter()
+            .any(|(review_id, parents)| {
+                matches!(parents.as_slice(), [parent]
+                if attempt.admissions.contains(parent) && settled(&self.decisions[parent])
+                    && self.knowledge_revisions(attempt.generation, parent)
+                        == premise_revisions(&package.payload.knowledge, review_id))
+            })
+        {
             return Err(
                 "assignment includes a settled review already admitted to this generation".into(),
             );
@@ -127,6 +134,9 @@ impl Stream {
         };
         let result = json!({"status":"allocated","assignment_id":id,"assignment":assignment});
         self.assignments.insert(id.into(), assignment);
+        if let Some(sharing) = &package.payload.knowledge.sharing {
+            self.sharing = Some(sharing.clone());
+        }
         Ok(result)
     }
 

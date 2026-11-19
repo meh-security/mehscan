@@ -34,6 +34,9 @@ inputs:
   provider-config:
     description: Optional absolute private Codex BYOK configuration; value/comprehensive then executes the bundled reviewer.
     default: ''
+  sharing-link:
+    description: Enrolled PR sharing link outside target source. Uses the protected job's OIDC identity to bind and publish.
+    default: ''
   allow-fork-review:
     description: Explicitly authorize fork model review on workflow_dispatch only. Automatic fork events stay native-only.
     default: 'false'
@@ -112,6 +115,7 @@ runs:
         MEHSCAN_SKILL_ROOT: ${{ inputs.skill-root }}
         MEHSCAN_PROVIDER_CONTRACT: ${{ inputs.provider-contract }}
         MEHSCAN_PROVIDER_CONFIG: ${{ inputs.provider-config }}
+        MEHSCAN_SHARE_LINK: ${{ inputs.sharing-link }}
         MEHSCAN_ALLOW_FORK_REVIEW: ${{ inputs.allow-fork-review }}
         MEHSCAN_PR: ${{ inputs.pull-request }}
         MEHSCAN_BASE: ${{ inputs.base }}
@@ -151,6 +155,14 @@ runs:
         MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
         GH_TOKEN: ${{ inputs.token }}
       run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" run-model "$MEHSCAN_PLAN"
+    - name: Publish retained advisory review
+      if: always() && !cancelled() && inputs.sharing-link != '' && steps.prepare.outputs.plan != ''
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        MEHSCAN_ACTION_PATH: ${{ github.action_path }}
+        MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
+      run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" publish-hosted "$MEHSCAN_PLAN"
     - name: Require complete delta coverage
       id: coverage
       if: always() && !cancelled() && inputs.require-complete-delta-coverage == 'true' && steps.prepare.outputs.plan != ''

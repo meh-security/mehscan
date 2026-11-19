@@ -89,7 +89,8 @@ impl ReviewProviderContract {
                     .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:/".contains(&byte))
         };
         if self.schema_version != "1"
-            || self.provider != "codex-cli"
+            || !matches!(self.provider.as_str(), "codex-cli" | "openai-responses")
+            || (self.provider == "openai-responses" && self.executable_version != "responses-v1")
             || !label(&self.executable_version)
             || !label(&self.model)
             || !matches!(
@@ -318,6 +319,11 @@ mod tests {
         provider.model = "gpt-6-luna".into();
         provider.reasoning_effort = "automatic".into();
         assert!(provider.validate().is_err());
+        provider.reasoning_effort = "medium".into();
+        provider.provider = "openai-responses".into();
+        assert!(provider.validate().is_err());
+        provider.executable_version = "responses-v1".into();
+        assert!(provider.validate().is_ok());
     }
 
     #[test]

@@ -21,14 +21,22 @@ def file_digest(path):
 
 def load_config(path):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
-    expected = {"schema_version", "executable", "executable_version", "model", "reasoning_effort",
-                "auth_file", "private_directory"}
-    if (not isinstance(config, dict) or set(config)-{"source_presentation", "schema_mode", "boundary_checks"} != expected or config["schema_version"] != "1"
+    if not isinstance(config, dict):
+        raise ValueError("unsupported review provider configuration")
+    transport = config.get("transport", "codex-cli")
+    expected = {"schema_version", "executable_version", "model", "reasoning_effort", "auth_file", "private_directory"}
+    paths = ("auth_file", "private_directory")
+    if transport == "codex-cli":
+        expected.add("executable")
+        paths += ("executable",)
+    if (transport not in ("codex-cli", "openai-responses")
+            or set(config)-{"transport", "source_presentation", "schema_mode", "boundary_checks"} != expected
+            or config["schema_version"] != "1"
             or type(config.get("boundary_checks", False)) is not bool
             or config.get("source_presentation","line-addressed-v1") not in ("raw","line-addressed-v1")
             or config.get("schema_mode", "stable") not in ("dynamic", "stable")):
-        raise ValueError("unsupported Codex BYOK configuration")
-    for key in ("executable", "auth_file", "private_directory"):
+        raise ValueError("unsupported review provider configuration")
+    for key in paths:
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
             raise ValueError("provider paths must be absolute trusted paths")
     for key in ("executable_version", "model"):
@@ -37,13 +45,15 @@ def load_config(path):
             raise ValueError("invalid provider version or model")
     if config["reasoning_effort"] not in ("low", "medium", "high", "xhigh", "max", "ultra"):
         raise ValueError("invalid reasoning effort")
-    if not Path(config["executable"]).is_file():
+    if transport == "openai-responses" and config["executable_version"] != "responses-v1":
+        raise ValueError("unsupported Responses API protocol version")
+    if transport == "codex-cli" and not Path(config["executable"]).is_file():
         raise ValueError("configured Codex executable is missing")
     return config
 
 
 def provider_contract(config):
-    return {"schema_version": "1", "provider": "codex-cli",
+    return {"schema_version": "1", "provider": config.get("transport", "codex-cli"),
             **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
 
 

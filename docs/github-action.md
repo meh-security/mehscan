@@ -37,6 +37,7 @@ The composite Action accepts:
 | `skill-root` | Trusted security skill outside target source; defaults to the pinned Action package. |
 | `provider-contract` | Optional descriptor for a separate trusted handoff consumer. Mutually exclusive with `provider-config`. |
 | `provider-config` | Absolute trusted Codex configuration outside target source/uploads. With Value/Comprehensive, generate the bound descriptor and invoke the bundled worker; Value can stop at its zero-AI selection checkpoint. |
+| `sharing-link` | Link file outside the target checkout for an enrolled hosted PR workflow. Requires a configured reviewer and the job's OIDC identity. |
 | `allow-fork-review` | Default `false`. `true` authorizes fork model execution only on explicit `workflow_dispatch`; automatic fork events prepare native inventory only. |
 | `token` | Read-only metadata/private-source token; defaults to `github.token`. |
 | `state-store` | Optional pre-existing persistent local directory, absolute and outside workspace/runner temp. All coordinated workers must share one trusted host and store. |
@@ -153,8 +154,9 @@ PRs with merge conflicts and fork approval rules can prevent automatic
 `pull_request` runs. A manually authorized PR run can prepare head-source evidence
 when it is accessible; it still does not assess the prospective merged tree.
 Private forks may require read permission beyond the default token. The Action
-rejects `pull_request_target`, generic comment events, push events and merge-group
-events instead of silently scanning a different ref. Model authentication is selected explicitly through a trusted configuration file;
+accepts `pull_request_target` for the [enrolled hosted PR workflow](review-sharing.md#review-pull-requests-from-enrolled-actions).
+Generic comment events, push events and merge-group events are unsupported.
+Model authentication is selected explicitly through a trusted configuration file;
 comment-triggered work is unsupported. See
 [GitHub's privileged PR workflow guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
 
@@ -241,8 +243,8 @@ it, the composite exposes the prepared `review_ready` handoff.
 
 The controller receives a small explicit environment allowlist without GitHub or
 provider tokens, Python path overrides or arbitrary workflow secrets. The bundled
-[BYOK Codex adapter](codex-reviewer.md) consumes provider-bound work with explicit
-private authentication and upstream analysis-only settings on every start/resume.
+[BYOK OpenAI adapter](codex-reviewer.md) consumes provider-bound work using the
+Responses API without tools or the Codex CLI with upstream analysis-only controls.
 It does not add a process sandbox; runner isolation belongs to the company.
 Export its provider descriptor before preparation and supply `provider-contract`.
 The worker checks the bundled adapter config against native provider/model/effort/
@@ -258,11 +260,10 @@ before receiving company model credentials.
 
 ## Opt-in BYOK Action execution
 
-Prepare the [trusted provider configuration](codex-reviewer.md) in a prior company-
-approved setup step. Install the chosen Codex CLI outside target source and provide
-one explicit supported authentication JSON file; keep auth, config and sessions
-outside the complete artifact upload root. The Action does not install a provider,
-log in automatically or discover model keys from the workflow environment.
+Prepare the [trusted provider configuration](codex-reviewer.md) in a prior
+company-approved setup step. Use an explicit project API key for direct Responses
+or install the pinned CLI outside target source and supply its supported Codex
+authentication file. Keep auth, config and sessions outside the artifact upload root.
 
 ```yaml
 - name: Review changed files with the company model

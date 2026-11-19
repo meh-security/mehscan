@@ -372,7 +372,7 @@ def prepare_changes(root, scope, native, env, timeout):
     return {"windows": windows, "hunks": hunks, "limits": limits}
 
 
-def compact_work(payload, ids, *, include_active_gaps=False):
+def compact_work(payload, ids, *, include_active_gaps=False, source_paths=()):
     parents_by_review = payload.get("expected_parents", {})
     selected_parents = {parent for review_id in ids for parent in parents_by_review.get(review_id, ())}
     parents = {record["decision_id"]: record for record in payload.get("parent_decisions", ())
@@ -384,6 +384,17 @@ def compact_work(payload, ids, *, include_active_gaps=False):
         "runtime": payload.get("runtime"), "review_ids": ids, "pending_questions": questions,
         "evidence_updates": [row for row in payload.get("evidence_updates", ()) if row["question_id"] in question_ids],
         "parent_decisions": list(parents.values())}
+    knowledge = payload.get("knowledge") or {}
+    relevant = {revision for review_id in ids for revision in knowledge.get("by_review", {}).get(review_id, ())}
+    carried = []
+    for item in knowledge.get("items", ()):
+        scope = item["scope"]
+        path = scope.get("path")
+        if item["revision_id"] in relevant or (source_paths and not scope.get("subject_key")
+                and (not path or any(source == path or source.startswith(path + "/") for source in source_paths))):
+            carried.append(item)
+    if carried:
+        work["knowledge"] = carried
     if include_active_gaps:
         current = {(row["origin"].get("decision_id"), row["question"]): row["question_id"] for row in questions}
         gaps = [

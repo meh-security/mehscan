@@ -26,8 +26,11 @@ def usage(path, runtime, unobserved_provider_calls=0):
                     or row["round"] < 0 or not isinstance(row.get("usage", {}), dict)):
                 raise ValueError("invalid provider metrics record")
             identity = (row["conversation_id"], row["round"])
+            provider = row["provider"]
+            usage_basis = ("request" if isinstance(provider, dict) and provider.get("provider") == "openai-responses"
+                           else "conversation_delta")
             if (row["schema_version"] != "1" or row["provider"] not in allowed or identity in seen
-                    or row.get("usage_basis") != "conversation_delta"):
+                    or row.get("usage_basis") != usage_basis):
                 raise ValueError("provider metrics are incompatible or duplicated")
             seen.add(identity)
             rows.append(row)
@@ -63,7 +66,8 @@ def usage(path, runtime, unobserved_provider_calls=0):
                 "roles":{role:sum(row.get("role", "investigator") == role for row in selected)
                          for role in sorted({row.get("role", "investigator") for row in selected})}})
     return {"schema_version":"1", "provider":runtime.get("provider"), "policy":runtime["policy"],
-        "research_limits":runtime["limits"], "round_count":len(rows), "token_accounting":"reported_conversation_deltas",
+        "research_limits":runtime["limits"], "round_count":len(rows),
+        "token_accounting":"reported_per_call" if any(row["usage_basis"] == "request" for row in rows) else "reported_conversation_deltas",
         "reported_token_sums":counters, "counter_reporting_rounds":reporting,
         "provider_elapsed_ms":elapsed, "time_basis":"sum_provider_calls_not_wall_time", "prompt_bytes":prompt,
         "usage_available":bool(rows), "profiles":profiles, "unobserved_provider_calls":unobserved_provider_calls,
