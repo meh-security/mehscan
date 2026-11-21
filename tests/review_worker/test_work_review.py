@@ -1,6 +1,7 @@
 """Real-native work-goal integration with a deterministic local reviewer."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
@@ -219,11 +220,40 @@ print(json.dumps(value))
         self.assertEqual(affected[0]["check_results"][0]["status"],"satisfied")
         self.assertEqual(ledger["native_admission_status"],"admitted")
 
-    def test_work_plan_fast_reuses_source_and_shared_allowance(self):
+    def test_value_fast_reuses_source_and_retains_knowledge_for_comprehensive(self):
         f, command, _, _ = self.prepare()
         self.audit_provider(f)
-        self.run_worker(f, command + ["--second-pass", "fast"], 0)
-        audit = json.loads((f.base/"worker/second-pass.json").read_text())
+        output = f.base / "worker"
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(f.base / "memory-home")}):
+            self.run_worker(f, command + ["--second-pass", "fast"], 0)
+            summary = json.loads((output / "source-review/summary.json").read_text())
+            effective = summary["effective_args"]
+            claim = json.loads(Path(effective["claim"]).read_text())["result"]
+            scope = ["--inventory", effective["inventory"], "--source-root", f.root]
+            stream = ["--store", f.base / "state", "--stream", "source", *scope]
+            ended = f.native("state", "end", *stream, "--generation", claim["generation"],
+                             "--owner", claim["owner"], "--status", "incomplete", "--operation-key", "end-value")
+            self.assertEqual(ended["memory"]["status"], "retained")
+            self.assertGreater(ended["memory"]["new_knowledge_revisions"], 0)
+
+            next_claim = f.native("state", "claim", *stream, "--expected-generation", claim["generation"],
+                                  "--retry", "true", "--attempt-id", "broader-review", "--operation-key", "claim-broader")
+            owner = ["--generation", next_claim["result"]["generation"], "--owner", next_claim["result"]["owner"]]
+            skill = ["--skill-root", domain_fixtures.fixtures.SKILL]
+            plan = f.native("state", "plan-template", *scope, *skill, "--policy", "comprehensive", "--selection", "policy")
+            plan_file = f.base / "comprehensive.json"
+            plan_file.write_text(json.dumps(plan))
+            f.native("state", "plan", *stream, *owner, *skill, "--input", plan_file, "--operation-key", "plan-broader")
+            work = f.native("state", "work", *stream, *owner, *skill)["payload"]
+
+        self.assertEqual(work["policy"], "comprehensive")
+        self.assertEqual(work["review_ids"], plan["selected_review_ids"])
+        retained = work["knowledge"]["items"]
+        self.assertTrue(retained)
+        self.assertTrue(all(item["origin"] == "source_observation" and item["source_sha256"] for item in retained))
+        self.assertEqual(set(work["knowledge"]["by_review"]), set(summary["assessments"]))
+
+        audit = json.loads((output / "second-pass.json").read_text())
         self.assertEqual(audit["accounting"]["first_pass"]["calls"], 2)
         self.assertEqual(audit["accounting"]["second_pass"]["calls"], 1)
         self.assertEqual(audit["accounting"]["combined"]["calls"], 3)

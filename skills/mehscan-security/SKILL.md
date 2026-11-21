@@ -215,14 +215,14 @@ do not request every reference or reread a supplied one. Guides are trusted
 instructions, not application evidence. Record actual source and unresolved facts
 normally. The [execution trace guide](references/execution-trace.md) explains how
 to inspect review progress and separate mechanical completion from review quality.
-For an explicitly requested Fast or Full second pass, read
-[second-pass review](references/second-pass-review.md). It audits completed claims,
-retains the first results and separates model-reviewed labels from training approval.
-Fast automatically selects a bounded queue from first-pass scheduling notes and
-explicit applicability/impact proof signals;
-Full audits every claim in the chosen scope. For an
-identified flow whose threat coverage needs enrichment, use
-[scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
+When a Value or Comprehensive result has an important verdict with a concrete
+proof question, recommend **Fast** as the first audit. It selects a bounded queue
+from first-pass notes and explicit applicability or impact signals. **Full** is
+for an explicitly requested independent audit of every claim in the chosen scope.
+For either audit, read [second-pass review](references/second-pass-review.md).
+An open named source check can use [scoped correction](../../docs/review-worker.md#resolve-named-source-checks)
+when evidence is available to answer it. For a distinct flow or effect that needs
+coverage, use [scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
 within the authorized scope and budget.
 
 Finish the requested first-pass scope and present findings, grouped root causes,
@@ -233,10 +233,10 @@ neither is an independently adjudicated vulnerability total. The
 [repair/applicability contract](references/runtime-review.md#repair-point-applicability-and-impact)
 defines the first-pass annotations and preserves conditional library findings.
 Start with the worker's compact `review-options.md` for the proposed Fast queue
-and reasons; read JSON only for needed selection details. If no follow-up was
-requested and more work is useful, recommend a concrete next scope and ask
-the user to choose Fast, a broader Full audit, a scoped threat review or stopping.
-When no useful follow-up is identified, state that and finish.
+and reasons. Read JSON for needed selection details. If no follow-up was requested
+and more work is useful, propose the single next check or audit that best serves
+the user's goal and wait for authorization. When no useful follow-up is identified,
+state that and finish.
 Do not start another pass merely because work is pending. If the user already
 requested any of these follow-ups, execute the requested sequence without another
 confirmation, within the stated scope/budget. A repository-wide first pass or

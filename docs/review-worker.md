@@ -108,9 +108,11 @@ Older attempts without a bound source checkpoint cannot recover before handoff.
 Resume from the latest attempt; recovery cannot fork from an already continued
 parent, and pre-handoff recovery requires the original native work to remain current.
 
-Use `--reuse-source-results PRIOR_OUTPUT` to reuse completed source assignments
-from a separate attempt after matching source, native selection, policy, provider
-and allowance bindings and revalidating their cited proofs. Reused results retain
+In the explicit source-selection workflow, use `--reuse-source-results PRIOR_OUTPUT`
+to reuse completed source assignments from a separate attempt. This requires
+matching source, native selection, policy, provider and allowance bindings and
+revalidates their cited proofs. Work-plan reviews use saved-attempt continuation
+for named checks. Reused results retain
 their prior provenance and usage; they are not new reviews under current guidance.
 Assignments overlapping interrupted or unknown-usage work remain deferred, with
 no automatic replacement call. Partial conversations are not resumed by this option.
@@ -405,6 +407,15 @@ Add `--second-pass fast` or `--second-pass full` to the normal worker command.
 The default is `off`, independently of Value or Comprehensive. These are Python
 worker options, not flags on `mehscan scan` or `mehscan report`.
 
+After Value, start with Fast when the next step is to verify a consequential
+first-pass verdict and `review-options.md` names a specific proof question. Use
+[scoped correction](#resolve-named-source-checks) when a saved named source check
+can be answered with available evidence. Use a [scoped flow review](../skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up)
+for a newly identified coverage gap. If a question depends on a missing external
+fact, keep it pending until that fact is available. Comprehensive's built-in
+follow-up covers additional admitted questions. Fast and Full audit results
+that already exist, including results produced by Comprehensive.
+
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
@@ -414,10 +425,11 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 Fast first records an audit checkpoint using the first investigation's evidence
 and trace. Supported proofs can finish in that call. Concrete objections move
 to targeted recovery in the same conversation, where an incorrect objection can
-also be rejected. These phases share the normal Fast allowance, separately from
-the first investigation. A proposed closed repair receives a
-counter-check in the same conversation within its original allowance; a repair
-that cannot be checked before the allowance is exhausted stays pending. Unchanged
+also be rejected. These phases share the Fast investigation limits. In a
+work-plan review, all passes draw from the same original overall allowance.
+A proposed closed repair receives a counter-check in the same conversation
+within its original allowance. A repair that cannot be checked before the
+allowance is exhausted stays pending. Unchanged
 results need no extra confirmation call. Full adds an independent investigation for
 deeper audits, evaluation and training-data review. Both preserve the first results
 and use source validation; neither establishes semantic ground truth.
@@ -579,6 +591,12 @@ outside a Git working tree derives a local repository key from the resolved
 source folder. Source edits keep the same key. Moving or copying the folder
 creates separate history. Keep run artifacts outside the source folder.
 
+Value and Comprehensive use the same store and can read applicable retained
+knowledge across modes. Changed work and optional audits use the current
+package's applicable knowledge too. Each native decision stays bound to its
+source, plan and runtime. A mode switch keeps scoped knowledge in reach and
+requires current decisions for the new plan. See [rerun behavior](#reuse-on-reruns).
+
 ```text
 mehscan investigate review-inventory ROOT --output RUN/inventory
 mehscan memory location --source-root ROOT --inventory RUN/inventory
@@ -648,6 +666,23 @@ generation explicitly:
 mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
 mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
+
+### Reuse on reruns
+
+| Situation | What to keep and what can be reused |
+| --- | --- |
+| **Fresh Value or Comprehensive work plan** | Reuse the same repository key and local memory. `state work` binds applicable knowledge and current native history into the package. The worker evaluates the current named source checks, including previously answered checks in the new plan. Continue a saved check from its original attempt to use its existing answer and evidence. |
+| **Unchanged native-only rerun** | Use `memory prepare` in either policy. An earlier finished native batch can save all model calls for eligible settled IDs when the same source, native plan, runtime, current parents and knowledge premises match. Remaining IDs still need work. |
+| **Changed source, scope or policy** | Rebuild the inventory and use the same store. Scoped observations reach the current review when their recorded source still matches. Prior decisions and dependency comparisons can guide verification. New work and open checks still require an answer. |
+| **Continue saved work or audit results** | Keep the original attempt directory. Work-plan recovery and scoped correction use its saved cases, evidence and remaining allowance. Fast and Full can use completed first-pass artifacts and carry current knowledge. Close with the effective inventory to retain admitted native results. |
+
+Turso retains native decisions and their cited source links. The attempt's
+`source-review/case-state.sqlite` and related artifacts retain named source checks,
+factual answers and their dependencies. Keep both the local memory and the original
+attempt directory to preserve this history. When useful, record a durable
+source observation with `memory knowledge-put` so it can inform later reviews.
+Provider prompt-cache metrics track model input reuse. Look at saved model calls
+and evidence reuse to measure the savings from local memory. [Retain a source observation](#carry-evidence-into-future-reviews)
 
 ### Carry evidence into future reviews
 

@@ -16,7 +16,7 @@ It runs locally without building or executing your application. Use the CLI on i
 - Retain local review history in Turso and reuse eligible decisions on unchanged source.
 - Review a pinned pull-request diff in GitHub Actions with an optional coverage gate.
 - Group related findings while preserving affected callers and conditions.
-- Automatically select a bounded Fast follow-up, or audit all eligible results with Full.
+- Opt in to a bounded Fast audit or a Full audit of the selected results.
 - Export JSON, SARIF and Markdown reports.
 
 Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
@@ -74,11 +74,17 @@ See the [Changed review guide](skills/mehscan-security/references/changed-review
 
 ## Local review memory
 
-Persistent reviews through the security skill use a local Turso database and a
-review journal outside the checkout. Reuse the same repository key and stream
-for successive reviews of the same branch and scope. An unchanged native-only
-review can reuse eligible settled decisions without another model call. Source
-edits, pending checks and additional source-first work still need review.
+Persistent reviews use the same local Turso memory and journal in either mode,
+including Changed scope. Keep the same repository key, stream and store for
+successive reviews of the same branch and scope. Both modes load applicable
+knowledge and can add source observations and admitted decisions when the review
+closes, including after Fast or Full.
+
+For rerun savings, a native-only review with the same source, plan and runtime
+can reuse settled decisions with zero model calls for those IDs. A fresh work-plan
+review loads prior knowledge and still evaluates its named checks. Keep the
+original attempt directory to continue saved checks or audit existing results
+without repeating the first pass. [Memory and reuse guide](docs/review-worker.md#reuse-on-reruns)
 
 For manual setup, prepare an inventory with `--repository-key`, then run
 `mehscan memory location --source-root ROOT --inventory RUN/inventory` to find
@@ -109,31 +115,50 @@ failures so incomplete runs can still deliver findings and coverage. See the
 
 Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your coding agent to review a repository or a change. The skill uses your agent's model and Mehscan's source lookup tools to investigate the relevant code.
 
-**Value** is the default. It spends the review allowance on the strongest native candidates and named source checks, ranked by plausible impact, exposure, control evidence and the next deciding fact. The report accounts for work that remains open when the allowance runs out.
+| Mode | When to use it | What to expect |
+| --- | --- | --- |
+| **Value** (default) | Find the most consequential issues within an allowance. | Ranks scanner candidates and named source checks together by impact, exposure, evidence and the next deciding fact. Reports what was covered, what remains and where importance is unknown. |
+| **Comprehensive** | Account for a broader admitted scope or finish declared coverage checks. | Runs Value-priority work first, then uses the remaining allowance for admitted follow-up. Reuses applicable source evidence and reports missing native decisions and open checks. |
 
-**Comprehensive** is the explicit broader mode. The same review starts with Value-native and high-priority named source checks, then uses the remaining allowance on admitted follow-up. It can reuse checked source from the first stage. Follow-up keeps its own applicability and decisions. Unnamed source-only windows guide planning and receive model review when selected as concrete checks. [Review coverage](docs/coverage.md#read-coverage-alongside-the-findings)
+Both modes use the same source-bound work plan. Named checks can cover important
+workflows with zero scanner candidates. Unselected source windows guide planning.
+Value defaults to a budget goal.
+Comprehensive defaults to a coverage goal for declared checks and reports broader
+coverage separately. Configured rates report estimated cost. A USD spending
+allowance applies when explicitly requested. [Review coverage](docs/coverage.md#read-coverage-alongside-the-findings) · [Work plans](skills/mehscan-security/references/work-goals.md)
 
-Use the same [source-bound work plan](skills/mehscan-security/references/work-goals.md) for both modes. Value defaults to a budget goal and Comprehensive defaults to a coverage goal for declared checks. Results distinguish completed checks, remaining native IDs, missing facts and unclassified source areas. Cost is informational by default when rates are configured. A USD allowance applies when explicitly requested.
+### Follow up on a review
 
-Optional [question delegation](skills/mehscan-security/references/work-goals.md#question-delegation) uses a cheaper worker for explicitly scoped source facts and keeps security decisions with a capable review owner. Purely factual items can finish without an owner-model call and are counted separately from security cases. Answers retain citations, conditions and missing facts; the controller records each phase separately.
+Review stops after the requested work. Use the findings, coverage and
+`review-options.md` to choose the next step when one is warranted.
 
-Saved reviews support [scoped correction](docs/review-worker.md#resolve-named-source-checks) of named unresolved checks, reusing evidence and the original allowance. Owner qualifications and rejections remain attributed; native verdict changes use the normal follow-up admission path.
+- **Fast** is the recommended first audit after Value when an important existing
+  verdict has a specific proof question. It selects a capped set of claims and
+  checks the deciding evidence. An empty queue costs zero model calls. Fast is
+  opt-in for either mode. [Fast and Full](docs/review-worker.md#optional-second-pass)
+- **Named follow-up** is the direct path to answer a saved unresolved check or
+  investigate a specific workflow gap. Continue the saved check when its deciding
+  evidence is available. For a newly identified gap, name the flow and protected
+  effect in a scoped review. [Saved checks](docs/review-worker.md#resolve-named-source-checks) · [Scoped flow follow-up](skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up)
+- **Full** independently reassesses every eligible claim in the selected audit
+  scope and compares the results. Choose it when each result in that set needs
+  a second assessment. It typically spends more calls than Fast and reports
+  any work the allowance leaves open. [Audit scope](docs/review-worker.md#choose-which-results-to-check)
 
-The first pass supports scan-assisted and AI-only review. Bounded source orientation selects additional discovery operations; it never falls back to reviewing all source. The review reports native candidate completion, source coverage, unresolved questions, budget deferrals and follow-up options, then stops unless another pass was requested.
+### Useful opt-ins
 
-An opt-in [domain review](docs/review-worker.md#opt-in-domain-review) groups related cases under a reviewer that can reuse their shared source context. A bound domain plan separates concrete claims requiring verification, operation markers guiding flow coverage, and supporting facts. Exact candidate triage retains individual verdicts; coverage markers do not become safe decisions merely because their domain was reviewed.
+- **Changed scope** applies Value or Comprehensive to a PR, local diff or release
+  delta and tracks coverage of the changed source. [Changed coverage](docs/github-action.md#delta-coverage)
+- **Named coverage goals** give specific properties or workflows an explicit
+  completion target within the allowance. [Coverage goals](skills/mehscan-security/references/work-goals.md#choose-the-goal)
+- **Question delegation** can use a cheaper worker for narrow source facts.
+  The review owner makes security decisions. [Question delegation](skills/mehscan-security/references/work-goals.md#question-delegation)
+- **Domain review** groups related Value cases around real shared source and
+  gives each verification question its own decision. It uses a separate domain
+  plan. [Domain review](docs/review-worker.md#opt-in-domain-review)
 
-Seed/performance tooling and declaration-only C# interfaces/enums are available for cross-file lookups but omitted from standalone assignments by default. Use `--include-supporting-source` to include them explicitly; scope exclusions are reported separately from reviewed coverage.
-
-Schema-only migrations, generated migration snapshots and SQL files also remain available for targeted lookups. Reviewers follow relevant SQL definitions from their callers; file bodies are not preloaded as precautionary context. Executable migration logic remains eligible.
-
-Passive C# models, settings, constants and schema-only EF mappings use the same lookup approach. Custom validation, converters, executable accessors and other behavior stay eligible; model folders are not excluded wholesale.
-
-Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
-
-An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.
-
-For a named flow or coverage gap, request a [scoped threat review](skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up). It reuses cited source and follows the deciding cross-file relationships within the requested budget. Already requested follow-ups proceed without another confirmation.
+See the worker guide for [supporting-source scope](docs/review-worker.md#ordinary-review-profile)
+and the report contract for [grouped findings and applicability](docs/output-contract.md#causal-families-and-applicability).
 
 For manual bundle review:
 

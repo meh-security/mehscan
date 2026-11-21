@@ -6,9 +6,13 @@ Action can optionally call them on one configured persistent host. Independent
 ephemeral runners do not share a store; see [Action coordination](github-action.md#persistent-host-coordination).
 
 For persistent local reviews, the native journal owns attempts and admissions.
-The paired local Turso database retains eligible decisions and source
-fingerprints for later reviews. One-shot reviews can use a temporary journal
-and close with `--memory-mode temporary`.
+Value and Comprehensive use the paired local Turso database for retained native
+decisions, source fingerprints and scoped knowledge, including in Changed scope. A
+current work package binds applicable knowledge from that store. Exact native
+decision reuse requires a matching full-source plan and runtime. Keep source
+case artifacts to continue named checks or audit a completed first pass. One-shot
+reviews can use a temporary journal and close with `--memory-mode temporary`.
+[Rerun and continuation guide](review-worker.md#reuse-on-reruns)
 
 ## Claim a generation
 
