@@ -14,9 +14,9 @@ For a source-bound ranked backlog with a spending allowance or explicit checks t
 finish, use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
 and `--work-plan FILE`. Work goals preserve required check identities, distinguish
 potential-impact priority from verified severity, and report remaining work under
-`source-review/work-ledger.json` and `remaining-work.md`. The default instructions
-below describe the existing mixed source-selection path. Both paths retain native
-SQL/control facts and source-proof validation.
+`source-review/work-ledger.json` and `remaining-work.md`. The explicit mixed
+source-selection path also retains native SQL and control facts and validates
+original-source proof.
 
 Work plans support explicitly requested Fast/Full audits under their remaining
 allowance and recovery of saved source answers or native finalization.
@@ -30,16 +30,19 @@ Source-backed challenges dispute the answer and reopen only recorded consumers;
 they do not automatically rewrite native verdicts. See the work-goal guide's
 [factual audit policy](../skills/mehscan-security/references/work-goals.md#optional-factual-audits).
 
-The default Value `all` phase requires a bound coverage plan before provider review.
-Without `--source-selection FILE`, it prepares a selection checkpoint and exits
-with `selection_required`, making zero AI calls. The host agent combines native
-candidate summaries with bounded source reads to prioritize native investigations
-and select a few additional AI-discovery operations. The full admitted native
-Value queue remains accounted for; a discovery-operation limit does not filter it.
-An explicit Comprehensive request reviews the broader admitted production-source
-scope. Within assigned operations, the reviewer can assess relevant native questions
-and propose additional consequential relationships in the same conversation,
-including operations with no scanner candidates.
+In the default Value `all` phase, use a bound `--work-plan FILE` to rank native
+investigations and named source checks. Explicit `--source-selection FILE` also
+supports the mixed workflow. Without a plan or selection, Value prepares a
+`selection_required` checkpoint with zero model calls. The inventory continues
+to account for the full native Value queue.
+
+An explicit Comprehensive request uses the same work-plan format and schedules
+Value-priority work before the remaining admitted questions. Both stages draw
+from one allowance. Without a plan or explicit selection, Comprehensive schedules
+native-bearing assignments and lists source-only windows as unplanned. If only
+unplanned source remains at entry, it returns the zero-call selection checkpoint.
+Named source checks can run with either mode, including at operations with zero
+scanner candidates. See [Comprehensive investigation and follow-up](#comprehensive-investigation-and-follow-up).
 The controller validates original paths, hashes, ranges and inspected citations,
 assigns identities and applies the ordinary finalizer. Source validation establishes
 the cited bytes, not a vulnerability or a native flow proof.
@@ -146,11 +149,11 @@ caller coverage. The option is bound into recovery and cannot change on resume.
 This groups context within existing bundles; it does not defer candidates or
 guarantee fewer model calls or lower cost.
 
-Use `--policy value --selection policy --source-selection FILE` for ordinary
-Value review. Native priority hints define the admitted candidate queue; source
-selection identifies additional discovery operations and can rank native assignments.
-Comprehensive explicitly selects the broader admitted scope and retains applicable
-completed Value work. Both use five research rounds (six total model calls),
+Use `--policy value --selection policy` for Value or `--policy comprehensive
+--selection policy` for the broader scope. Supply the work plan with `--work-plan
+FILE`. In the mixed workflow, use `--source-selection FILE` to identify discovery
+operations and rank native assignments. Native priority hints define the policy
+queue. Both modes use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
 overrides available. Finish settled relationships early; deferrals remain unreviewed.
 
@@ -188,7 +191,7 @@ attempt even when later native validation fails.
 
 ## Bounded Value selection
 
-Run Value's default `all` phase once without `--source-selection`. The output
+Run Value's default `all` phase once without a work plan or source selection. The output
 contains `source-review/plan.json`, `source-review/selection-options.json` and
 `source-review/checkpoint.json`; `worker.json` reports `selection_required`.
 This is a preparation checkpoint, not a failed provider review. An automatic
@@ -291,11 +294,41 @@ even when the overall attempt is incomplete; those artifacts cover the completed
 subset. Explicit exact-ID work with `--phase native`, source profiles,
 compiler-assisted facts and opt-in operation grouping retain their existing paths.
 
-Comprehensive extends completed Value work within matching scope to the broader
-admitted relationships, reusing established facts and avoiding repeated template,
-model or helper discovery. It does not require a verdict for every ordinary API
-occurrence. Fast/Full second pass and scoped threat follow-up remain separate,
-explicit choices within the authorized scope and budget.
+## Comprehensive investigation and follow-up
+
+Repository Comprehensive uses the same work plan and shared allowance for both
+steps. The worker investigates Value-native and high-priority named source
+checks first, then schedules additional native and source checks. An unresolved
+or adverse answer to an exact native dependency moves its waiting checks forward.
+When a waiting check names a native dependency, the worker can supply that
+assessment's checked source excerpts in the first request. It verifies the
+original bytes and leaves the dependent's own applicability and verdict open.
+
+For follow-up planning, group sites by the producer, authority, control or
+effect that would decide the question. The host uses a
+[threat-model check](../skills/mehscan-security/references/review-planning.md#threat-model-check)
+on each group to assess actor influence, the protected effect and the next
+deciding source fact. Reuse representative evidence where it applies and split
+exceptions that change the answer. Record a concrete follow-up question, a cited
+scope exclusion or a deferral with the missing fact in the review plan. An
+exclusion depends on the actor's authority and the protected effect under the
+cited runtime conditions. Keep separate effects, consequential zero-hit workflow
+checks and concrete edge cases visible.
+
+The default Comprehensive scheduler uses unnamed source-only windows for
+planning. It spends calls on admitted native questions and explicitly selected
+source work. When there are no native questions and only unplanned source,
+it returns `selection_required`. Unplanned source stays visible in
+`comprehensive_coverage` for partial native runs.
+
+The worker prepares native cards only as investigations start, reuses exact
+source lookups within the run, and builds finalization packets only for returned
+assessments. Native scope exclusions are bound by the inventory. Every admitted
+ID keeps its own applicability and decision. The
+`comprehensive_coverage` result reconciles missing and pending native decisions
+with open named work items. A coverage target in a work plan can be complete
+while the broader Comprehensive result is incomplete. Changed coverage and
+optional Fast/Full audits use their existing entry points.
 
 ## Opt-in domain review
 
@@ -847,22 +880,23 @@ applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
 
-For Python, Value can defer fixed SQL grammar questions and fixed Flask `.html`
-renders whose supplied bindings appear only as ordinary escaped text expressions
-in their discovered templates, or are unused there.
-Comprehensive retains these operations. Custom renderer settings, raw markup,
-script/style/attribute contexts and unresolved templates retain Value review.
-These scope hints do not certify application safety. Regenerate older inventories
-before reuse. ORM review packets can include bounded effect and import-bound
+For Python, a verified complete literal SQL operand can exclude its grammar
+question from Comprehensive and defer it in Value. This applies to single-property
+SQL injection questions. Query behavior, driver configuration and authorization
+remain separate. Value can defer fixed Flask `.html` renders whose bindings
+appear only as ordinary escaped text in discovered templates or are unused there.
+Comprehensive retains the Flask renderer questions. Custom renderer settings,
+raw markup, active contexts and unresolved templates retain Value review.
+Regenerate older inventories before reuse. ORM review packets can include bounded effect and import-bound
 caller excerpts; `review-inventory-list --group-by implementation` groups located
 Python ORM callables for source reading while preserving each review ID and its
 independent authorization decision. Value can defer additional selectors on the
 same direct Django filter chain to one retained review with the complete chain
 excerpt and an explicit dependency. Separate operations and nested queries keep
-their own questions; no safe verdict transfers between IDs. Fixed or empty,
-import-bound Django `HttpResponse` bodies can also be deferred when local uses
-only return the response or assign fixed content. Dynamic bodies, aliases,
-unknown response uses and unknown query transforms retain Value review.
+their own questions. A fixed or empty, import-bound Django `HttpResponse` body
+can leave Comprehensive when local uses only return the response or assign fixed
+content. Value also defers this exact HTML input question. Dynamic bodies,
+aliases, unknown response uses and unknown query transforms retain Value review.
 
 Python mutation packets can also include import-bound class/base declarations,
 `Meta.permissions`, permission helpers, `mutate` and `check_permissions`

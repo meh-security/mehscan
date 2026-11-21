@@ -19,6 +19,73 @@ import review_source
 
 
 class SourceReuse(unittest.TestCase):
+    def test_followup_carries_only_source_cited_by_exact_parent(self):
+        linked = {"id": "linked", "review_ids": ["child"]}
+        unrelated = {"id": "unrelated", "review_ids": ["sibling"]}
+        cite = {"path": "producer.py", "start_line": 3, "end_line": 4}
+        proof = {**cite, "quote": "first\nsecond"}
+        entries = {"child": {"value_hint": {"depends_on": "parent"}}, "sibling": {}}
+        result = {"status": "complete", "draft": {"results": [
+            {"review_id": "parent", "decision": "needs_review", "evidence": [cite]},
+        ]}, "proofs": [proof, {**proof, "path": "unrelated.py"}]}
+        self.assertEqual(review_source.prepare_followup([unrelated, linked], entries, [result]), [
+            {**linked, "_followup_sources": [("parent", proof)]}, unrelated,
+        ])
+        result["status"] = "incomplete"
+        self.assertEqual(review_source.prepare_followup([unrelated, linked], entries, [result]), [
+            unrelated, {**linked, "_followup_sources": []},
+        ])
+
+    def test_comprehensive_splits_mixed_assignments_without_mutating_plan(self):
+        assignment = {"id": "shared", "windows": [], "review_ids": ["deferred", "value"]}
+        first, followup = review_source.comprehensive_assignments([assignment], {"value"})
+        self.assertEqual(first[0]["review_ids"], ["value"])
+        self.assertEqual(followup[0]["review_ids"], ["deferred"])
+        self.assertEqual(first[0]["id"], followup[0]["id"])
+        self.assertNotEqual(first[0]["id"], followup[0]["_job_id"])
+        self.assertEqual(assignment, {"id": "shared", "windows": [], "review_ids": ["deferred", "value"]})
+
+    def test_comprehensive_followup_promotes_only_exact_open_dependencies(self):
+        later = [{"id": rid, "review_ids": [rid]} for rid in ("one", "two", "three")]
+        entries = {
+            "one": {"value_hint": {"depends_on": "settled"}},
+            "two": {"value_hint": {"depends_on": "unresolved"}},
+            "three": {"value_hint": {}},
+        }
+        results = [{"status": "complete", "draft": {"results": [
+            {"review_id": "settled", "decision": "not_issue"},
+            {"review_id": "unresolved", "decision": "needs_review"},
+        ]}}]
+        ordered = review_source.prioritize_dependents(later, entries, results)
+        self.assertEqual([row["id"] for row in ordered], ["two", "one", "three"])
+
+    def test_comprehensive_keeps_remaining_native_and_workflows_in_one_ranked_queue(self):
+        cases = [
+            {"id": name, "review_ids": ids, "case": {"priority": {"impact": impact, "evidence": "moderate"}}}
+            for name, ids, impact in (
+                ("priority-workflow", [], "high"), ("native-followup", ["deferred"], "high"),
+                ("value-case", ["value"], "medium"), ("workflow-followup", [], "medium"),
+            )
+        ]
+        first, followup = review_source.comprehensive_cases(cases, {"value"})
+        self.assertEqual([row["id"] for row in first], ["priority-workflow", "value-case"])
+        self.assertEqual([row["id"] for row in followup], ["native-followup", "workflow-followup"])
+
+    def test_comprehensive_stays_incomplete_with_pending_native_or_open_named_checks(self):
+        for pending, items in ((["native"], []), ([], [{"id": "workflow", "status": "investigated_unresolved"}])):
+            with self.subTest(pending=pending, items=items):
+                result = {"status": "admitted", "completion": {"review_work_complete": True, "pending_review_ids": pending}}
+                review_source.report_comprehensive(result, {"items": items})
+                self.assertEqual(result["status"], "incomplete")
+                self.assertEqual(result["comprehensive_coverage"]["pending_native_ids"], pending)
+                self.assertEqual(result["comprehensive_coverage"]["open_work_items"], [row["id"] for row in items])
+
+    def test_unplanned_source_keeps_comprehensive_coverage_incomplete(self):
+        result = {"status": "admitted", "completion": {"review_work_complete": True}}
+        review_source.report_comprehensive(result, unplanned_source=["unnamed"])
+        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["comprehensive_coverage"]["unplanned_source_assignments"], ["unnamed"])
+
     def test_prior_reuse_alias_requires_exact_original_and_provenance(self):
         assignment = {"id":"one"}
         original = {"assignment_id":"one", "draft":{"results":[]}, "proofs":[]}
@@ -59,6 +126,113 @@ class SourceReuse(unittest.TestCase):
 
 
 class SourceReview(unittest.TestCase):
+    def prepare_comprehensive_followup(self, shared_lookup=False):
+        (self.root / "Widget.razor").unlink()
+        for directory in ("feature", "other"):
+            (self.root / directory).mkdir()
+        (self.root / "feature/app.js").write_text("function run(request) { eval(request.query.code); }\n")
+        (self.root / "other/View.vue").write_text(
+            "<script setup>\nimport { markup } from 'fixture-module';\n</script>\n"
+            "<template><article v-html='markup' /></template>\n")
+        self.inventory = self.base / "followup-inventory"
+        self.native("investigate", "review-inventory", self.root, "--repository-key", "acceptance:staged",
+                    "--output", self.inventory)
+        entries = json.loads((self.inventory / "inventory.json").read_text())["entries"]
+        by_path = {entry["path"]: entry for entry in entries}
+        self.assertIsNone(by_path["feature/app.js"].get("value_hint"))
+        self.assertTrue(by_path["other/View.vue"].get("value_hint"))
+        command = self.prepare_worker(proposal=False, policy="comprehensive")
+        del command[command.index("--source-selection"):]
+        reviewer = self.base / "reviewer.py"
+        text = reviewer.read_text().replace(
+            "rows=[dict(assessment,", "assessment.update(decision='not_issue',checks=[])\n"
+            "assessment.pop('followup',None)\nrows=[dict(assessment,")
+        if shared_lookup:
+            text = text.replace("windows=packet['primary']['windows']", """\
+with Path(__file__).with_name('calls.jsonl').open('a') as log:
+    log.write(json.dumps(task['review_ids'])+'\\n')
+if task['research']['round']==0:
+    print(json.dumps({'research':[{'tool':'source','review_id':None,'purpose':'Read the shared fixture definition.',
+        'arguments':{'path':'feature/app.js','start_line':1,'end_line':1}}]}))
+    sys.exit()
+windows=packet['primary']['windows']""")
+        reviewer.write_text(text)
+        return command, by_path["feature/app.js"]["review_id"], by_path["other/View.vue"]["review_id"]
+
+    def test_comprehensive_stages_value_and_never_packages_unfunded_ids(self):
+        (self.root / "helper.js").write_text("export function format(value) { return String(value); }\n")
+        command, value, deferred = self.prepare_comprehensive_followup()
+        result = subprocess.run(command + ["--max-calls", "1"], capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr + self.debug_output())
+        output = self.base / "worker"
+        stage = output / "source-review"
+        record = json.loads((output / "worker.json").read_text())
+        self.assertTrue(record["native_admission"])
+        self.assertEqual(record["comprehensive_coverage"]["missing_native_ids"], [deferred])
+        self.assertEqual(record["comprehensive_coverage"]["status"], "incomplete")
+        unplanned = record["comprehensive_coverage"]["unplanned_source_assignments"]
+        self.assertTrue(unplanned)
+        progress = json.loads((stage / "progress.json").read_text())
+        skipped = [row for row in progress if row["assignment_id"] in unplanned]
+        self.assertCountEqual([row["assignment_id"] for row in skipped], unplanned)
+        self.assertTrue(all(row["error"] == "SourceNotSelected" and row["calls"] == 0 for row in skipped))
+        self.assertTrue(all(not (stage / "jobs" / identity).exists() for identity in unplanned))
+        for directory in [stage / "bundles", *(stage / "native-inputs").iterdir()]:
+            manifest = json.loads((directory / "manifest.json").read_text())
+            self.assertEqual([rid for packet in manifest["bundles"] for rid in packet["review_ids"]], [value])
+        budget = json.loads((stage / "budget.json").read_text())
+        self.assertEqual(budget["reserved_calls"], 1)
+
+    def test_comprehensive_zero_native_requires_source_selection(self):
+        command = self.prepare_worker(proposal=False, policy="comprehensive")
+        del command[command.index("--source-selection"):]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        record = json.loads((self.base / "worker/worker.json").read_text())
+        self.assertEqual(record["status"], "selection_required")
+        self.assertEqual(record["calls"], 0)
+        self.assertFalse((self.base / "worker/source-review/jobs").exists())
+
+    def test_comprehensive_followup_reuses_a_verified_source_read(self):
+        command, value, deferred = self.prepare_comprehensive_followup(shared_lookup=True)
+        result = subprocess.run(command + ["--max-calls", "4"], capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        calls = [json.loads(line) for line in (self.base / "calls.jsonl").read_text().splitlines()]
+        self.assertEqual(calls, [[value], [value], [deferred], [deferred]])
+        output = self.base / "worker"
+        summary = json.loads((output / "source-review/summary.json").read_text())
+        self.assertEqual(summary["research_cache_hits"], 1)
+        record = json.loads((output / "worker.json").read_text())
+        self.assertEqual(record["comprehensive_coverage"]["status"], "complete")
+
+    def test_comprehensive_checks_native_scope_beyond_the_declared_target(self):
+        command, value, deferred = self.prepare_comprehensive_followup()
+        selection = json.loads((self.base / "selection.json").read_text())
+        focus = next(row for row in selection["assignments"] if row["owner_path"] == "feature/app.js")
+        work_plan = self.base / "named-plan.json"
+        work_plan.write_text(json.dumps({
+            "schema_version": "mehscanWorkPlan/v1",
+            **{key: selection[key] for key in ("source_plan_id", "source_fingerprint")},
+            "items": [{
+                **focus, "id": "value", "actor": "Fixture caller", "conditions": "Fixture operation",
+                "priority": {"impact": "high", "exposure": "authenticated", "evidence": "moderate",
+                             "basis": "The selected fixture operation."},
+                "review_roles": {"verify": [value]},
+                "checks": [{"id": "operation", "question": "What operation is visible?"}],
+            }],
+        }))
+        reviewer = self.base / "reviewer.py"
+        reviewer.write_text(reviewer.read_text().replace(
+            "'proposals':proposals,'coverage':", "'proposals':proposals,'work_checks':["
+            "dict(check_id='operation',status='satisfied',summary='Fixture operation inspected.',"
+            "evidence=[cite],next_deciding_fact=None)],'coverage':"))
+        result = subprocess.run(command + ["--work-plan", str(work_plan)], capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr + self.debug_output())
+        record = json.loads((self.base / "worker/worker.json").read_text())
+        self.assertTrue(record["work_goal"]["target_complete"])
+        self.assertEqual(record["comprehensive_coverage"]["status"], "incomplete")
+        self.assertEqual(record["comprehensive_coverage"]["missing_native_ids"], [deferred])
+
     def test_partial_comprehensive_retains_answers_without_replacement_inference(self):
         for folder in ('feature','other'):
             (self.root/folder).mkdir()
@@ -503,7 +677,7 @@ class SourceReview(unittest.TestCase):
         (self.root / "Widget.razor").write_text("changed\n")
         self.admit(data, "stale", okay=False)
 
-    def prepare_worker(self, *, proposal=True, fail=False, lookup=False):
+    def prepare_worker(self, *, proposal=True, fail=False, lookup=False, policy="value"):
         if lookup:
             (self.root / "context.reviewdata").write_text(
                 "configuration reference\n", encoding="utf8"
@@ -551,7 +725,7 @@ class SourceReview(unittest.TestCase):
             "--source-root",
             self.root,
             "--policy",
-            "value",
+            policy,
             "--selection",
             "policy",
             "--skill-root",

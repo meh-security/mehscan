@@ -181,23 +181,27 @@ unstarted budget-deferred candidates and policy exclusions. Report native
 candidate completion separately from source areas examined and investigation
 groups. Shared research never transfers a verdict across different caller conditions.
 
-Comprehensive is an explicit broader scope. It retains completed Value work in
-the matching scope and systematically adds admitted relationships. Conservative
-native eligibility retains uncertain security
-relationships but can exclude an ordinary read when native source facts establish
-its local provenance without an identified consequential relationship. Unresolved
-path provenance, observed runtime environment mutation or a connected
-security-sensitive effect keeps the question eligible. An exclusion does not
-establish content trust or deployment authority. Exclusions are visible scope
-decisions, not dismissals; raw scan evidence and Value IDs remain available.
-Native profile hints can differ without discarding existing reviewed facts.
+Comprehensive starts with Value-native and high-priority named source checks,
+then spends the remaining allowance on admitted native and named source work.
+Exact dependencies can reuse checked source from the first stage. Each follow-up
+still requires an answer scoped to its operation and conditions. Source-only
+windows can supply planning context, and the host can name consequential source
+checks even in code with zero native candidates.
 
-Comprehensive reviews every admitted question within the authorized scope;
-ordinary API occurrences do not each require a verdict. It does not add missing language
-semantics or reopen excluded source. Findings, dismissals and unresolved checks
-are scoped to the exact operation and conditions reviewed. Keep a deciding
-missing caller, policy, helper or effect as a follow-up question rather than
-assuming either vulnerability or safety.
+Native eligibility records narrow exclusions when source facts settle the
+specific question, such as complete fixed SQL grammar or a directly bound fixed
+Django response body. It can also exclude an ordinary read when source facts
+establish local provenance and no connected consequential effect. Dynamic
+operands, unresolved bindings and separate consequential effects retain their
+own questions. These exclusions appear as scope decisions. The scan evidence
+and exact IDs remain available for targeted lookup.
+
+The Comprehensive report reconciles native decisions across the admitted scope
+with open named checks and unplanned source assignments. A run can exhaust its
+allowance or need deployment, caller or policy evidence with work still open.
+The work plan can meet its declared coverage goal while the broader Comprehensive
+result remains incomplete. Findings and closures apply to the cited source and
+runtime conditions.
 
 An optional [second pass](review-worker.md#optional-second-pass) checks selected
 first-pass results. It does not extend scanner recognition or certify application

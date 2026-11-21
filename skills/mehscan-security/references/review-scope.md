@@ -30,13 +30,35 @@ planning checkpoint, operation ownership and shared limits.
 | Queue | Include when | Rationale |
 | --- | --- | --- |
 | **Value** | Keep in-scope native Value candidates. For additional AI discovery, a shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific useful lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Fund the strongest credible high-impact leads first. Useful medium issues remain eligible, but eligibility is not equal scheduling priority. Actor, effect, conditions and source evidence must support the impact; budget deferral is not a policy exclusion. |
-| **Comprehensive** | Across the broader admitted scope, a plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next deciding fact. | Extend Value's matched-scope work systematically while excluding source-established ordinary reads. Raw native profile hints can differ; they do not discard completed Value facts or verdicts. |
+| **Comprehensive** | Across the broader admitted scope, a plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next deciding fact. | Extend Value's matched-scope work through grouped follow-up. Source-established ordinary relationships can stay out of paid review. Retain applicable Value facts and verdicts. |
 | **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
 
-Unknown attacker control does not automatically discard a dangerous construction.
-An unknown caller does not automatically make every filesystem or output API
-worth investigating either. Judge the concrete operation and likely boundary.
-Keep conditional activation/exposure in the verdict and confidence.
+## Evidence for scope exclusions
+
+Limit an exclusion to one security question, its affected sites, and the runtime
+conditions the evidence covers. Identify the relevant actor, the exact operand
+or state that decides the question, and the protected effect. Bind them through
+the effective producer, transformations and consumer. Then establish one of
+these reasons from source or applicable runtime evidence:
+
+- The actor cannot change the deciding value or reach the effect under those
+  conditions. Evaluate control over other fields against their own questions.
+- Changing the deciding value requires authority that already permits the same
+  effect for the same affected users or resources. Check who can change and
+  deploy each input independently, including through a runtime writer.
+- The operation has no protected effect for the named relationship under those
+  conditions.
+
+Language and framework facts help establish those reasons. A filename, API name,
+literal, or immutable-looking expression alone leaves the effective binding,
+writers, or configuration open. Keep a separate question for any distinct effect.
+Retain plausible unresolved signals and state which fact would decide them.
+
+Reuse a shared proof only for members with separately established applicability.
+Carry the exact member IDs, citations, scope conditions and deciding dependencies
+forward. Recheck the affected members when a condition or dependency changes.
+Use the [grouped review procedure](review-planning.md#threat-model-check) to
+apply this in follow-up planning.
 
 ## Value priority and continued spending
 

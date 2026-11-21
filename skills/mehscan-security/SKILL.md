@@ -19,13 +19,14 @@ Use [review planning](references/review-planning.md) for compact application-awa
 planning and bounded source orientation before repository AI work. This orientation
 happens in the host agent's current context, not as another full provider review pass.
 
-For new repository Value reviews, or when the user chooses an allowance or
-specific checks to finish, use
+For new repository Value and Comprehensive reviews, or when the user chooses an
+allowance or specific checks to finish, use
 [budget and coverage goals](references/work-goals.md) with a bound `--work-plan`.
 It keeps a ranked backlog, evidence-backed check answers and remaining-risk report.
-Use the budget goal by default; an explicit coverage goal keeps the declared
-target incomplete until its checks close. Unclassified material has unknown
-importance. A completed target is not whole-application security clearance.
+Value defaults to the budget goal. Repository Comprehensive defaults to the
+coverage goal, which keeps the declared target incomplete until its checks close.
+Unclassified material has unknown importance. A completed target is not
+whole-application security clearance.
 Lead reports with declared items/checks completed and remaining, including serious
 gaps and unknown scope. Track tokens, time and configured-rate cost as supporting
 information; do not impose a monetary cap unless the user requests one.
@@ -267,11 +268,19 @@ transfer unused allocation when a queue finishes. Follow
 [controller commands](references/commands.md) and [review planning](references/review-planning.md)
 to select and launch the work. Exact-ID/native-only worker tasks, source profiles,
 compiler facts and operation grouping keep their existing paths.
-Comprehensive retains completed Value work within the same scope and extends it
-to admitted plausible medium-or-higher relationships. Ordinary API occurrences
-remain supporting facts. Keep scope and deferred coverage explicit, then finish
-the prioritized work within its shared budget. Preserve unfinished native IDs
-separately from unselected source coverage; budget exhaustion does not exclude an ID.
+
+For repository Comprehensive work, use
+[Investigate and follow up](references/review-planning.md#investigate-and-follow-up).
+Finish the scheduled Value-native and high-priority AI source investigations
+first. Group the remaining leads and apply the
+[threat-model check](references/review-planning.md#threat-model-check). Identify
+who can influence the deciding input or state, what protected effect could
+change, and the source fact that would settle it. Check a representative and
+split exceptions where the answer changes. Record each group's decision to
+investigate, exclude with cited evidence for the exact security question, or
+defer with the missing fact.
+Prepare only the next funded group under the original allowance. Keep admitted
+IDs and open workflow checks visible in `comprehensive_coverage`.
 
 Changed is a scope, combined with Value or Comprehensive. Use its guide before
 building an inventory; it requires a short change pass even when no IDs appear.

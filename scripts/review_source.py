@@ -108,6 +108,91 @@ def investigation_queues(plan, native_ids, ai_ids, selection, native_share):
     return {"native": ranked if native_share else [], "ai": ai if native_share < 100 else []}
 
 
+def comprehensive_assignments(assignments, value_ids):
+    """Keep deferred native questions out of the first pass, even in mixed windows."""
+    first, followup = [], []
+    for assignment in assignments:
+        ids = assignment["review_ids"]
+        early = [rid for rid in ids if rid in value_ids]
+        later = [rid for rid in ids if rid not in value_ids]
+        if early and later:
+            first.append({**assignment, "review_ids": early})
+            followup.append({**assignment, "review_ids": later,
+                             "_job_id": context.digest(["comprehensive-followup", assignment["id"]])})
+        elif later:
+            followup.append(assignment)
+        else:
+            first.append(assignment)
+    return first, followup
+
+
+def comprehensive_cases(jobs, value_ids):
+    """Keep the existing risk order within each pass of a named work plan."""
+    first, followup = [], []
+    for job in jobs:
+        risk = job["case"]["priority"]
+        important_source = (not job["review_ids"] and risk["impact"] in ("critical", "high")
+                            and risk["evidence"] in ("strong", "moderate"))
+        lane = first if value_ids.intersection(job["review_ids"]) or important_source else followup
+        lane.append(job)
+    return first, followup
+
+
+def prioritize_dependents(jobs, entries, results):
+    """Reconsider deferred work using new exact native dependency answers."""
+    open_parents = {row["review_id"] for result in results if result["status"] == "complete"
+                    for row in result["draft"]["results"] if row["decision"] in ("issue", "needs_review")}
+    return sorted(jobs, key=lambda job: not any((entries[rid].get("value_hint") or {}).get("depends_on")
+                                                in open_parents for rid in job["review_ids"]))
+
+
+def prepare_followup(jobs, entries, results):
+    """Carry checked original source to explicit dependents, never a verdict."""
+    jobs = prioritize_dependents(jobs, entries, results)
+    parents = {
+        job["id"]: sorted({dep for rid in job["review_ids"]
+                           if (dep := (entries[rid].get("value_hint") or {}).get("depends_on"))})
+        for job in jobs
+    }
+    wanted = {dep for members in parents.values() for dep in members}
+    proofs = {}
+    for result in results:
+        if result["status"] != "complete":
+            continue
+        for assessment in result["draft"]["results"]:
+            rid = assessment["review_id"]
+            if rid not in wanted:
+                continue
+            cites = assessment.get("evidence", [])
+            proofs[rid] = [proof for proof in result.get("proofs", []) if any(
+                all(proof[key] == cite[key] for key in ("path", "start_line", "end_line")) for cite in cites
+            )]
+    return [
+        {**job, "_followup_sources": [
+            (parent, proof) for parent in parents[job["id"]] for proof in proofs.get(parent, [])
+        ]} if parents[job["id"]] else job for job in jobs
+    ]
+
+
+def report_comprehensive(result, work_report=None, unplanned_source=()):
+    native = result.get("completion") or {}
+    missing = native.get("missing_or_conflicting_review_ids", [])
+    pending = native.get("pending_review_ids", [])
+    open_items = [row["id"] for row in work_report["items"] if row["status"] != "closed"] if work_report else []
+    complete = (result["status"] == "admitted" and native.get("review_work_complete") is True
+                and not (missing or pending or open_items or unplanned_source))
+    result["comprehensive_coverage"] = {
+        "status": "complete" if complete else "incomplete",
+        "missing_native_ids": missing, "pending_native_ids": pending, "open_work_items": open_items,
+        "source_basis": "named_work_plan" if work_report else "selected_source_assignments",
+        "unplanned_source_assignments": list(unplanned_source),
+    }
+    if missing:
+        result["source_unanswered_results"] = True
+    if not complete and result["status"] == "admitted":
+        result["status"] = "incomplete"
+
+
 def scoped_native_ids(ids, entries, focus):
     scoped = {e["review_id"] for e in entries for row in focus.values()
               if e["path"] == row["owner_path"] and row["start_line"] <= e["line"] <= row["end_line"]}
@@ -317,6 +402,7 @@ def run(args, legacy, worker):
             setattr(args, name, value)
         args._source_prepared = str(previous)
         result = legacy(args)
+        prior = None
         if data.get("work_review") and (Path(args.resume_from) / "source-review/work-ledger.json").is_file():
             prior = worker.read(Path(args.resume_from) / "source-review/work-ledger.json")
             if prior:
@@ -327,7 +413,9 @@ def run(args, legacy, worker):
                 result["work_goal"]["continuation_of"] = str(Path(args.resume_from).resolve())
                 if prior.get("goal") == "coverage" and not prior.get("target_complete"):
                     result["status"] = "incomplete"
-                worker.write(output / "worker.json", result)
+        if data.get("comprehensive"):
+            report_comprehensive(result, prior, data.get("unplanned_source_assignments", []))
+        worker.write(output / "worker.json", result)
         return result
     started_run = time.monotonic()
     started_epoch = time.time()
@@ -399,6 +487,7 @@ def run(args, legacy, worker):
     if package != worker.read(args.work_package):
         raise ValueError("source assignment requires current unaltered native work")
     payload = package["payload"]
+    comprehensive = payload["policy"] == "comprehensive" and payload.get("impact_scope") is None
     work_path = getattr(args, "work_plan", None)
     if domain_path and payload["policy"] != "value":
         raise ValueError("opt-in domain review currently requires Value policy")
@@ -478,7 +567,12 @@ def run(args, legacy, worker):
     options = selection_options(plan)
     worker.write(stage / "selection-options.json", options)
     selection_path = getattr(args, "source_selection", None)
-    if payload["policy"] == "value" and not selection_path and not domain_path and not work_path:
+    staged = comprehensive and not selection_path and not getattr(args, "reuse_source_results", None)
+    # Inventory windows guide planning. A window with no admitted native
+    # question needs explicit source selection before spending provider calls.
+    unplanned_source = [a["id"] for a in plan["assignments"] if not a["review_ids"]] if staged and not work_path else []
+    needs_selection = payload["policy"] == "value" or bool(unplanned_source and not ids)
+    if needs_selection and not selection_path and not domain_path and not work_path:
         checkpoint = {"status": "selection_required", "generation": claim["generation"],
                       "calls": 0, "unknown_provider_calls": 0, "stage": "source_selection",
                       "source_plan_id": plan["plan_id"], "source_fingerprint": plan["source_fingerprint"],
@@ -486,7 +580,8 @@ def run(args, legacy, worker):
         worker.write(stage / "checkpoint.json", checkpoint)
         worker.write(output / "worker.json", checkpoint)
         return checkpoint
-    selected = [a["id"] for a in plan["assignments"]]
+    unplanned_source_set = set(unplanned_source)
+    selected = [a["id"] for a in plan["assignments"] if a["id"] not in unplanned_source_set]
     focus = {}
     budget_path = None
     queues = None
@@ -504,7 +599,7 @@ def run(args, legacy, worker):
             targets = getattr(args, "coverage_target", None)
             targets = [value.strip() for value in targets.split(",")] if targets is not None else None
             work_registry = review_work.validate(manifest, plan, original_ids, validate_selection=validate_selection,
-                goal=getattr(args, "review_goal", None) or "budget", targets=targets)
+                goal=getattr(args, "review_goal", None) or ("coverage" if comprehensive else "budget"), targets=targets)
             if question_routing and any(len(case["verify_review_ids"]) > runtime["orchestration"]["max_reviews_per_job"] for case in work_registry["cases"]):
                 raise ValueError("question routing verification membership exceeds the bound case size")
             domain_registry = work_registry
@@ -607,6 +702,11 @@ def run(args, legacy, worker):
             input_limit=getattr(args, "input_token_budget", 1_500_000),
             admission_seconds=getattr(args, "admission_seconds", 1200), native_percent=native_share)
         args._review_budget = str(budget_path)
+    elif staged:
+        budget_path = stage / "budget.json"
+        review_budget.initialize(budget_path, max_calls=args.max_calls, input_limit=args.input_token_budget,
+                                 admission_seconds=args.admission_seconds, started_at=started_epoch)
+        args._review_budget = str(budget_path)
     selected_set = set(selected)
     by_id = {a["id"]: a for a in plan["assignments"]}
     excluded_ids = excluded_native_questions(plan)
@@ -623,6 +723,8 @@ def run(args, legacy, worker):
     entries = {
         e["review_id"]: e for e in worker.read(inventory / "inventory.json")["entries"]
     }
+    value_ids = {rid for rid in selected_native_ids if not entries[rid].get("value_hint")} if staged else set()
+    source_broker = worker.EvidenceBroker() if staged else None
     contract = (skill / "references/source-review.md").read_text(encoding="utf8")
     contract += (
         "\n"
@@ -795,7 +897,7 @@ def run(args, legacy, worker):
             "quote":window["text"]}
 
     def assignment_job(assignment, question=None, question_results=(), prepaid=None, supporting_cards=None, owner_required=True,
-                       prepared_question=(), fact_audit=None, resolution=None):
+                       prepared_question=(), fact_audit=None, resolution=None, completion_owner=None):
         profile = "expert" if fact_audit else "routine" if question is not None or not question_routing else "expert"
         role = "fact_auditor" if fact_audit else "question_answerer" if question is not None else "investigator"
         available_assertions = [dep for _, answer in question_results for dep in answer.get("assertions", [])]
@@ -852,6 +954,8 @@ def run(args, legacy, worker):
             worker.write(directory / "result.json", result)
             return result
         domain_case = case_by_assignment.get(assignment.get("_work_item_id", job_id))
+        if work_registry and question is None:
+            completion_owner = domain_case["id"]
         if question is not None:
             domain_case = {**domain_case, "checks": [question]}
         if resolution:
@@ -1057,6 +1161,38 @@ def run(args, legacy, worker):
                 facts.append(fact)
                 offer_source(prepared, "f" + str(len(facts) - 1))
 
+        if not offline and question is None:
+            # The parent assessment was source-checked. Rebind its exact cited
+            # lines before offering them, and avoid resending primary/shared text.
+            remaining_bytes = min(16 * 1024, limits["bytes"])
+            remaining_facts = review_domains.MAX_SHARED_FACTS
+            for parent, cite in assignment.get("_followup_sources", []):
+                if not remaining_facts or not remaining_bytes:
+                    break
+                if any(w["path"] == cite["path"] and w["start_line"] <= cite["start_line"]
+                       and w["end_line"] >= cite["end_line"] for w in (*windows, *inspected)):
+                    continue
+                size = len(cite["quote"].encode("utf8"))
+                if not 0 < size <= remaining_bytes:
+                    continue
+                arguments = {key: cite[key] for key in ("path", "start_line", "end_line")}
+                prepared = {"operation": "prepared_source", "results": {**arguments, "text": cite["quote"]}}
+                try:
+                    source = context.delivered_source_window(root, prepared)
+                except (OSError, ValueError):
+                    # Missing or changed source can still be addressed by the
+                    # normal current-work check and investigation.
+                    continue
+                if source is None or source["end_line"] != cite["end_line"]:
+                    continue
+                facts.append({"result_id": context.digest(["followup-source", parent, prepared]),
+                              "query": {"tool": "source", "review_id": None, "arguments": arguments,
+                                        "purpose": f"Previously checked source for dependency {parent}. Verify applicability here."},
+                              "result": prepared, "followup_dependency": parent})
+                offer_source(prepared, "f" + str(len(facts) - 1))
+                remaining_bytes -= size
+                remaining_facts -= 1
+
         checkpoint_binding = context.digest([packet, command_binding, provider, conversation])
 
         def save_checkpoint(phase, turn, lease=None):
@@ -1206,7 +1342,7 @@ def run(args, legacy, worker):
                     raise review_budget.BudgetExhausted("Observed usage fenced further calls")
                 lease = (prepaid if turn == 0 and prepaid is not None else
                     review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"]),
-                        completion_owner=domain_case["id"] if work_registry and question is None else None) if budget_path else None)
+                        completion_owner=completion_owner) if budget_path else None)
                 if question_budget:
                     try:
                         question_budget.reserve(domain_case["id"], "model_calls", 1)
@@ -1217,7 +1353,7 @@ def run(args, legacy, worker):
                 if budget_path:
                     budget_state = review_budget.snapshot(budget_path)
                     remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"] - review_budget.held_calls(
-                        budget_state, domain_case["id"] if work_registry and question is None else None)
+                        budget_state, completion_owner)
                     lane_state = budget_state.get("lanes", {}).get(lane_by_id.get(assignment["id"]))
                     if lane_state:
                         remaining_calls = min(remaining_calls, lane_state["allocation"] - lane_state["reserved_calls"])
@@ -1283,6 +1419,7 @@ def run(args, legacy, worker):
                 queries += worker.research_cost(requests, api=api)
                 batch = []
                 for query, arguments in zip(requests, prepared):
+                    reused = False
                     try:
                         if query["tool"] == "guidance":
                             result = context.load_guidance(
@@ -1296,6 +1433,9 @@ def run(args, legacy, worker):
                                 env,
                                 remaining,
                             )
+                        elif source_broker and query["tool"] == "source":
+                            key = (payload["inventory_input_fingerprint"], tuple(map(str, arguments)))
+                            result, reused = source_broker.get(key, lambda: native(arguments, remaining()), remaining())
                         else:
                             result = native(arguments, remaining())
                         if query["tool"] == "definition":
@@ -1364,6 +1504,8 @@ def run(args, legacy, worker):
                         "query": query,
                         "result": result,
                     }
+                    if reused:
+                        item["reused"] = True
                     if getattr(arguments, "filter_normalization", None):
                         item["filter_normalization"] = arguments.filter_normalization
                     facts.append(item)
@@ -1377,11 +1519,12 @@ def run(args, legacy, worker):
                 raise ValueError("source review did not finalize its assignment")
             if question is not None:
                 review_questions.check_draft(last)
-            if work_registry:
+            if work_registry or "_job_id" in assignment:
                 # Different work items may inspect the same physical assignment.
                 # Namespace proposal keys without changing their evidence/verdicts.
                 for proposal in last["proposals"]:
-                    proposal["key"] = "work-" + context.digest([domain_case["id"], proposal["key"]])
+                    namespace = domain_case["id"] if work_registry else job_id
+                    proposal["key"] = "work-" + context.digest([namespace, proposal["key"]])
             expected = {
                 (w["path"], w["start_line"], w["end_line"])
                 for w in windows
@@ -1746,7 +1889,8 @@ def run(args, legacy, worker):
                     save_work()
                 job_directory = context.digest(["work-item", case["id"]])
                 assignment = {**by_id[case["assignment_id"]], "_job_id": job_directory, "_work_item_id": case["id"],
-                              "review_ids": case["verify_review_ids"]}
+                              "review_ids": case["verify_review_ids"],
+                              "_followup_sources": job.get("_followup_sources", [])}
                 answers = []
                 preparation = {}
                 routing = {check["id"]:review_questions.route_check(check) for check in case["checks"]}
@@ -1891,7 +2035,15 @@ def run(args, legacy, worker):
                             yield job, execute_work(job)
                         else:
                             pending.append(job)
-                yield from review_scheduler.run({"ai":pending}, execute_work, workers=args.workers,
+                if not staged:
+                    yield from review_scheduler.run({"ai":pending}, execute_work, workers=args.workers,
+                        budget_path=budget_path, admit=admit_work)
+                    return
+                first, followup = comprehensive_cases(pending, value_ids)
+                yield from review_scheduler.run({"ai":first}, execute_work, workers=args.workers,
+                    budget_path=budget_path, admit=admit_work)
+                followup = prepare_followup(followup, entries, results)
+                yield from review_scheduler.run({"ai":followup}, execute_work, workers=args.workers,
                     budget_path=budget_path, admit=admit_work)
 
             for job, result in recover_then_schedule():
@@ -1971,6 +2123,30 @@ def run(args, legacy, worker):
         for assignment, result in review_scheduler.run(jobs, assignment_job, workers=args.workers, budget_path=budget_path):
             results.append(result)
             worker.write(stage / "progress.json", results)
+    elif staged:
+        first, followup = comprehensive_assignments([by_id[identity] for identity in selected], value_ids)
+        worker.write(stage / "schedule.json", {
+            "mode": "comprehensive", "value_and_source_review_ids": sorted(value_ids),
+            "followup_review_ids": [rid for job in followup for rid in job["review_ids"]],
+            "unplanned_source_assignments": unplanned_source,
+        })
+
+        def admit_assignment(job):
+            review_budget.hold_completion(budget_path, job.get("_job_id", job["id"]), 1)
+
+        def execute_assignment(job):
+            owner = job.get("_job_id", job["id"])
+            try:
+                return assignment_job(job, completion_owner=owner)
+            finally:
+                review_budget.release_completion(budget_path, owner)
+
+        for first_pass, phase in ((True, first), (False, followup)):
+            selected_jobs = phase if first_pass else prepare_followup(phase, entries, results)
+            for _, result in review_scheduler.run({"ai":selected_jobs},
+                    execute_assignment, workers=args.workers, budget_path=budget_path, admit=admit_assignment):
+                results.append(result)
+                worker.write(stage / "progress.json", results)
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [pool.submit(assignment_job, by_id[identity]) for identity in selected]
@@ -2176,7 +2352,11 @@ def run(args, legacy, worker):
             *runtime_options,
         ]
     )
-    work = native(["state", "work", *effective, *runtime_options])
+    # The native plan still owns the full obligation set. Finalize only decisions
+    # already returned by the source reviewer, without exporting unopened IDs.
+    assessed = sorted(set(draft["selected_review_ids"]).intersection(assessments))
+    packet_scope = ["--review-ids", ",".join(assessed)] if comprehensive else []
+    work = native(["state", "work", *effective, *runtime_options, *packet_scope])
     worker.write(stage / "work.json", work)
     bundles = stage / "bundles"
     native(
@@ -2239,19 +2419,24 @@ def run(args, legacy, worker):
         "plan_id": plan["plan_id"],
         "source_fingerprint": plan["source_fingerprint"],
         "parent_work_package_id": package["package_id"],
+        "comprehensive": comprehensive,
         "elapsed_ms": round((time.monotonic() - started_run) * 1000),
         "assignments": len(plan["assignments"]),
-        "completed_assignments": len({result["assignment_id"] for result in successful}) if work_registry else len(successful),
+        "completed_assignments": (len({result["assignment_id"] for result in successful}) if work_registry else
+            len(selected_set - {result["assignment_id"] for result in results if result["status"] != "complete"})),
         "reused_assignments": reused_count,
         "selected_assignment_ids": selected,
         "selected_assignments": len(selected),
-        "schedule": "schedule.json" if queues is not None or domain_registry else None,
+        "unplanned_source_assignments": unplanned_source,
+        "schedule": "schedule.json" if queues is not None or domain_registry or staged else None,
         "domain_review": {"domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
             "session_mode": getattr(args, "domain_session_mode", "shared"),
             "completed_cases": len(successful), "role_counts": role_counts,
             "lead_accounting": "lead-accounting.json", "metrics": "domain-metrics.json"} if domain_registry else None,
         "native_admitted_ids": ids,
-        "native_unreviewed_ids": sorted(set(ids) - set(assessments)),
+        "native_unreviewed_ids": sorted(set(draft["selected_review_ids"] if comprehensive else ids) - set(assessments)),
+        "research_cache_hits": sum(fact.get("reused") is True for result in results for fact in result.get("facts", [])),
+        "followup_dependency_source_count": sum("followup_dependency" in fact for result in results for fact in result.get("facts", [])),
         "native_membership_changes": membership_changes,
         "budget_path": str(budget_path) if budget_path else None,
         "limitations": plan["limitations"],
@@ -2295,6 +2480,7 @@ def run(args, legacy, worker):
         setattr(args, name, value)
     args._source_prepared = str(stage / "summary.json")
     result = legacy(args)
+    report = None
     if work_registry:
         if (output / "second-pass.json").is_file():
             audit = worker.read(output / "second-pass.json")
@@ -2316,8 +2502,14 @@ def run(args, legacy, worker):
             "ledger": str(stage / "work-ledger.json")}
         if report["goal"] == "coverage" and not report["target_complete"]:
             result["status"] = "incomplete"
+    if comprehensive:
+        report_comprehensive(result, report, unplanned_source)
+    if report is not None:
+        if comprehensive:
+            report["comprehensive_coverage"] = result["comprehensive_coverage"]
         report["execution_status"] = result["status"]
         worker.write(stage / "work-ledger.json", report)
         worker.write_text(stage / "remaining-work.md", review_work.markdown(report))
+    if report is not None or comprehensive:
         worker.write(output / "worker.json", result)
     return result

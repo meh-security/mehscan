@@ -22,8 +22,9 @@ Comprehensive still select review depth within that scope.
 
 ## Modes and queue
 
-For new repository Value work, a user-specified allowance or a set of checks,
-use [work goals](work-goals.md), normally with the budget goal.
+For new repository Value or Comprehensive work, a user-specified allowance or a
+set of checks, use [work goals](work-goals.md). Value defaults to the budget goal
+and repository Comprehensive defaults to the coverage goal.
 The source-bound work ledger separates potential-impact priority, required check
 answers and unclassified gaps. Budget and coverage targets use one ranked backlog;
 native/AI origin does not decide priority. Existing mixed-queue instructions below
@@ -117,6 +118,65 @@ After each chunk report, add consequential `reviewer_origin_leads` to the
 ranked plan as separate, unreviewed source questions. Follow
 [lead follow-up](#follow-up-on-reviewer-origin-leads)
 for their independent evidence check. Keep the originating ID's verdict intact.
+
+## Investigate and follow up
+
+Use one source-bound work plan and one allowance for repository Comprehensive.
+During orientation, name protected workflows that need source coverage even
+when the inventory has no corresponding ID. Keep those checks visible alongside
+native work.
+
+1. **Investigate.** Run the scheduled Value-native and high-priority AI source
+   work first. Capture the exact source facts that decided each question, their
+   applicability conditions and any material fact still missing. Reuse a
+   retained assessment when the existing memory binding permits it.
+2. **Follow up.** Re-rank additional candidates and open source checks using the
+   first pass, starting with consequential gaps and unresolved or adverse
+   dependencies. Group sites by the same deciding producer, writer, guard,
+   binding or configuration. Apply the [threat-model check](#threat-model-check)
+   before preparing the next funded group. Use
+   [shared-pattern review](pattern-sweep.md) when working through selected IDs.
+   The worker can carry checked source excerpts to their exact native dependents.
+   Verify the facts' applicability under each dependent's actor and conditions.
+
+Choose Value for the strongest checks within the allowance. Choose Comprehensive
+when the remaining admitted relationships justify an explicit breadth target.
+Named workflow checks can run in either mode, including checks with no native ID.
+
+Reconcile native and named source obligations with `comprehensive_coverage`.
+Fast and Full are separate audits with their existing entry points.
+
+### Threat-model check
+
+Use first-pass facts about the application's actual roles, deployment and
+protected workflows to decide whether a group poses a useful security question.
+Ask who can influence the deciding input, binding or state, what protected
+effect could change, and which source fact would settle that relationship. Reuse
+citations and read the missing edge at one representative if needed. Check
+effective writers, bindings and effects at the other sites. Split the group
+where an exception would change the answer. Keep this inside follow-up planning
+and the original allowance.
+
+| Decision | When it applies |
+| --- | --- |
+| **Investigate** | A plausible actor or input can affect a protected boundary and a named check can decide the relationship. Retain small but concrete native lifetime or bounds signals and meaningful framework exceptions, even when the exact caller is still open. |
+| **Exclude** | Apply the [scope evidence rule](review-scope.md#evidence-for-scope-exclusions). Show that the actor lacks relevant control, the required authority already permits the same effect, or the relationship has no protected effect. Limit the decision to the supported question, conditions and sites. |
+| **Defer** | A material fact is unavailable or the remaining cost outweighs the supported consequence. Record the missing fact and affected scope. Unknown control or reachability stays open. |
+
+In `RUN/review-plan.md`, record the question, representative, exact affected IDs,
+decision and its reason. Cite the deciding source and record the conditions that
+would reopen an exclusion. A representative can establish a common fact.
+Use member-level binding evidence to show where it applies, and sample sites to
+check that evidence. Keep any member with a different writer, control, runtime
+configuration or effect open until its own question is settled. Preserve
+consequential workflows with zero native hits.
+
+Apply exclusions to follow-up planning within the admission policy. Native
+`excluded_review_ids` come from the inventory. Already admitted IDs keep their
+own applicability checks and decisions, and unresolved or unstarted obligations
+stay visible. In a continuous worker run, the controller schedules the bound
+plan. Use known scope facts when preparing that plan and use later facts to guide
+the next host-selected group.
 
 ## Time and workload
 

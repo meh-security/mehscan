@@ -449,7 +449,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "37";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "38";
 const RUST_CONFIGURATION_REVISION: &str = "typed-source-and-raw-memory-v22";
 const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 

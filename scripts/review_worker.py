@@ -2900,6 +2900,14 @@ def main():
         summary["review_options"] = result["review_options"]
     if "work_goal" in result:
         summary["work_goal"] = result["work_goal"]
+    if "comprehensive_coverage" in result:
+        coverage = result["comprehensive_coverage"]
+        summary["comprehensive_coverage"] = {
+            "status": coverage["status"],
+            "remaining_native": len(coverage["missing_native_ids"]) + len(coverage["pending_native_ids"]),
+            "remaining_work_items": len(coverage["open_work_items"]),
+            "unplanned_source_assignments": len(coverage.get("unplanned_source_assignments", [])),
+        }
     print(json.dumps(summary))
     return 0 if result["status"] in ("admitted", "source_validated", "selection_required") else 2
 

@@ -167,7 +167,10 @@ fn fixed_sql_defers_only_the_selected_grammar_question() {
         1
     );
     assert!(sql.iter().any(|e| e.value_hint.is_none()));
-    assert!(sql.iter().all(|e| e.comprehensive_exclusion.is_none()));
+    assert!(sql.iter().all(|e| {
+        e.comprehensive_exclusion.as_ref().map(|h| &h.reason)
+            == e.value_hint.as_ref().map(|h| &h.reason)
+    }));
     assert_eq!(
         inventory
             .scan
