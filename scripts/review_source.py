@@ -373,6 +373,8 @@ def run(args, legacy, worker):
     if not 1 <= args.workers <= 16:
         raise ValueError("review workers must be 1 to 16")
     source_resume = None
+    continuation_parent = getattr(args, "continue_comprehensive", None)
+    continuation = None
     lineage_output = output
     resolution_path = getattr(args, "resolve_checks", None)
     if resolution_path:
@@ -415,6 +417,8 @@ def run(args, legacy, worker):
                     result["status"] = "incomplete"
         if data.get("comprehensive"):
             report_comprehensive(result, prior, data.get("unplanned_source_assignments", []))
+        if data.get("continuation"):
+            result["continuation"] = data["continuation"]
         worker.write(output / "worker.json", result)
         return result
     started_run = time.monotonic()
@@ -489,6 +493,8 @@ def run(args, legacy, worker):
     payload = package["payload"]
     comprehensive = payload["policy"] == "comprehensive" and payload.get("impact_scope") is None
     work_path = getattr(args, "work_plan", None)
+    if continuation_parent and not comprehensive:
+        raise ValueError("bind the Comprehensive native plan before continuing broader work")
     if domain_path and payload["policy"] != "value":
         raise ValueError("opt-in domain review currently requires Value policy")
     runtime = payload.get("runtime")
@@ -664,6 +670,12 @@ def run(args, legacy, worker):
             budget_path = Path(recovered["budget_path"])
             lineage_output = Path(recovered["lineage_output"])
             source_recovery.settle_interrupted(stage, budget_path, worker)
+            if recovered.get("continuation_sha256"):
+                continuation = worker.read(stage / "continuation.json")
+        elif continuation_parent:
+            recovery_binding = source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker)
+            continuation, budget_path = source_recovery.extend_scope(
+                continuation_parent, stage, root, package, plan, work_registry, recovery_binding, worker)
         else:
             review_budget.initialize(budget_path, max_calls=managed_calls,
                 input_limit=getattr(args, "input_token_budget", 1_500_000),
@@ -671,13 +683,14 @@ def run(args, legacy, worker):
                 started_at=started_epoch if work_registry else None)
         args._review_budget = str(budget_path)
         if work_registry:
+            worker.write(stage / "input-work.json", package)
             source_recovery.seal(stage,
                 source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker),
                 budget_path, lineage_output, worker)
             report = review_work.ledger(work_registry, budget=review_budget.snapshot(budget_path))
             worker.write(stage / "work-ledger.json", report)
             worker.write_text(stage / "remaining-work.md", review_work.markdown(report))
-            if not domain_registry["cases"]:
+            if not domain_registry["cases"] and not continuation:
                 result = {"status": "incomplete", "generation": claim["generation"], "calls": 0,
                           "reason": "NoReadyWork", "work_goal": report["target_status"]}
                 worker.write(output / "worker.json", result)
@@ -757,7 +770,7 @@ def run(args, legacy, worker):
             "cases": [c["id"] for c in d["cases"]]} for d in domain_registry["domains"]],
             "verification_ids": ids, "lead_count": len(domain_registry["lead_accounting"]),
             "authority": "Cases share source facts and a provider thread; verdicts remain case-specific. Cover/Context roles have no native verdict obligation."})
-    source_metrics = source_recovery.receipts(stage, worker) if source_resume else []
+    source_metrics = source_recovery.receipts(stage, worker) if source_resume or continuation else []
     inherited_source_calls = len(source_metrics)
     reuse_jobs = {}
     stale_reuse_jobs = set()
@@ -825,13 +838,29 @@ def run(args, legacy, worker):
     preparation_broker = worker.EvidenceBroker()
     question_budget = (review_orchestration.SharedReviewBudget(stage / "question-budget.json",
         runtime["orchestration"], worker.write,
-        previous=stage / "question-budget.json" if source_resume else None) if question_routing else None)
+        previous=stage / "question-budget.json" if source_resume or continuation else None) if question_routing else None)
     case_binding = {
         "source_plan_id":work_registry["source_plan_id"],
         "source_fingerprint":work_registry["source_fingerprint"],
         "work_package_id":package["package_id"], "work_plan_digest":context.digest(work_registry["items"])} if work_registry else None
-    case_store = ((CaseState(stage / "case-state.sqlite", case_binding) if source_resume else
-        CaseState.create(stage / "case-state.sqlite", root, case_binding, work_registry)) if work_registry else None)
+    carried_cases = set(continuation["cases"]) if continuation else set()
+    carried_heads = continuation["heads"] if continuation else {}
+    parent_responses = {row["decision_id"]:row["response"] for row in payload["parent_decisions"]} if continuation else {}
+    carried_assessments = {row["review_id"]:row for row in worker.second_pass.brief({
+        "results":[parent_responses[head] for head in carried_heads.values()]})["results"]} if continuation else {}
+    case_store = None
+    if continuation_parent:
+        case_store = CaseState.extend_copy(stage / "case-state.sqlite", continuation["case_binding"], case_binding, work_registry)
+        for item in work_registry["items"]:
+            changed = sorted(set(item["verify_review_ids"]).intersection(continuation["reconsider_native_ids"]))
+            if changed:
+                case_store.submit(context.digest(["continuation-native-audit", item["id"], changed]), {
+                    "kind":"native_audit", "case_id":item["id"], "review_ids":changed,
+                    "reason":"The current native proof changed after this source check was answered."})
+        source_recovery.claim_successor(continuation["parent"], stage, worker)
+    elif work_registry:
+        case_store = (CaseState(stage / "case-state.sqlite", case_binding) if source_resume else
+                      CaseState.create(stage / "case-state.sqlite", root, case_binding, work_registry))
     recovery_cases = {identity for identity, case in case_store.snapshot()["cases"].items()
                       if case["execution"] != "unstarted"} if source_resume else set()
     recovery_jobs = {path.parent.name for pattern in ("*/recovery.json", "*/result.json")
@@ -2013,7 +2042,7 @@ def run(args, legacy, worker):
                 projected = {result["case_id"]:result for result in case_store.results()}
                 for job in jobs:
                     case_id = job["id"]
-                    if source_resume and saved_cases[case_id]["result"]:
+                    if (source_resume and saved_cases[case_id]["result"]) or case_id in carried_cases:
                         # Keep the original immutable result reference and receipts.
                         results.append(projected[case_id])
                         review_budget.release_completion(budget_path, case_id)
@@ -2042,7 +2071,15 @@ def run(args, legacy, worker):
                 first, followup = comprehensive_cases(pending, value_ids)
                 yield from review_scheduler.run({"ai":first}, execute_work, workers=args.workers,
                     budget_path=budget_path, admit=admit_work)
-                followup = prepare_followup(followup, entries, results)
+                dependency_results = results
+                if carried_assessments:
+                    # Use the journal's current verdict and citations for already
+                    # admitted work. The original source proof remains attributed.
+                    dependency_results = [
+                        {**r, "draft": {**r["draft"], "results": [carried_assessments.get(a["review_id"], a)
+                            for a in r["draft"]["results"]]}}
+                        if r.get("case_id") in carried_cases and r["status"] == "complete" else r for r in results]
+                followup = prepare_followup(followup, entries, dependency_results)
                 yield from review_scheduler.run({"ai":followup}, execute_work, workers=args.workers,
                     budget_path=budget_path, admit=admit_work)
 
@@ -2159,12 +2196,17 @@ def run(args, legacy, worker):
         question_budget.close()
     if case_store:
         results = [r for r in results if "case_id" not in r] + case_store.results()
+    if continuation:
+        for row in results:
+            if row.get("case_id") in carried_cases:
+                row["assignment_id"] = continuation["case_assignments"][row["case_id"]]
     successful = [r for r in results if r["status"] == "complete" and not r.get("reconsideration")]
+    new_source = [r for r in successful if r.get("case_id") not in carried_cases]
     admission = {
         "plan": plan,
-        "inspected": [w for r in successful for w in r["inspected"]],
-        "proposals": [p for r in successful for p in r["proposals"]],
-        "assessment_evidence": [c for r in successful for c in r["proofs"]],
+        "inspected": [w for r in new_source for w in r["inspected"]],
+        "proposals": [p for r in new_source for p in r["proposals"]],
+        "assessment_evidence": [c for r in new_source for c in r["proofs"]],
     }
     worker.write(stage / "admission.json", admission)
     augmented = stage / "inventory"
@@ -2182,9 +2224,9 @@ def run(args, legacy, worker):
         ]
     )
     worker.write(stage / "admission-result.json", admitted)
-    assessments = {
-        row["review_id"]: row for r in successful for row in r["draft"]["results"]
-    }
+    assessments = {**carried_assessments, **{
+        row["review_id"]: row for r in new_source for row in r["draft"]["results"]
+    }}
     question_assignments = {
         row["review_id"]: [r["assignment_id"]]
         for r in successful
@@ -2196,7 +2238,13 @@ def run(args, legacy, worker):
     followups = [note for r in successful for note in r.get("followups", [])]
     claim_contexts = [value for r in successful for value in r.get("claim_contexts", [])]
     context_errors = [value for r in successful for value in r.get("claim_context_errors", []) if value["review_id"] in assessments]
-    for result in successful:
+    if continuation:
+        question_cases.update(continuation["question_cases"])
+        question_assignments.update({rid:sorted({continuation["case_assignments"][case] for case in cases
+            if case in carried_cases}) for rid, cases in continuation["question_cases"].items()})
+        followups = [row for row in followups if row["review_id"] not in carried_heads] + continuation["followups"]
+        claim_contexts = [row for row in claim_contexts if row["review_id"] not in carried_heads] + continuation["claim_contexts"]
+    for result in new_source:
         for proposal in result["draft"]["proposals"]:
             identity = admitted["mapping"][
                 result["assignment_id"] + ":" + proposal["key"]
@@ -2237,6 +2285,7 @@ def run(args, legacy, worker):
             "source-" + context.digest(str(output))[:24],
             "--operation-key",
             "source-claim:" + context.digest(str(output)),
+            *(["--retry", "true"] if continuation else []),
         ]
     )
     worker.write(private / "claim.json", next_claim)
@@ -2462,6 +2511,11 @@ def run(args, legacy, worker):
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
         summary["effective_args"].update(reviewer_command=args.reviewer_command, provider_contract=args.provider_contract)
+    if continuation:
+        summary["continuation"] = {"from":continuation["parent"], "carried_cases":len(carried_cases),
+            "carried_native_ids":sorted(carried_heads), "prior_reserved_calls":continuation["spent_calls"],
+            "new_source_calls":len(source_metrics) - continuation["source_receipts"]}
+        summary["effective_args"]["_continued_heads"] = carried_heads
     if source_resume:
         summary["recovery"] = {"parent":str(source_resume.resolve()), "lineage_origin":str(lineage_output),
             "inherited_receipted_calls":inherited_source_calls,
@@ -2480,6 +2534,8 @@ def run(args, legacy, worker):
         setattr(args, name, value)
     args._source_prepared = str(stage / "summary.json")
     result = legacy(args)
+    if continuation:
+        result["continuation"] = summary["continuation"]
     report = None
     if work_registry:
         if (output / "second-pass.json").is_file():

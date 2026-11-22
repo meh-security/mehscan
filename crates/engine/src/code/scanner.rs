@@ -28,7 +28,7 @@ use crate::code::object_input::ObjectInputProjectContext;
 use crate::code::python_context::PythonProjectContext;
 use crate::code::rust_project::RustProjectContext;
 use crate::code::symbols::ProjectSymbolEnvironment;
-use crate::repository::{FileClass, discover_with_options, is_generated_javascript_source};
+use crate::repository::{FileClass, discover_with_options, generated_javascript_reason};
 use crate::rules::{CompiledRule, compile_for_language, parser_language};
 use crate::secrets::load_allowlist;
 use crate::{EngineError, ScanOptions};
@@ -367,11 +367,15 @@ pub(crate) fn scan_profiled(
                         .or_default()
                         .secret_scan_disabled += 1;
                 } else {
+                    let reason = generated_javascript_reason(Path::new(&file.relative), "")
+                        .map_or_else(|| "secret scanning disabled".to_string(), |reason| {
+                            format!("{reason}; available by targeted lookup; secret scanning disabled")
+                        });
                     coverage.files.push(FileCoverage {
                         path: file.relative,
                         language: None,
                         status: FileStatus::Ignored,
-                        reason: Some("secret scanning disabled".to_string()),
+                        reason: Some(reason),
                     });
                 }
             }
@@ -609,9 +613,12 @@ pub(crate) fn scan_profiled(
                     }
                 };
                 if !options.include_tests
-                    && is_generated_javascript_source(Path::new(&file.relative), &source)
+                    && let Some(reason) =
+                        generated_javascript_reason(Path::new(&file.relative), &source)
                 {
-                    let reason = "generated or bundled frontend source excluded from SAST; secret scan retained";
+                    let reason = format!(
+                        "generated or bundled frontend source excluded from SAST ({reason}); available by targeted lookup"
+                    );
                     if options.scan_secrets {
                         match read_secret_source(&file.absolute) {
                             Ok(secret_source) => {
@@ -623,7 +630,7 @@ pub(crate) fn scan_profiled(
                                     path: file.relative,
                                     language: None,
                                     status: FileStatus::SecretScanned,
-                                    reason: Some(reason.to_string()),
+                                    reason: Some(reason),
                                 });
                                 evidence.append(&mut secret_scan.evidence);
                             }

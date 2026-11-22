@@ -732,17 +732,23 @@ pub fn plan_with_options(
             continue;
         }
         let schema_only = (is_migration || generated_path) && schema_migration(file);
-        let reason = if sql {
-            Some("SQL source available by targeted lookup")
+        let asset =
+            crate::repository::generated_javascript_reason(Path::new(&file.path), &file.source);
+        let reason = if let Some(reason) = asset {
+            Some(format!("{reason}; available by targeted lookup"))
+        } else if sql {
+            Some("SQL source available by targeted lookup".to_string())
         } else if schema_only {
-            Some("schema-only migration available by targeted lookup")
+            Some("schema-only migration available by targeted lookup".to_string())
         } else if eligible(file) && passive_entity_mapping(file) {
-            Some("schema-only entity mapping available by targeted lookup")
+            Some("schema-only entity mapping available by targeted lookup".to_string())
         } else if !include_supporting_source && eligible(file) {
-            supporting_reason(file, parse_failed_files.contains(file.path.as_str())).or_else(|| {
-                passive_data_shape(file)
-                    .then_some("passive C# data shape available by targeted lookup")
-            })
+            supporting_reason(file, parse_failed_files.contains(file.path.as_str()))
+                .or_else(|| {
+                    passive_data_shape(file)
+                        .then_some("passive C# data shape available by targeted lookup")
+                })
+                .map(str::to_owned)
         } else {
             None
         };
@@ -755,7 +761,7 @@ pub fn plan_with_options(
                 .collect();
             excluded_sources.push(ExcludedSource {
                 path: file.path.clone(),
-                reason: reason.into(),
+                reason,
                 review_ids,
                 source_sha256: format!("{:x}", Sha256::digest(file.source.as_bytes())),
                 line_count: file.source.lines().count(),

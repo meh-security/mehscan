@@ -929,6 +929,9 @@ def run(args):
     if getattr(args, "question_routing", False) and (args.phase != "all" or not getattr(args, "work_plan", None)):
         raise ValueError("question routing requires all-phase work goals")
     work_path = getattr(args, "work_plan", None)
+    if getattr(args, "continue_comprehensive", None) and (not work_path or args.phase != "all"
+            or getattr(args, "resume_from", None) or getattr(args, "resolve_checks", None)):
+        raise ValueError("Comprehensive continuation requires an all-phase work plan and its own Value attempt")
     if getattr(args, "resolve_checks", None) and (not work_path or not getattr(args, "resume_from", None)
             or args.phase != "all" or getattr(args, "second_pass", "off") != "off"):
         raise ValueError("scoped correction requires --work-plan, --resume-from and --phase all without a second pass")
@@ -2005,6 +2008,9 @@ def run_locked(args):
                 raise ValueError("recovery requires the same current source, runtime and scope")
         write(package_path, package)
         payload = package["payload"]
+        continued_heads = getattr(args, "_continued_heads", {})
+        if any(payload["expected_parents"].get(rid) != [head] for rid, head in continued_heads.items()):
+            raise ValueError("a carried decision changed before native finalization")
         if source_profile_path:
             if args.phase == "change-pass":
                 raise ValueError("explicit source profiles require native review work")
@@ -2679,12 +2685,17 @@ def run_locked(args):
                     write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
                                           "cases": [execution_cases[identity] for identity in requested]})
                 links = []
-                if args.supersede:
+                if args.supersede or continued_heads:
                     for decision in report.get("decision_records",[]):
-                        parents = payload["expected_parents"][decision["response"]["review_id"]]
+                        rid = decision["response"]["review_id"]
+                        parents = payload["expected_parents"][rid]
+                        if not args.supersede and rid not in continued_heads:
+                            continue
                         if parents and decision["decision_id"] not in parents:
+                            reason = ("Source-validated decision carried from the Value checkpoint " if rid in continued_heads
+                                      else "Fresh validated review of current work package ")
                             links.append({"decision_id": decision["decision_id"], "parents": parents,
-                                          "reason": "Fresh validated review of current work package " + package["package_id"]})
+                                          "reason": reason + package["package_id"]})
                 # Keep response override distinct from requests; copy the run binding
                 # into a new attempt run so normal state admission can validate it.
                 admitted_run = output / "run"
@@ -2877,6 +2888,8 @@ def main():
     parser.add_argument("--fact-audit-policy", help="optional bounded factual audit selection; uses the bound owner and original remaining allowance")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resolve-checks", help="resolve named reopened/unresolved work checks from --resume-from under its original allowance")
+    parser.add_argument("--continue-comprehensive", metavar="VALUE_ATTEMPT",
+                        help="extend a published Value work plan under its remaining allowance")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
     parser.add_argument("--reuse-source-results", action="append", help="reuse matching completed source assignments from a prior attempt; repeat in chronological order; defer overlapping incomplete work")
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
@@ -2900,6 +2913,8 @@ def main():
         summary["review_options"] = result["review_options"]
     if "work_goal" in result:
         summary["work_goal"] = result["work_goal"]
+    if "continuation" in result:
+        summary["continuation"] = result["continuation"]
     if "comprehensive_coverage" in result:
         coverage = result["comprehensive_coverage"]
         summary["comprehensive_coverage"] = {

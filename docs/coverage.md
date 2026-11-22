@@ -136,6 +136,13 @@ samples and generated or bundled sources. This includes `sample`, `example`,
 `libtest` and `libtests` directories. Names are source-scope conventions, not
 evidence that code is safe.
 
+Compact browser JavaScript in served directories can be classified as a bundle
+from recognizable build runtime structure. File size and location alone leave
+source eligible. The native scan and source planner record the exclusion, and
+direct source lookup remains available. Keep the maintained loaders and callers
+in scope. Record an asset's application role and source mapping with the caller
+evidence when a review depends on that boundary.
+
 Rust directory scans also follow supported static Cargo targets and source-module
 declarations. Established module exclusions apply to evidence and review helper
 lookup. Unknown features, targets, generated modules and ambiguous inclusion stay

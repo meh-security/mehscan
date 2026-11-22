@@ -8,6 +8,27 @@ mode prepares an active private [review handoff](github-action.md#active-review-
 Supplying `provider-config` explicitly enables the bundled reviewer; without it,
 a trusted local consumer can execute the handoff.
 
+## Review stages
+
+Choose **Value** to prioritize the strongest checks within an allowance.
+Choose **Comprehensive** when the review also needs broader coverage accounting.
+You can select it up front or extend a saved repository Value review. Both use
+the following stages.
+
+| Stage | What to expect |
+| --- | --- |
+| 1. Set scope and load memory | Pin the repository or change and bind applicable retained knowledge to the current work. Use the same repository key and stream on reruns. [Local memory](#capture-local-review-memory) |
+| 2. Plan priority checks | Rank native leads and named source checks by impact and evidence. Include consequential workflows even when the inventory has zero matching candidates. [Work goals](../skills/mehscan-security/references/work-goals.md) |
+| 3. Review priority work | Investigate funded checks and save cited answers, open questions and usage. Report unstarted work when the allowance stops dispatch. |
+| 4. Follow up when requested | Comprehensive continues into admitted native and named work under the same allowance. A saved Value or Comprehensive plan can also continue a specifically named unresolved check when its evidence is available. [Continue Value into Comprehensive](#continue-value-into-comprehensive) · [Named checks](#resolve-named-source-checks) |
+| 5. Audit when requested | Use Fast to check specific proof questions on existing results. Use Full for an independent assessment of every eligible claim in the selected scope. [Fast and Full](#optional-second-pass) |
+| 6. Report and retain | Reconcile native decisions, named coverage, and open work. Close with the effective inventory so admitted decisions and source observations are available on reruns. [Rerun behavior](#reuse-on-reruns) |
+
+Ordinary recovery keeps its exact manifest and allowance. A Comprehensive
+continuation validates an expanded manifest, preserves the original allowance,
+and reuses saved work that still applies. A fresh review loads applicable Turso
+knowledge for its current scope. [Recovery](#parallel-execution-and-recovery) · [Reuse on reruns](#reuse-on-reruns)
+
 ## Ordinary review profile
 
 For a source-bound ranked backlog with a spending allowance or explicit checks to
@@ -70,6 +91,13 @@ They remain available for targeted cross-file queries. `excluded_sources` record
 paths, reasons and affected native IDs separately from examined coverage. Add
 `--include-supporting-source` to explicitly review these files as assignments.
 Files with executable interface bodies or other implementation remain eligible.
+
+Generated JavaScript distributions are lookup-only in Value and Comprehensive.
+Their coverage records identify the classification and their source plan entries
+retain the file hash. Review the maintained code that loads them or supplies
+inputs. If an application behavior depends on the distribution, record the
+asset's role and caller evidence in the report and use version-matched source or
+a targeted read to resolve the question.
 
 Schema-only database migrations, generated migration snapshots/designers and SQL
 files are queryable only. Custom SQL/resource calls and executable or uncertain
@@ -331,6 +359,35 @@ ID keeps its own applicability and decision. The
 with open named work items. A coverage target in a work plan can be complete
 while the broader Comprehensive result is incomplete. Changed coverage and
 optional Fast/Full audits use their existing entry points.
+
+### Continue Value into Comprehensive
+
+Use `--continue-comprehensive VALUE_ATTEMPT` on the ordinary all-phase worker
+invocation with a new `--output` and the expanded `--work-plan`. Use the
+published repository Value attempt as the checkpoint. Keep its effective
+inventory, source, review stream, memory store, reviewer and runtime. Bind the
+Comprehensive native plan on that inventory and export its current `state work`
+package. Replace an active native plan with its exact parent plan ID. If the
+Value generation is closed, claim a new generation on that same inventory.
+You can also select a saved named correction or a saved native audit linked to
+that Value attempt as the checkpoint.
+
+Bind the expanded manifest to the current Comprehensive source plan. Keep the
+original case IDs, questions, Verify membership, actors and conditions. Add the
+remaining named cases from the broader scope. The worker carries the saved case
+history and revalidates admitted native assessments locally. It spends new
+model calls on newly funded work. The report keeps unanswered native decisions
+and named questions visible, including when the original allowance is spent.
+The `continuation` report includes the prior reserved calls, carried work and
+new source call receipts. Use a fresh plan for changed source or changed review
+premises.
+
+Continuation inherits the parent's call, token, cost and time limits and its
+usage to date. The original limits govern the extension. Recover an interrupted
+continuation with `--resume-from` and its exact expanded plan and original
+worker inputs. For a later Fast or Full audit, use the Comprehensive output as
+the first pass. End the effective native generation to retain its admitted
+decisions and observations in Turso.
 
 ## Opt-in domain review
 

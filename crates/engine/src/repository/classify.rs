@@ -248,12 +248,7 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
         || lower.ends_with(".d.ts")
         || lower.ends_with(".d.mts")
         || lower.ends_with(".d.cts")
-        || lower.contains(".min.js")
-        || lower.contains(".min.mjs")
-        || lower.contains(".min.cjs")
-        || lower.contains(".bundle.js")
-        || lower.contains(".bundle.mjs")
-        || lower.contains(".bundle.cjs")
+        || javascript_distribution_name(&lower)
         || lower.ends_with(".pb.go")
         || lower.ends_with(".generated.cs")
         || lower.ends_with(".designer.cs")
@@ -275,31 +270,129 @@ fn is_next_app_route_module(path: &Path) -> bool {
         )
 }
 
-/// Detects JavaScript distribution artifacts whose names do not carry the
-/// usual `.min` or `.bundle` marker. The size and long-line gates avoid
-/// classifying ordinary authored modules from a source-map comment alone.
-pub(crate) fn is_generated_javascript_source(path: &Path, source: &str) -> bool {
+fn javascript_distribution_name(lower: &str) -> bool {
+    [
+        ".min.js",
+        ".min.mjs",
+        ".min.cjs",
+        ".bundle.js",
+        ".bundle.mjs",
+        ".bundle.cjs",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+/// Shared native and reviewer scope for JavaScript distribution artifacts.
+/// Format evidence supports a coverage decision; the asset remains queryable.
+pub(crate) fn generated_javascript_reason(path: &Path, source: &str) -> Option<&'static str> {
     let extension = path
         .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
+        .and_then(|value| value.to_str())?
         .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "js" | "jsx" | "mjs" | "cjs")
-        || source.len() < 64 * 1024
-        || source.lines().map(str::len).max().unwrap_or(0) < 32 * 1024
-    {
-        return false;
+    if !matches!(extension.as_str(), "js" | "jsx" | "mjs" | "cjs") {
+        return None;
     }
-
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    source.contains("sourceMappingURL=")
-        || name.contains(".prod.js")
-        || name.contains(".prod.mjs")
-        || name.contains(".prod.cjs")
+    if javascript_distribution_name(&name) {
+        return Some("JavaScript distribution filename");
+    }
+    if source.len() < 64 * 1024 {
+        return None;
+    }
+    let (longest_line, compact_bytes) =
+        source
+            .lines()
+            .map(str::len)
+            .fold((0, 0), |(longest, compact), len| {
+                (
+                    longest.max(len),
+                    compact + if len >= 2048 { len } else { 0 },
+                )
+            });
+    if longest_line < 32 * 1024 {
+        return None;
+    }
+    if source.lines().rev().take(8).any(|line| {
+        line.trim_start()
+            .strip_prefix("//#")
+            .or_else(|| line.trim_start().strip_prefix("//@"))
+            .is_some_and(|directive| {
+                directive
+                    .trim_start()
+                    .strip_prefix("sourceMappingURL=")
+                    .is_some_and(|value| !value.trim().is_empty())
+            })
+    }) {
+        return Some("JavaScript distribution with a source-map directive");
+    }
+    if [".prod.js", ".prod.mjs", ".prod.cjs"]
+        .iter()
+        .any(|marker| name.contains(marker))
+    {
+        return Some("production JavaScript distribution filename");
+    }
+    if compact_bytes < source.len() / 2
+        || !path.parent().is_some_and(|parent| {
+            parent.components().any(|part| {
+                ["wwwroot", "public", "static", "assets"]
+                    .iter()
+                    .any(|directory| part.as_os_str().eq_ignore_ascii_case(directory))
+            })
+        })
+    {
+        return None;
+    }
+
+    let mut prefix_end = source.len().min(8192);
+    while !source.is_char_boundary(prefix_end) {
+        prefix_end -= 1;
+    }
+    let prefix = &source[..prefix_end];
+    if [
+        "webpackUniversalModuleDefinition",
+        "define.amd",
+        "module.exports",
+    ]
+    .iter()
+    .all(|marker| prefix.contains(marker))
+        && source.contains("__webpack_require__")
+        && (source.contains("document.createElement") || source.contains("window."))
+    {
+        return Some("compact served JavaScript bundle with a Webpack runtime");
+    }
+    if [
+        "Object.defineProperty",
+        "Cannot add the same private member more than once",
+        "access private method",
+        "instanceof WeakSet",
+        "(function(",
+    ]
+    .iter()
+    .all(|marker| prefix.contains(marker))
+    {
+        let mut licenses = source
+            .match_indices("@license")
+            .filter_map(|(offset, marker)| {
+                let label = source[offset + marker.len()..]
+                    .split(['\n', '\r', '*'])
+                    .next()?
+                    .trim();
+                (!label.is_empty()).then_some(label)
+            });
+        if licenses
+            .next()
+            .is_some_and(|first| licenses.any(|label| label != first))
+            && (source.contains("document.createElement") || source.contains("window."))
+        {
+            return Some("compact served JavaScript bundle with an esbuild runtime");
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -505,31 +598,57 @@ mod tests {
     fn detects_only_strong_unnamed_javascript_build_outputs() {
         let padding = "x".repeat(70 * 1024);
         let mapped = format!("(()=>{{/*{padding}*/}})();\n//# sourceMappingURL=app.js.map");
-        assert!(is_generated_javascript_source(
-            Path::new("wwwroot/Scripts/app.js"),
-            &mapped
-        ));
+        assert!(
+            generated_javascript_reason(Path::new("wwwroot/Scripts/app.js"), &mapped).is_some()
+        );
 
         let production = format!("/** @license */\nconst runtime='{padding}';");
-        assert!(is_generated_javascript_source(
-            Path::new("wwwroot/Scripts/vue.global.prod.js"),
-            &production
-        ));
+        assert!(
+            generated_javascript_reason(
+                Path::new("wwwroot/Scripts/vue.global.prod.js"),
+                &production
+            )
+            .is_some()
+        );
 
         let ordinary = "export function load(url) { return fetch(url); }\n";
-        assert!(!is_generated_javascript_source(
-            Path::new("wwwroot/Scripts/application.js"),
-            ordinary
-        ));
-        let large_authored = format!("const embedded = '{padding}';\nexport {{ embedded }};\n");
-        assert!(!is_generated_javascript_source(
-            Path::new("wwwroot/Scripts/application.js"),
-            &large_authored
-        ));
-        assert!(!is_generated_javascript_source(
-            Path::new("wwwroot/Scripts/application.ts"),
-            &mapped
-        ));
+        assert!(
+            generated_javascript_reason(Path::new("wwwroot/Scripts/application.js"), ordinary)
+                .is_none()
+        );
+        let large_authored = format!(
+            "const embedded = 'sourceMappingURL=fixture {padding}';\nexport {{ embedded }};\n"
+        );
+        assert!(
+            generated_javascript_reason(
+                Path::new("wwwroot/Scripts/application.js"),
+                &large_authored
+            )
+            .is_none()
+        );
+        assert!(
+            generated_javascript_reason(Path::new("wwwroot/Scripts/application.ts"), &mapped)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unnamed_distribution_needs_browser_packaging_and_compact_shape() {
+        let head = "!function webpackUniversalModuleDefinition(e){ if(typeof define.amd === 'boolean') module.exports = e(); }(function(){var __webpack_require__={};";
+        let compact = format!("{head}window.render='{}';}});", "x".repeat(70 * 1024));
+        let formatted = format!(
+            "{head}window.render=[\n{}];}});",
+            "'example',\n".repeat(6000)
+        );
+        let non_browser = compact.replace("window.render", "module.exports");
+        let path = Path::new("public/widgets/runtime.js");
+        assert_eq!(
+            generated_javascript_reason(path, &compact),
+            Some("compact served JavaScript bundle with a Webpack runtime")
+        );
+        assert!(generated_javascript_reason(path, &formatted).is_none());
+        assert!(generated_javascript_reason(path, &non_browser).is_none());
+        assert!(generated_javascript_reason(Path::new("src/runtime.js"), &compact).is_none());
     }
 
     #[test]
