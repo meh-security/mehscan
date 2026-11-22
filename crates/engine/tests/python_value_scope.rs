@@ -179,7 +179,7 @@ fn unknown_transforms_earlier_terminals_and_oversized_chains_stay_in_value() {
 }
 
 #[test]
-fn fixed_response_bodies_defer_but_keep_comprehensive_and_raw_evidence() {
+fn fixed_response_bodies_leave_both_policy_queues_and_keep_raw_evidence() {
     let (root, inv) = scan(
         "responses",
         "from django.http import HttpResponse\ndef view(request):\n    if request.method == 'POST':\n        response = HttpResponse(status=500)\n        response.content = 'Configuration missing'\n        return response\n    if request.method == 'PUT':\n        return HttpResponse(status=400)\n    return HttpResponse('Ready', status=200, content_type='text/html')\n",
@@ -190,14 +190,14 @@ fn fixed_response_bodies_defer_but_keep_comprehensive_and_raw_evidence() {
         .filter(|e| e.rule_id == "python-html-output")
         .collect();
     assert_eq!(entries.len(), 2);
-    assert!(
-        entries.iter().all(|e| e
-            .value_hint
+    assert!(entries.iter().all(|e| {
+        e.value_hint.as_ref().is_some_and(|h| {
+            h.reason == "python_fixed_http_response_body_research" && h.depends_on.is_none()
+        }) && e
+            .comprehensive_exclusion
             .as_ref()
-            .is_some_and(|h| h.reason == "python_fixed_http_response_body_research"
-                && h.depends_on.is_none())
-            && e.comprehensive_exclusion.is_none())
-    );
+            .is_some_and(|h| h.reason == "python_fixed_http_response_body_research")
+    }));
     assert_eq!(
         inv.scan
             .evidence

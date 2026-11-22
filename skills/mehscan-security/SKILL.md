@@ -19,13 +19,14 @@ Use [review planning](references/review-planning.md) for compact application-awa
 planning and bounded source orientation before repository AI work. This orientation
 happens in the host agent's current context, not as another full provider review pass.
 
-For new repository Value reviews, or when the user chooses an allowance or
-specific checks to finish, use
+For new repository Value and Comprehensive reviews, or when the user chooses an
+allowance or specific checks to finish, use
 [budget and coverage goals](references/work-goals.md) with a bound `--work-plan`.
 It keeps a ranked backlog, evidence-backed check answers and remaining-risk report.
-Use the budget goal by default; an explicit coverage goal keeps the declared
-target incomplete until its checks close. Unclassified material has unknown
-importance. A completed target is not whole-application security clearance.
+Value defaults to the budget goal. Repository Comprehensive defaults to the
+coverage goal, which keeps the declared target incomplete until its checks close.
+Unclassified material has unknown importance. A completed target is not
+whole-application security clearance.
 Lead reports with declared items/checks completed and remaining, including serious
 gaps and unknown scope. Track tokens, time and configured-rate cost as supporting
 information; do not impose a monetary cap unless the user requests one.
@@ -214,14 +215,14 @@ do not request every reference or reread a supplied one. Guides are trusted
 instructions, not application evidence. Record actual source and unresolved facts
 normally. The [execution trace guide](references/execution-trace.md) explains how
 to inspect review progress and separate mechanical completion from review quality.
-For an explicitly requested Fast or Full second pass, read
-[second-pass review](references/second-pass-review.md). It audits completed claims,
-retains the first results and separates model-reviewed labels from training approval.
-Fast automatically selects a bounded queue from first-pass scheduling notes and
-explicit applicability/impact proof signals;
-Full audits every claim in the chosen scope. For an
-identified flow whose threat coverage needs enrichment, use
-[scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
+When a Value or Comprehensive result has an important verdict with a concrete
+proof question, recommend **Fast** as the first audit. It selects a bounded queue
+from first-pass notes and explicit applicability or impact signals. **Full** is
+for an explicitly requested independent audit of every claim in the chosen scope.
+For either audit, read [second-pass review](references/second-pass-review.md).
+An open named source check can use [scoped correction](../../docs/review-worker.md#resolve-named-source-checks)
+when evidence is available to answer it. For a distinct flow or effect that needs
+coverage, use [scoped flow follow-up](references/review-planning.md#scoped-flow-follow-up)
 within the authorized scope and budget.
 
 Finish the requested first-pass scope and present findings, grouped root causes,
@@ -232,10 +233,10 @@ neither is an independently adjudicated vulnerability total. The
 [repair/applicability contract](references/runtime-review.md#repair-point-applicability-and-impact)
 defines the first-pass annotations and preserves conditional library findings.
 Start with the worker's compact `review-options.md` for the proposed Fast queue
-and reasons; read JSON only for needed selection details. If no follow-up was
-requested and more work is useful, recommend a concrete next scope and ask
-the user to choose Fast, a broader Full audit, a scoped threat review or stopping.
-When no useful follow-up is identified, state that and finish.
+and reasons. Read JSON for needed selection details. If no follow-up was requested
+and more work is useful, propose the single next check or audit that best serves
+the user's goal and wait for authorization. When no useful follow-up is identified,
+state that and finish.
 Do not start another pass merely because work is pending. If the user already
 requested any of these follow-ups, execute the requested sequence without another
 confirmation, within the stated scope/budget. A repository-wide first pass or
@@ -267,11 +268,19 @@ transfer unused allocation when a queue finishes. Follow
 [controller commands](references/commands.md) and [review planning](references/review-planning.md)
 to select and launch the work. Exact-ID/native-only worker tasks, source profiles,
 compiler facts and operation grouping keep their existing paths.
-Comprehensive retains completed Value work within the same scope and extends it
-to admitted plausible medium-or-higher relationships. Ordinary API occurrences
-remain supporting facts. Keep scope and deferred coverage explicit, then finish
-the prioritized work within its shared budget. Preserve unfinished native IDs
-separately from unselected source coverage; budget exhaustion does not exclude an ID.
+
+For repository Comprehensive work, use
+[Investigate and follow up](references/review-planning.md#investigate-and-follow-up).
+Finish the scheduled Value-native and high-priority AI source investigations
+first. Group the remaining leads and apply the
+[threat-model check](references/review-planning.md#threat-model-check). Identify
+who can influence the deciding input or state, what protected effect could
+change, and the source fact that would settle it. Check a representative and
+split exceptions where the answer changes. Record each group's decision to
+investigate, exclude with cited evidence for the exact security question, or
+defer with the missing fact.
+Prepare only the next funded group under the original allowance. Keep admitted
+IDs and open workflow checks visible in `comprehensive_coverage`.
 
 Changed is a scope, combined with Value or Comprehensive. Use its guide before
 building an inventory; it requires a short change pass even when no IDs appear.

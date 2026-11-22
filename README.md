@@ -1,170 +1,48 @@
 # Mehscan
 
-Mehscan is a source security scanner for developers and AI coding agents. It finds security-relevant code, collects evidence for review, and produces reports with findings and follow-up questions.
+Mehscan is a local source-code security scanner. It collects evidence for review without building or running the application.
 
-It runs locally without building or executing your application. Use the CLI on its own, or pair it with the security skill to investigate candidates with your coding agent.
-
-## Features
-
-- Scan a repository or review changed files.
-- Follow relevant source, imports and helper implementations during review.
-- Prepare review bundles for AI coding agents.
-- Review original source with AI, including security questions beyond scanner candidates.
-- Investigate serializer, deserializer and XML parser implementations with language-specific source checks.
-- Match a Rust lockfile against a local copy of the RustSec advisory database.
-- Keep findings, dismissals and unresolved questions with their supporting evidence.
-- Retain local review history in Turso and reuse eligible decisions on unchanged source.
-- Review a pinned pull-request diff in GitHub Actions with an optional coverage gate.
-- Group related findings while preserving affected callers and conditions.
-- Automatically select a bounded Fast follow-up, or audit all eligible results with Full.
-- Export JSON, SARIF and Markdown reports.
-
-Mehscan supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust, with partial [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) support. See the [coverage guide](docs/coverage.md) for language and framework limits.
-
-## Installation
-
-Download a package from [GitHub Releases](https://github.com/meh-security/mehscan/releases), or use the installer from this checkout. The installer selects the latest published release when a download is needed.
-
-**Linux and macOS**
-
-```sh
-bash ./skills/mehscan-security/scripts/install-mehscan.sh
-```
-
-**Windows**
-
-```powershell
-pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1
-```
-
-The installers require GitHub CLI (`gh`). Linux/macOS also need Bash and Python 3.9+; Windows needs PowerShell 7. See the [installation guide](docs/installation.md) for platform setup and installation options.
-
-To build from source, use Rust 1.88 or newer and native C/C++ build tools:
-
-```sh
-cargo build -p mehscan-cli --release --locked
-```
-
-The executable is `target/release/mehscan` (`mehscan.exe` on Windows).
+C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust are supported. PHP and Kotlin have partial support. [Language and framework coverage](docs/coverage.md)
 
 ## Quick start
 
-Scan a repository:
+Download from [GitHub Releases](https://github.com/meh-security/mehscan/releases) or follow the [installation guide](docs/installation.md).
 
 ```sh
+# Scan a repository
 mehscan scan path/to/repository
-```
 
-Save the candidates as JSON or SARIF:
-
-```sh
-mehscan scan path/to/repository --format candidates > candidates.json
-mehscan scan path/to/repository --format sarif-candidates > candidates.sarif
-```
-
-Candidates are starting points for investigation. Review them before treating them as confirmed vulnerabilities.
-
-Scan changed files for candidates:
-
-```sh
+# Export candidates for files changed since HEAD
 mehscan scan path/to/repository --changed-from HEAD --diff-mode files --format candidates
 ```
 
-See the [Changed review guide](skills/mehscan-security/references/changed-review.md) for local changes, pull requests and release comparisons.
-
-## Local review memory
-
-Persistent reviews through the security skill use a local Turso database and a
-review journal outside the checkout. Reuse the same repository key and stream
-for successive reviews of the same branch and scope. An unchanged native-only
-review can reuse eligible settled decisions without another model call. Source
-edits, pending checks and additional source-first work still need review.
-
-For manual setup, prepare an inventory with `--repository-key`, then run
-`mehscan memory location --source-root ROOT --inventory RUN/inventory` to find
-the journal and database. Set `MEHSCAN_STATE_HOME` to an absolute directory
-outside the checkout to change their location. For one-shot work, use a
-temporary journal and close with `state end --memory-mode temporary`.
-The [local memory guide](docs/review-worker.md#capture-local-review-memory)
-covers preparation, retention and importing older history.
-Use [local worker assignments](docs/review-state.md#assign-reviews-to-local-workers)
-to reserve distinct reviews, or [Turso sync](docs/review-worker.md#share-retained-context-with-turso-sync)
-to share retained context between installations.
-
-## Pull-request review in GitHub Actions
-
-The [GitHub Action](docs/github-action.md) prepares an inventory for the full
-current PR diff within the configured scan root. With an authorized reviewer,
-it assesses changed source even when the scanner finds zero candidates.
-`delta-coverage.json` records the pinned revisions, reviewed paths and remaining
-work separately from findings.
-
-For one-shot review with an enforced coverage check, configure the trusted
-reviewer, choose `review-mode: comprehensive` and set
-`require-complete-delta-coverage: 'true'`. Keep the artifact upload enabled after
-failures so incomplete runs can still deliver findings and coverage. See the
-[coverage gate setup](docs/github-action.md#delta-coverage).
+Scanner candidates are leads to investigate. [Output formats](docs/output-contract.md)
 
 ## AI-assisted review
 
-Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your coding agent to review a repository or a change. The skill uses your agent's model and Mehscan's source lookup tools to investigate the relevant code.
+Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your coding agent. A work plan can include named source checks even where the scanner finds zero candidates.
 
-**Value** is the default review mode: your agent pursues the highest-severity findings with credible source support first, across native candidates and source areas the scanner does not cover. It ranks plausible impact, exposure, control evidence and the next deciding check within a shared budget. Native leads remain accounted for when the budget cannot finish them. **Comprehensive** explicitly extends the admitted scope systematically, reusing completed work. Findings retain actor, effect and applicability conditions; unresolved items name the deciding missing fact. See [review coverage](docs/coverage.md#read-coverage-alongside-the-findings) for the limits of each mode.
+| Profile | What it does |
+| --- | --- |
+| **Value** (default) | Investigates the strongest native leads and named source checks within the allowance. |
+| **Comprehensive** | Starts with Value priorities, then uses the remaining allowance for broader admitted work. Reports open checks and unreviewed scope. |
 
-For new Value reviews, use [budget and coverage goals](skills/mehscan-security/references/work-goals.md), normally with the budget goal. A source-bound work plan ranks individual investigations and leads progress reports with completed and remaining items, unresolved risks and unclassified areas. Cost is informational by default when rates are configured; a USD allowance applies only when explicitly requested. Coverage goals remain incomplete until the selected checks close. These are managed-work estimates and scoped completion targets, not invoice caps or whole-application safety guarantees. Existing native-only, explicitly mixed and workspace/hybrid workflows remain available.
+The workflow is **scope and recall → plan → investigate → follow up → audit → report and retain**. Follow-up and audit are optional. [Review stages](docs/review-worker.md#review-stages)
 
-Optional [question delegation](skills/mehscan-security/references/work-goals.md#question-delegation) uses a cheaper worker for explicitly scoped source facts and keeps security decisions with a capable review owner. Purely factual items can finish without an owner-model call and are counted separately from security cases. Answers retain citations, conditions and missing facts; the controller records each phase separately.
+- **Broaden coverage** with Comprehensive up front or use `--continue-comprehensive` from a saved repository Value attempt on the same pinned source. The continuation shares the original allowance and reuses eligible work. [Continue into Comprehensive](docs/review-worker.md#continue-value-into-comprehensive)
+- **Resolve a named check** when the deciding evidence is available. [Saved checks](docs/review-worker.md#resolve-named-source-checks)
+- **Audit an existing result** with Fast for concrete proof questions or Full for an independent reassessment of the selected results. [Fast and Full](docs/review-worker.md#optional-second-pass)
 
-Saved reviews support [scoped correction](docs/review-worker.md#resolve-named-source-checks) of named unresolved checks, reusing evidence and the original allowance. Owner qualifications and rejections remain attributed; native verdict changes use the normal follow-up admission path.
+For scripted review, see the [local worker](docs/review-worker.md) and [reviewer setup](docs/codex-reviewer.md).
 
-The first pass supports scan-assisted and AI-only review. Bounded source orientation selects additional discovery operations; it never falls back to reviewing all source. The review reports native candidate completion, source coverage, unresolved questions, budget deferrals and follow-up options, then stops unless another pass was requested.
+## Local review memory
 
-An opt-in [domain review](docs/review-worker.md#opt-in-domain-review) groups related cases under a reviewer that can reuse their shared source context. A bound domain plan separates concrete claims requiring verification, operation markers guiding flow coverage, and supporting facts. Exact candidate triage retains individual verdicts; coverage markers do not become safe decisions merely because their domain was reviewed.
+Persistent reviews use local Turso memory in both profiles. Keep the same repository key, stream, and store. Fresh plans load applicable knowledge. Unchanged native reruns with a matching plan and runtime can reuse eligible decisions with zero model calls. Keep the original attempt directory to continue saved work. [Memory and reruns](docs/review-worker.md#reuse-on-reruns)
 
-Seed/performance tooling and declaration-only C# interfaces/enums are available for cross-file lookups but omitted from standalone assignments by default. Use `--include-supporting-source` to include them explicitly; scope exclusions are reported separately from reviewed coverage.
+## Pull-request review in GitHub Actions
 
-Schema-only migrations, generated migration snapshots and SQL files also remain available for targeted lookups. Reviewers follow relevant SQL definitions from their callers; file bodies are not preloaded as precautionary context. Executable migration logic remains eligible.
-
-Passive C# models, settings, constants and schema-only EF mappings use the same lookup approach. Custom validation, converters, executable accessors and other behavior stay eligible; model folders are not excluded wholesale.
-
-Worker reports propose groups by failed control and repair point while retaining each caller's conditions. Reviews distinguish active paths, supported optional configurations, local security contracts, dormant examples and unresolved bindings before assessing impact and severity. See [grouped findings](docs/output-contract.md#causal-families-and-applicability) for the report format and limits.
-
-An optional [second pass](docs/review-worker.md#optional-second-pass) can focus on findings, dismissals or unresolved items. **Fast** automatically selects a bounded subset with specific evidence, applicability or impact questions. **Full** audits every eligible claim with an independent assessment and comparison. Second pass is off by default; neither mode certifies a result as correct.
-
-For a named flow or coverage gap, request a [scoped threat review](skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up). It reuses cited source and follows the deciding cross-file relationships within the requested budget. Already requested follow-ups proceed without another confirmation.
-
-For manual bundle review:
-
-```sh
-mehscan investigate review-bundles path/to/repository --output mehscan-review
-```
-
-After your agent has reviewed the bundles, generate a report:
-
-```sh
-mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id
-```
-
-For scripted use, the [local AI worker](docs/review-worker.md) runs a configured reviewer, tracks progress, and records token usage, cached input and timing. The [Codex adapter guide](docs/codex-reviewer.md) covers model setup, dependencies and optional flow diagnostics.
-
-## Documentation
-
-- [Installation](docs/installation.md)
-- [Language coverage and source scope](docs/coverage.md)
-- [Rust security coverage](docs/rust-security-coverage.md)
-- [Review and report formats](docs/output-contract.md)
-- [Local AI worker](docs/review-worker.md)
-- [Local review memory](docs/review-worker.md#capture-local-review-memory)
-- [Codex reviewer setup](docs/codex-reviewer.md)
-- [Review state and history](docs/review-state.md)
-- [GitHub Action](docs/github-action.md)
-- [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [0.14.0 release notes](docs/release-notes-v0.14.0.md)
-
-Optional experimental backends provide additional compiler context for [C# through Roslyn](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md) and [JavaScript/TypeScript](https://github.com/meh-security/mehscan/blob/main/backends/typescript/README.md). They are available in the source repository. Standard scanning requires neither backend.
-
-Razor and Blazor source is included in default scanning and AI review. Native scans provide specialized HTML checks, and AI review examines the original source without a generator. The optional Roslyn and .NET SDK backend adds C# analysis mapped to original locations; see the [SDK backend setup](https://github.com/meh-security/mehscan/blob/main/backends/roslyn/README.md#optional-razor-and-blazor-sdk-backend).
+Use either profile on a pinned PR diff. The configured reviewer can examine changed source with zero scanner candidates. An optional coverage gate tracks remaining work. [GitHub Action setup](docs/github-action.md)
 
 ## License
 
-Mehscan-owned source is licensed under [Apache License 2.0](LICENSE). Bundled ast-grep source retains its [MIT license](crates/ast-grep/LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md).
+Mehscan-owned code is licensed under [Apache License 2.0](LICENSE). Bundled ast-grep retains its [MIT license](crates/ast-grep/LICENSE). [Third-party notices](THIRD_PARTY_NOTICES.md)

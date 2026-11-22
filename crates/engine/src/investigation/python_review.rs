@@ -658,10 +658,14 @@ pub(super) fn apply_hints(
             .get("query")
             .is_some_and(|c| fixed_sql_string(&c.text))
         {
-            entry.value_hint = Some(ValueReviewHint {
+            let scope = ValueReviewHint {
                 reason: "python_fixed_sql_structure_research".into(), target: entry.path.clone(),
-                assumption: "The selected query operand is a fixed Python string, independently of neighboring dynamic queries. Value defers this SQL grammar question; Comprehensive retains the operation and raw evidence. Driver binding, stored data, authorization and query effects are not certified safe.".into(), depends_on: None,
-            });
+                assumption: "The selected query grammar operand is a complete Python string literal. No caller can modify this operand. Driver behavior, stored data, authorization and query effects remain separate.".into(), depends_on: None,
+            };
+            entry.value_hint = Some(scope.clone());
+            if entry.cwe_candidates == ["CWE-89"] {
+                entry.comprehensive_exclusion = Some(scope);
+            }
         }
     }
     // Unknown custom environment/filter/loader policy is not a default renderer.

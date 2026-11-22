@@ -1,12 +1,14 @@
 """Durable case evidence and interpretation dependencies; no native verdict writes."""
 import copy
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import threading
 
 import review_context as context
-from review_evidence import AtomicState
+from review_evidence import AtomicState, encoded
 
 
 class CaseState(AtomicState):
@@ -18,18 +20,34 @@ class CaseState(AtomicState):
         super().__init__(path, binding)
 
     @classmethod
-    def create(cls, path, root, binding, registry):
-        path, root = Path(path).resolve(), Path(root).resolve(strict=True)
-        if path.is_relative_to(root):
-            raise ValueError("case state must be outside reviewed source")
-        cases = {item["id"]:{"checks":[check["id"] for check in item["checks"]],
+    def empty_cases(cls, registry):
+        return {item["id"]:{"checks":[check["id"] for check in item["checks"]],
             "questions":{}, "execution":"unstarted", "result":None, "result_history":[],
             "evidence":[], "dependencies":{}, "reconsideration":{}, "native_reconsideration":{},
             "verify_review_ids":list(item.get("verify_review_ids", []))}
             for item in registry["items"]}
+
+    @classmethod
+    def create(cls, path, root, binding, registry):
+        path, root = Path(path).resolve(), Path(root).resolve(strict=True)
+        if path.is_relative_to(root):
+            raise ValueError("case state must be outside reviewed source")
         cls.publish(path, {"version":cls.version, "binding":copy.deepcopy(binding), "revision":0,
-            "source_root":str(root), "cases":cases, "assertions":{}, "evidence":{}})
+            "source_root":str(root), "cases":cls.empty_cases(registry), "assertions":{}, "evidence":{}})
         return cls(path, binding)
+
+    @classmethod
+    def extend_copy(cls, path, prior_binding, binding, registry):
+        """Extend the private copy of the validated ledger, including its receipts."""
+        store = cls(path, prior_binding)
+        additions = cls.empty_cases(registry)
+        with closing(sqlite3.connect(store.path)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            state = store._load(db)
+            state["cases"] = {**additions, **state["cases"]}
+            state["binding"] = copy.deepcopy(binding)
+            db.execute("UPDATE workspace SET body=? WHERE id=1", (encoded(state),))
+        return cls(store.path, binding)
 
     def submit(self, key, action):
         with self.lock:

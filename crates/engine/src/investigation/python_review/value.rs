@@ -1,4 +1,4 @@
-//! Narrow Value scheduling rules. Raw evidence and Comprehensive stay intact.
+//! Parsed Python review facts for scheduling and property-scoped admission.
 use super::*;
 
 pub(super) struct Chain<'a> {
@@ -306,10 +306,12 @@ pub(super) fn apply(
                         && fixed_response_arguments(&c)
                         && fixed_response_use(&c)
                 }) {
-                    entry.value_hint = Some(ValueReviewHint {
+                    let scope = ValueReviewHint {
                         reason: "python_fixed_http_response_body_research".into(), target: entry.path.clone(),
-                        assumption: "Imported Django HttpResponse has only a fixed or omitted body and fixed constructor options; a local response may only receive fixed content before return. Value defers this HTML input question. Comprehensive retains it; caller policy, middleware and response effects remain unreviewed.".into(), depends_on: None,
-                    });
+                        assumption: "The directly bound Django HttpResponse has a fixed or omitted body and fixed constructor options. Every observed local use returns it or sets fixed content. This settles the local HTML input question. Caller policy, middleware and other response effects remain separate.".into(), depends_on: None,
+                    };
+                    entry.value_hint = Some(scope.clone());
+                    entry.comprehensive_exclusion = Some(scope);
                 }
             }
         }

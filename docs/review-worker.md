@@ -8,15 +8,36 @@ mode prepares an active private [review handoff](github-action.md#active-review-
 Supplying `provider-config` explicitly enables the bundled reviewer; without it,
 a trusted local consumer can execute the handoff.
 
+## Review stages
+
+Choose **Value** to prioritize the strongest checks within an allowance.
+Choose **Comprehensive** when the review also needs broader coverage accounting.
+You can select it up front or extend a saved repository Value review. Both use
+the following stages.
+
+| Stage | What to expect |
+| --- | --- |
+| 1. Set scope and load memory | Pin the repository or change and bind applicable retained knowledge to the current work. Use the same repository key and stream on reruns. [Local memory](#capture-local-review-memory) |
+| 2. Plan priority checks | Rank native leads and named source checks by impact and evidence. Include consequential workflows even when the inventory has zero matching candidates. [Work goals](../skills/mehscan-security/references/work-goals.md) |
+| 3. Review priority work | Investigate funded checks and save cited answers, open questions and usage. Report unstarted work when the allowance stops dispatch. |
+| 4. Follow up when requested | Comprehensive continues into admitted native and named work under the same allowance. A saved Value or Comprehensive plan can also continue a specifically named unresolved check when its evidence is available. [Continue Value into Comprehensive](#continue-value-into-comprehensive) · [Named checks](#resolve-named-source-checks) |
+| 5. Audit when requested | Use Fast to check specific proof questions on existing results. Use Full for an independent assessment of every eligible claim in the selected scope. [Fast and Full](#optional-second-pass) |
+| 6. Report and retain | Reconcile native decisions, named coverage, and open work. Close with the effective inventory so admitted decisions and source observations are available on reruns. [Rerun behavior](#reuse-on-reruns) |
+
+Ordinary recovery keeps its exact manifest and allowance. A Comprehensive
+continuation validates an expanded manifest, preserves the original allowance,
+and reuses saved work that still applies. A fresh review loads applicable Turso
+knowledge for its current scope. [Recovery](#parallel-execution-and-recovery) · [Reuse on reruns](#reuse-on-reruns)
+
 ## Ordinary review profile
 
 For a source-bound ranked backlog with a spending allowance or explicit checks to
 finish, use [budget and coverage goals](../skills/mehscan-security/references/work-goals.md)
 and `--work-plan FILE`. Work goals preserve required check identities, distinguish
 potential-impact priority from verified severity, and report remaining work under
-`source-review/work-ledger.json` and `remaining-work.md`. The default instructions
-below describe the existing mixed source-selection path. Both paths retain native
-SQL/control facts and source-proof validation.
+`source-review/work-ledger.json` and `remaining-work.md`. The explicit mixed
+source-selection path also retains native SQL and control facts and validates
+original-source proof.
 
 Work plans support explicitly requested Fast/Full audits under their remaining
 allowance and recovery of saved source answers or native finalization.
@@ -30,16 +51,19 @@ Source-backed challenges dispute the answer and reopen only recorded consumers;
 they do not automatically rewrite native verdicts. See the work-goal guide's
 [factual audit policy](../skills/mehscan-security/references/work-goals.md#optional-factual-audits).
 
-The default Value `all` phase requires a bound coverage plan before provider review.
-Without `--source-selection FILE`, it prepares a selection checkpoint and exits
-with `selection_required`, making zero AI calls. The host agent combines native
-candidate summaries with bounded source reads to prioritize native investigations
-and select a few additional AI-discovery operations. The full admitted native
-Value queue remains accounted for; a discovery-operation limit does not filter it.
-An explicit Comprehensive request reviews the broader admitted production-source
-scope. Within assigned operations, the reviewer can assess relevant native questions
-and propose additional consequential relationships in the same conversation,
-including operations with no scanner candidates.
+In the default Value `all` phase, use a bound `--work-plan FILE` to rank native
+investigations and named source checks. Explicit `--source-selection FILE` also
+supports the mixed workflow. Without a plan or selection, Value prepares a
+`selection_required` checkpoint with zero model calls. The inventory continues
+to account for the full native Value queue.
+
+An explicit Comprehensive request uses the same work-plan format and schedules
+Value-priority work before the remaining admitted questions. Both stages draw
+from one allowance. Without a plan or explicit selection, Comprehensive schedules
+native-bearing assignments and lists source-only windows as unplanned. If only
+unplanned source remains at entry, it returns the zero-call selection checkpoint.
+Named source checks can run with either mode, including at operations with zero
+scanner candidates. See [Comprehensive investigation and follow-up](#comprehensive-investigation-and-follow-up).
 The controller validates original paths, hashes, ranges and inspected citations,
 assigns identities and applies the ordinary finalizer. Source validation establishes
 the cited bytes, not a vulnerability or a native flow proof.
@@ -67,6 +91,13 @@ They remain available for targeted cross-file queries. `excluded_sources` record
 paths, reasons and affected native IDs separately from examined coverage. Add
 `--include-supporting-source` to explicitly review these files as assignments.
 Files with executable interface bodies or other implementation remain eligible.
+
+Generated JavaScript distributions are lookup-only in Value and Comprehensive.
+Their coverage records identify the classification and their source plan entries
+retain the file hash. Review the maintained code that loads them or supplies
+inputs. If an application behavior depends on the distribution, record the
+asset's role and caller evidence in the report and use version-matched source or
+a targeted read to resolve the question.
 
 Schema-only database migrations, generated migration snapshots/designers and SQL
 files are queryable only. Custom SQL/resource calls and executable or uncertain
@@ -105,9 +136,11 @@ Older attempts without a bound source checkpoint cannot recover before handoff.
 Resume from the latest attempt; recovery cannot fork from an already continued
 parent, and pre-handoff recovery requires the original native work to remain current.
 
-Use `--reuse-source-results PRIOR_OUTPUT` to reuse completed source assignments
-from a separate attempt after matching source, native selection, policy, provider
-and allowance bindings and revalidating their cited proofs. Reused results retain
+In the explicit source-selection workflow, use `--reuse-source-results PRIOR_OUTPUT`
+to reuse completed source assignments from a separate attempt. This requires
+matching source, native selection, policy, provider and allowance bindings and
+revalidates their cited proofs. Work-plan reviews use saved-attempt continuation
+for named checks. Reused results retain
 their prior provenance and usage; they are not new reviews under current guidance.
 Assignments overlapping interrupted or unknown-usage work remain deferred, with
 no automatic replacement call. Partial conversations are not resumed by this option.
@@ -146,11 +179,11 @@ caller coverage. The option is bound into recovery and cannot change on resume.
 This groups context within existing bundles; it does not defer candidates or
 guarantee fewer model calls or lower cost.
 
-Use `--policy value --selection policy --source-selection FILE` for ordinary
-Value review. Native priority hints define the admitted candidate queue; source
-selection identifies additional discovery operations and can rank native assignments.
-Comprehensive explicitly selects the broader admitted scope and retains applicable
-completed Value work. Both use five research rounds (six total model calls),
+Use `--policy value --selection policy` for Value or `--policy comprehensive
+--selection policy` for the broader scope. Supply the work plan with `--work-plan
+FILE`. In the mixed workflow, use `--source-selection FILE` to identify discovery
+operations and rank native assignments. Native priority hints define the policy
+queue. Both modes use five research rounds (six total model calls),
 24 query units, 512 KiB and 900 seconds per investigation, with native-bound
 overrides available. Finish settled relationships early; deferrals remain unreviewed.
 
@@ -188,7 +221,7 @@ attempt even when later native validation fails.
 
 ## Bounded Value selection
 
-Run Value's default `all` phase once without `--source-selection`. The output
+Run Value's default `all` phase once without a work plan or source selection. The output
 contains `source-review/plan.json`, `source-review/selection-options.json` and
 `source-review/checkpoint.json`; `worker.json` reports `selection_required`.
 This is a preparation checkpoint, not a failed provider review. An automatic
@@ -291,11 +324,70 @@ even when the overall attempt is incomplete; those artifacts cover the completed
 subset. Explicit exact-ID work with `--phase native`, source profiles,
 compiler-assisted facts and opt-in operation grouping retain their existing paths.
 
-Comprehensive extends completed Value work within matching scope to the broader
-admitted relationships, reusing established facts and avoiding repeated template,
-model or helper discovery. It does not require a verdict for every ordinary API
-occurrence. Fast/Full second pass and scoped threat follow-up remain separate,
-explicit choices within the authorized scope and budget.
+## Comprehensive investigation and follow-up
+
+Repository Comprehensive uses the same work plan and shared allowance for both
+steps. The worker investigates Value-native and high-priority named source
+checks first, then schedules additional native and source checks. An unresolved
+or adverse answer to an exact native dependency moves its waiting checks forward.
+When a waiting check names a native dependency, the worker can supply that
+assessment's checked source excerpts in the first request. It verifies the
+original bytes and leaves the dependent's own applicability and verdict open.
+
+For follow-up planning, group sites by the producer, authority, control or
+effect that would decide the question. The host uses a
+[threat-model check](../skills/mehscan-security/references/review-planning.md#threat-model-check)
+on each group to assess actor influence, the protected effect and the next
+deciding source fact. Reuse representative evidence where it applies and split
+exceptions that change the answer. Record a concrete follow-up question, a cited
+scope exclusion or a deferral with the missing fact in the review plan. An
+exclusion depends on the actor's authority and the protected effect under the
+cited runtime conditions. Keep separate effects, consequential zero-hit workflow
+checks and concrete edge cases visible.
+
+The default Comprehensive scheduler uses unnamed source-only windows for
+planning. It spends calls on admitted native questions and explicitly selected
+source work. When there are no native questions and only unplanned source,
+it returns `selection_required`. Unplanned source stays visible in
+`comprehensive_coverage` for partial native runs.
+
+The worker prepares native cards only as investigations start, reuses exact
+source lookups within the run, and builds finalization packets only for returned
+assessments. Native scope exclusions are bound by the inventory. Every admitted
+ID keeps its own applicability and decision. The
+`comprehensive_coverage` result reconciles missing and pending native decisions
+with open named work items. A coverage target in a work plan can be complete
+while the broader Comprehensive result is incomplete. Changed coverage and
+optional Fast/Full audits use their existing entry points.
+
+### Continue Value into Comprehensive
+
+Use `--continue-comprehensive VALUE_ATTEMPT` on the ordinary all-phase worker
+invocation with a new `--output` and the expanded `--work-plan`. Use the
+published repository Value attempt as the checkpoint. Keep its effective
+inventory, source, review stream, memory store, reviewer and runtime. Bind the
+Comprehensive native plan on that inventory and export its current `state work`
+package. Replace an active native plan with its exact parent plan ID. If the
+Value generation is closed, claim a new generation on that same inventory.
+You can also select a saved named correction or a saved native audit linked to
+that Value attempt as the checkpoint.
+
+Bind the expanded manifest to the current Comprehensive source plan. Keep the
+original case IDs, questions, Verify membership, actors and conditions. Add the
+remaining named cases from the broader scope. The worker carries the saved case
+history and revalidates admitted native assessments locally. It spends new
+model calls on newly funded work. The report keeps unanswered native decisions
+and named questions visible, including when the original allowance is spent.
+The `continuation` report includes the prior reserved calls, carried work and
+new source call receipts. Use a fresh plan for changed source or changed review
+premises.
+
+Continuation inherits the parent's call, token, cost and time limits and its
+usage to date. The original limits govern the extension. Recover an interrupted
+continuation with `--resume-from` and its exact expanded plan and original
+worker inputs. For a later Fast or Full audit, use the Comprehensive output as
+the first pass. End the effective native generation to retain its admitted
+decisions and observations in Turso.
 
 ## Opt-in domain review
 
@@ -372,6 +464,15 @@ Add `--second-pass fast` or `--second-pass full` to the normal worker command.
 The default is `off`, independently of Value or Comprehensive. These are Python
 worker options, not flags on `mehscan scan` or `mehscan report`.
 
+After Value, start with Fast when the next step is to verify a consequential
+first-pass verdict and `review-options.md` names a specific proof question. Use
+[scoped correction](#resolve-named-source-checks) when a saved named source check
+can be answered with available evidence. Use a [scoped flow review](../skills/mehscan-security/references/review-planning.md#scoped-flow-follow-up)
+for a newly identified coverage gap. If a question depends on a missing external
+fact, keep it pending until that fact is available. Comprehensive's built-in
+follow-up covers additional admitted questions. Fast and Full audit results
+that already exist, including results produced by Comprehensive.
+
 | Mode | Work performed | Possible result |
 | --- | --- | --- |
 | `off` | Ordinary first-pass review. | No additional reviewer calls. |
@@ -381,10 +482,11 @@ worker options, not flags on `mehscan scan` or `mehscan report`.
 Fast first records an audit checkpoint using the first investigation's evidence
 and trace. Supported proofs can finish in that call. Concrete objections move
 to targeted recovery in the same conversation, where an incorrect objection can
-also be rejected. These phases share the normal Fast allowance, separately from
-the first investigation. A proposed closed repair receives a
-counter-check in the same conversation within its original allowance; a repair
-that cannot be checked before the allowance is exhausted stays pending. Unchanged
+also be rejected. These phases share the Fast investigation limits. In a
+work-plan review, all passes draw from the same original overall allowance.
+A proposed closed repair receives a counter-check in the same conversation
+within its original allowance. A repair that cannot be checked before the
+allowance is exhausted stays pending. Unchanged
 results need no extra confirmation call. Full adds an independent investigation for
 deeper audits, evaluation and training-data review. Both preserve the first results
 and use source validation; neither establishes semantic ground truth.
@@ -546,6 +648,12 @@ outside a Git working tree derives a local repository key from the resolved
 source folder. Source edits keep the same key. Moving or copying the folder
 creates separate history. Keep run artifacts outside the source folder.
 
+Value and Comprehensive use the same store and can read applicable retained
+knowledge across modes. Changed work and optional audits use the current
+package's applicable knowledge too. Each native decision stays bound to its
+source, plan and runtime. A mode switch keeps scoped knowledge in reach and
+requires current decisions for the new plan. See [rerun behavior](#reuse-on-reruns).
+
 ```text
 mehscan investigate review-inventory ROOT --output RUN/inventory
 mehscan memory location --source-root ROOT --inventory RUN/inventory
@@ -615,6 +723,23 @@ generation explicitly:
 mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
 mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
+
+### Reuse on reruns
+
+| Situation | What to keep and what can be reused |
+| --- | --- |
+| **Fresh Value or Comprehensive work plan** | Reuse the same repository key and local memory. `state work` binds applicable knowledge and current native history into the package. The worker evaluates the current named source checks, including previously answered checks in the new plan. Continue a saved check from its original attempt to use its existing answer and evidence. |
+| **Unchanged native-only rerun** | Use `memory prepare` in either policy. An earlier finished native batch can save all model calls for eligible settled IDs when the same source, native plan, runtime, current parents and knowledge premises match. Remaining IDs still need work. |
+| **Changed source, scope or policy** | Rebuild the inventory and use the same store. Scoped observations reach the current review when their recorded source still matches. Prior decisions and dependency comparisons can guide verification. New work and open checks still require an answer. |
+| **Continue saved work or audit results** | Keep the original attempt directory. Work-plan recovery and scoped correction use its saved cases, evidence and remaining allowance. Fast and Full can use completed first-pass artifacts and carry current knowledge. Close with the effective inventory to retain admitted native results. |
+
+Turso retains native decisions and their cited source links. The attempt's
+`source-review/case-state.sqlite` and related artifacts retain named source checks,
+factual answers and their dependencies. Keep both the local memory and the original
+attempt directory to preserve this history. When useful, record a durable
+source observation with `memory knowledge-put` so it can inform later reviews.
+Provider prompt-cache metrics track model input reuse. Look at saved model calls
+and evidence reuse to measure the savings from local memory. [Retain a source observation](#carry-evidence-into-future-reviews)
 
 ### Carry evidence into future reviews
 
@@ -847,22 +972,23 @@ applies native conservative eligibility. The advisory Action uses
 `--selection policy` for its configured policy. Research limits and selection
 are independent; lowering lookup budgets does not improve scope selection.
 
-For Python, Value can defer fixed SQL grammar questions and fixed Flask `.html`
-renders whose supplied bindings appear only as ordinary escaped text expressions
-in their discovered templates, or are unused there.
-Comprehensive retains these operations. Custom renderer settings, raw markup,
-script/style/attribute contexts and unresolved templates retain Value review.
-These scope hints do not certify application safety. Regenerate older inventories
-before reuse. ORM review packets can include bounded effect and import-bound
+For Python, a verified complete literal SQL operand can exclude its grammar
+question from Comprehensive and defer it in Value. This applies to single-property
+SQL injection questions. Query behavior, driver configuration and authorization
+remain separate. Value can defer fixed Flask `.html` renders whose bindings
+appear only as ordinary escaped text in discovered templates or are unused there.
+Comprehensive retains the Flask renderer questions. Custom renderer settings,
+raw markup, active contexts and unresolved templates retain Value review.
+Regenerate older inventories before reuse. ORM review packets can include bounded effect and import-bound
 caller excerpts; `review-inventory-list --group-by implementation` groups located
 Python ORM callables for source reading while preserving each review ID and its
 independent authorization decision. Value can defer additional selectors on the
 same direct Django filter chain to one retained review with the complete chain
 excerpt and an explicit dependency. Separate operations and nested queries keep
-their own questions; no safe verdict transfers between IDs. Fixed or empty,
-import-bound Django `HttpResponse` bodies can also be deferred when local uses
-only return the response or assign fixed content. Dynamic bodies, aliases,
-unknown response uses and unknown query transforms retain Value review.
+their own questions. A fixed or empty, import-bound Django `HttpResponse` body
+can leave Comprehensive when local uses only return the response or assign fixed
+content. Value also defers this exact HTML input question. Dynamic bodies,
+aliases, unknown response uses and unknown query transforms retain Value review.
 
 Python mutation packets can also include import-bound class/base declarations,
 `Meta.permissions`, permission helpers, `mutate` and `check_permissions`

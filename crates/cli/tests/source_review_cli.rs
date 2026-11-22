@@ -297,6 +297,116 @@ fn referenced_admission_plan_retains_source_and_plan_validation() {
 }
 
 #[test]
+fn generated_browser_bundles_are_lookup_only_and_keep_their_callers() {
+    let base = fixture();
+    let source = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir_all(source.join("public/widgets")).unwrap();
+    let bundle_path = "public/widgets/client.js";
+    let bundle = format!(
+        "var define = Object.defineProperty; var method = 'access private method';\n\
+         var helper = m => m instanceof WeakSet || 'Cannot add the same private member more than once';\n\
+         /* @license Library A */\n/* @license Library B */\n\
+         (function() {{ window.widget = '{}'; }})();\n",
+        "x".repeat(70 * 1024),
+    );
+    fs::write(source.join(bundle_path), &bundle).unwrap();
+    fs::write(
+        source.join("public/mapped.js"),
+        format!(
+            "(function(){{ /*{}*/ }})();\n//# sourceMappingURL=mapped.js.map\n",
+            "x".repeat(70 * 1024)
+        ),
+    )
+    .unwrap();
+    fs::write(
+        source.join("public/library.min.js"),
+        "var support = true;\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("controller.js"),
+        "export function loadWidget(loader) { loader.loadScript('widgets/client.js'); }\n",
+    )
+    .unwrap();
+    let root = source.to_str().unwrap();
+    let inv = inventory.to_str().unwrap();
+    run(&[
+        "investigate",
+        "review-inventory",
+        root,
+        "--repository-key",
+        "fixture-bundles",
+        "--output",
+        inv,
+    ]);
+    let cached = read_json(inventory.join("scan-cache.json"));
+    let coverage = cached["scan"]["coverage"]["files"].as_array().unwrap();
+    let bundle_row = coverage
+        .iter()
+        .find(|row| row["path"] == bundle_path)
+        .unwrap();
+    assert_eq!(bundle_row["status"], "ignored");
+    assert!(
+        bundle_row["reason"]
+            .as_str()
+            .unwrap()
+            .contains("esbuild runtime")
+    );
+    let plan_args = [
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        inv,
+        "--include-supporting-source",
+        "true",
+    ];
+    let plan = run(&plan_args);
+    let exclusions = plan["excluded_sources"].as_array().unwrap();
+    let paths = [bundle_path, "public/mapped.js", "public/library.min.js"];
+    for path in paths {
+        let exclusion = exclusions.iter().find(|row| row["path"] == path).unwrap();
+        assert!(
+            exclusion["reason"]
+                .as_str()
+                .unwrap()
+                .contains("targeted lookup")
+        );
+        assert_eq!(exclusion["source_sha256"].as_str().unwrap().len(), 64);
+    }
+    let windows = plan["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|assignment| assignment["windows"].as_array().unwrap());
+    let assigned: Vec<_> = windows
+        .map(|window| window["path"].as_str().unwrap())
+        .collect();
+    assert!(assigned.contains(&"controller.js"));
+    assert!(paths.iter().all(|path| !assigned.contains(path)));
+    let source_result = run(&[
+        "investigate",
+        "source",
+        root,
+        "--path",
+        bundle_path,
+        "--start-line",
+        "1",
+        "--end-line",
+        "1",
+    ]);
+    assert!(source_result.to_string().contains("Object.defineProperty"));
+    fs::write(
+        source.join(bundle_path),
+        format!("{bundle}\n// New asset revision\n"),
+    )
+    .unwrap();
+    assert!(!invoke(&plan_args).status.success());
+    cleanup(&base);
+}
+
+#[test]
 fn supporting_sources_are_explicitly_excluded_and_plan_bound() {
     let base = fixture();
     let source = base.join("source");

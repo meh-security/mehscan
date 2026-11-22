@@ -66,12 +66,22 @@ fn python_value_plans_retain_the_complete_chain_and_comprehensive_ids() {
             .contains(representative)
     );
     let comprehensive = plan("comprehensive");
-    assert_eq!(
-        comprehensive["selected_review_ids"]
-            .as_array()
+    let fixed_response = rows
+        .iter()
+        .find(|row| row["rule_id"] == "python-html-output")
+        .unwrap();
+    let fixed_id = fixed_response["review_id"].as_str().unwrap();
+    let selected = comprehensive["selected_review_ids"].as_array().unwrap();
+    assert_eq!(selected.len(), 2);
+    assert!(selected.contains(&Value::from(representative)));
+    assert!(selected.contains(&child["review_id"]));
+    let excluded = comprehensive["excluded_review_ids"].as_object().unwrap();
+    assert_eq!(excluded.len(), 1);
+    assert!(
+        excluded[fixed_id]
+            .as_str()
             .unwrap()
-            .len(),
-        3
+            .contains("python_fixed_http_response_body_research")
     );
     assert!(
         comprehensive["deferred_review_ids"]

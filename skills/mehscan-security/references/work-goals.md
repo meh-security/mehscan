@@ -1,18 +1,21 @@
 # Budget and coverage goals
 
-Use a source-bound work plan when the user chooses a spending allowance or a
-specific set of checks to finish. Both goals use the same impact-prioritized
-backlog and controller-owned work ledger. Value prioritizes the strongest credible
-impact; a coverage target names the required subset. Existing native/exact-ID,
-domain, SQL, compiler and workspace/hybrid workflows retain their own routing.
+Use a source-bound work plan for repository Value and Comprehensive reviews.
+Both modes use the same impact-prioritized backlog and controller-owned work
+ledger. A coverage target names the checks the run must finish. Existing
+native/exact-ID, domain, SQL, compiler and workspace/hybrid workflows retain
+their own routing.
 
 ## Choose the goal
 
-Add these flags to the usual fresh `review_worker.py --phase all` invocation:
+Pass the work plan to the fresh `review_worker.py --phase all` invocation.
 
 ```text
---work-plan RUN/work-plan.json --review-goal budget
+--work-plan RUN/work-plan.json
 ```
+
+The bound native policy selects the default goal. Value uses the budget goal and
+repository Comprehensive uses the coverage goal for the declared checks.
 
 Budget mode ranks ready work by potential impact, actor exposure, evidence strength
 and estimated next work. The default allowance is 40 managed calls, 1.5M observed
@@ -24,13 +27,13 @@ completed versus remaining, followed by potential-impact gaps and unknown scope.
 Use configured rates to keep cost information without a financial stopping rule:
 
 ```text
---work-plan RUN/work-plan.json --review-goal budget --cost-rates TRUSTED/rates.json
+--work-plan RUN/work-plan.json --cost-rates TRUSTED/rates.json
 ```
 
 Only add a monetary allowance when the user explicitly requests it:
 
 ```text
---work-plan RUN/work-plan.json --review-goal budget --cost-budget 5 --cost-rates TRUSTED/rates.json
+--work-plan RUN/work-plan.json --cost-budget 5 --cost-rates TRUSTED/rates.json
 ```
 
 For an explicit completion target:
@@ -50,7 +53,17 @@ This path supports Value or Comprehensive native plans, including an explicitly
 requested Fast/Full audit after the source pass. It cannot combine with
 source/domain selection, source-result reuse, operation grouping, native-only
 profiles or native-share overrides. Work items use isolated provider sessions
-and a single ranked queue.
+and share one allowance.
+
+Repository Comprehensive work plans default to the coverage goal. The worker
+dispatches items with a Value verification ID and high-impact, source-supported
+items first. Follow [Investigate and follow up](review-planning.md#investigate-and-follow-up)
+to group the remainder and check actor influence and protected effects before
+funding more work. The same allowance funds the follow-up, with exact dependents
+of unresolved or adverse native decisions promoted. Keep separable Value and
+deferred verification IDs in distinct work items so native packets can be
+prepared at the right time. Include consequential zero-hit workflow checks from
+the initial source orientation in the named plan.
 
 Use `--resume-from OLD_ATTEMPT` with the original work-plan invocation and a new
 output directory to recover saved source results or native finalization. Keep the

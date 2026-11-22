@@ -31,6 +31,8 @@ def freeze_handoff(stage, manifest_sha256, case_binding, worker):
     """Bind first-pass artifacts and immutable budget policy, never reset usage."""
     directory = Path(stage)
     files = ("summary.json", "work-plan.json", "case-state.sqlite", "work.json", "provider-metrics.jsonl")
+    if (directory / "input-work.json").is_file():
+        files += ("input-work.json", "source-recovery.json")
     budget_path = Path(worker.read(directory / "summary.json")["budget_path"])
     budget = worker.read(budget_path)
     record = {"schema_version":HANDOFF_VERSION, "manifest_sha256":manifest_sha256,
@@ -50,7 +52,9 @@ def read_handoff(attempt, root, worker):
     stage = attempt / "source-review"
     record = worker.read(stage / "work-handoff.json")
     expected = {"summary.json", "work-plan.json", "case-state.sqlite", "work.json", "provider-metrics.jsonl"}
-    if record.get("schema_version") != HANDOFF_VERSION or set(record.get("files", {})) != expected:
+    files = set(record.get("files", {}))
+    if record.get("schema_version") != HANDOFF_VERSION or files not in (
+            expected, expected | {"input-work.json", "source-recovery.json"}):
         raise ValueError("unsupported work-plan handoff")
     for name, digest in record["files"].items():
         path = stage / name
