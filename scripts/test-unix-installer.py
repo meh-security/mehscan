@@ -139,6 +139,15 @@ class InstallerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     installer.checksum(archive, record, NAME)
 
+    def test_archive_accepts_the_current_release_payload_within_entry_limit(self):
+        payload = json.loads((ROOT / 'scripts/release-files.json').read_text(encoding='utf-8'))
+        with zipfile.ZipFile(io.BytesIO(archive_bytes(dict.fromkeys(payload, b'')))) as archive:
+            installer.validate_archive(archive, TAG, 'linux', 'x86_64')
+        oversized = {f'file-{i}': b'' for i in range(installer.MAX_ARCHIVE_ENTRIES - 1)}
+        with zipfile.ZipFile(io.BytesIO(archive_bytes(oversized))) as archive:
+            with self.assertRaisesRegex(ValueError, 'Archive exceeds extraction limits'):
+                installer.validate_archive(archive, TAG, 'linux', 'x86_64')
+
     def test_archive_validation(self):
         with zipfile.ZipFile(io.BytesIO(archive_bytes())) as archive:
             installer.validate_archive(archive, TAG, 'linux', 'x86_64')

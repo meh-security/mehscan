@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 
 $repository = 'meh-security/mehscan'
 $maximumExpandedBytes = 1073741824
-$maximumArchiveFiles = 100
+$maximumArchiveFiles = 256
 
 function Invoke-GitHubCli {
     param([Parameter(Mandatory)][string[]]$Arguments)

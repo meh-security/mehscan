@@ -20,6 +20,7 @@ REPO = 'meh-security/mehscan'
 HOSTS = {'api.github.com', 'github.com', 'release-assets.githubusercontent.com',
          'objects.githubusercontent.com'}
 VERSION = r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?'
+MAX_ARCHIVE_ENTRIES = 256
 
 
 def require(condition, message):
@@ -168,7 +169,7 @@ def run_verifier(args):
 
 def validate_archive(archive, tag, host, architecture):
     entries = archive.infolist()
-    require(len(entries) <= 100 and sum(e.file_size for e in entries) <= 1073741824,
+    require(len(entries) <= MAX_ARCHIVE_ENTRIES and sum(e.file_size for e in entries) <= 1073741824,
             'Archive exceeds extraction limits')
     names = []
     seen = set()
