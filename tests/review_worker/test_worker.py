@@ -1611,11 +1611,22 @@ else:
         package = self.native("state", "work", *self.common)
         self.assertIsNone(package["payload"]["impact_scope"])
         self.package.write_text(json.dumps(package))
+        reviewer = self.reviewer.read_text(encoding="utf-8")
+        self.reviewer.write_text(reviewer.replace(
+            'task=json.load(sys.stdin)\n',
+            """task=json.load(sys.stdin)
+with Path(task['provider_metrics']).open('a', encoding='utf-8') as receipt:
+    receipt.write(json.dumps({'conversation_id':task['conversation_id'],'round':task['research']['round'],
+        'provider':None,'elapsed_ms':1,'usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':10}})+'\\n')
+""",
+            1,
+        ), encoding="utf-8")
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         record = json.loads((self.base / "worker/worker.json").read_text())
         self.assertEqual(record["status"], "admitted", record)
         self.assertTrue(record["completion"]["review_work_complete"])
+        self.assertEqual(record["comprehensive_coverage"]["status"], "complete")
         self.assertEqual(record["completion"]["security_resolution"], "not_established")
         self.assertEqual(json.loads((self.base / "worker/prepared-changes.json").read_text())["windows"], [])
 
