@@ -190,14 +190,14 @@ fn fixed_response_bodies_leave_both_policy_queues_and_keep_raw_evidence() {
         .filter(|e| e.rule_id == "python-html-output")
         .collect();
     assert_eq!(entries.len(), 2);
-    assert!(
-        entries.iter().all(|e| e
-            .value_hint
+    assert!(entries.iter().all(|e| {
+        e.value_hint.as_ref().is_some_and(|h| {
+            h.reason == "python_fixed_http_response_body_research" && h.depends_on.is_none()
+        }) && e
+            .comprehensive_exclusion
             .as_ref()
-            .is_some_and(|h| h.reason == "python_fixed_http_response_body_research"
-                && h.depends_on.is_none())
-            && e.comprehensive_exclusion.as_ref().is_some_and(|h| h.reason == "python_fixed_http_response_body_research"))
-    );
+            .is_some_and(|h| h.reason == "python_fixed_http_response_body_research")
+    }));
     assert_eq!(
         inv.scan
             .evidence
