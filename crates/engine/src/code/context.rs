@@ -25,6 +25,8 @@ pub(crate) fn enclosing_symbol<D: Doc>(node: &Node<'_, D>) -> Option<String> {
         "function_declaration",
         "method_definition",
         "function_item",
+        "method",
+        "singleton_method",
     ];
     node.ancestors().find_map(|ancestor| {
         if matches!(

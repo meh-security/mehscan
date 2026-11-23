@@ -8381,6 +8381,7 @@ fn evidence_language_name(item: &Evidence) -> &'static str {
         "javascript" => "JavaScript",
         "kotlin" => "Kotlin",
         "php" => "PHP",
+        "ruby" => "Ruby",
         "python" => "Python",
         "rust" => "Rust",
         "tsx" => "TSX",
@@ -11619,7 +11620,7 @@ fn exact_request_source_argument(language: Language, argument: &str) -> bool {
         .iter()
         .any(|source| compact.starts_with(source)),
         Language::Go => compact.contains(".URL.Query().Get(") || compact.contains(".FormValue("),
-        Language::Rust | Language::Csharp => false,
+        Language::Rust | Language::Csharp | Language::Ruby => false,
     }
 }
 
@@ -21155,7 +21156,7 @@ fn framework_markers(file: &SourceFile, line: &str) -> Vec<&'static str> {
     let manifest = is_framework_manifest(&file.path);
     if !manifest
         && match file.language {
-            Some(Language::Python | Language::Php) => trimmed.starts_with('#'),
+            Some(Language::Python | Language::Php | Language::Ruby) => trimmed.starts_with('#'),
             Some(Language::Cpp) => {
                 trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
             }
@@ -22731,7 +22732,7 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 12] {
+fn all_languages() -> [Language; 13] {
     [
         Language::C,
         Language::Cpp,
@@ -22745,6 +22746,7 @@ fn all_languages() -> [Language; 12] {
         Language::Php,
         Language::Go,
         Language::Rust,
+        Language::Ruby,
     ]
 }
 

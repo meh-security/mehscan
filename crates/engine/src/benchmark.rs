@@ -749,6 +749,9 @@ fn resolve_beneath(workspace_root: &Path, relative: &Path) -> Result<PathBuf, En
 }
 
 fn language_for_path(path: &str) -> Option<Language> {
+    if crate::repository::is_ruby_source(Path::new(path)) {
+        return Some(Language::Ruby);
+    }
     let path = path.to_ascii_lowercase();
     if path.ends_with(".cs") {
         Some(Language::Csharp)

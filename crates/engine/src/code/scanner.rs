@@ -1879,6 +1879,9 @@ fn cwe_coverage(
 }
 
 fn language_from_path(path: &str) -> Option<Language> {
+    if crate::repository::is_ruby_source(Path::new(path)) {
+        return Some(Language::Ruby);
+    }
     let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "c" | "h" => Some(Language::C),
@@ -1897,7 +1900,7 @@ fn language_from_path(path: &str) -> Option<Language> {
     }
 }
 
-fn all_languages() -> [Language; 12] {
+fn all_languages() -> [Language; 13] {
     [
         Language::C,
         Language::Cpp,
@@ -1911,6 +1914,7 @@ fn all_languages() -> [Language; 12] {
         Language::Php,
         Language::Go,
         Language::Rust,
+        Language::Ruby,
     ]
 }
 

@@ -18,6 +18,17 @@ runtime analysis.
 | Rust | Selected unsafe memory, parser and transport sizes, archive extraction, filesystem operations, typed HTTP clients, credentials and SQL. General macro expansion, trait dispatch and cross-object state remain outside the bounded source analysis. |
 | PHP | A partial profile for recognized native and framework APIs. Arbitrary includes, indirect calls and injected or untyped receivers can prevent a relationship from being recognized. See [PHP coverage](php-coverage.md). |
 | Kotlin | A partial JVM profile for recognized typed APIs. Compiler overload/extension resolution, inferred factories, ORM models and reactive execution remain limited. See [Kotlin coverage](kotlin-coverage.md). |
+| Ruby | Partial source review for `.rb`, `.rbw`, `.gemspec`, `.rake`, `.ru`, Gemfile and Rakefile. Includes outlines, structural lookup and original-source review. Native process evidence covers selected Open3 command-string calls. |
+
+Ruby process evidence recognizes `Open3.capture2`, `capture2e` and `capture3`
+with one interpolated string after an earlier direct, top-level
+`require "open3"` in the same file. Known same-file replacements of the
+library binding and unresolved inherited receivers prevent attribution.
+The review retains the exact command
+and asks who controls it and how Ruby selects shell or direct execution.
+Fixed commands and separate arguments stay outside this native queue.
+General Ruby dispatch, Rails semantics, ERB and gem dependency analysis
+remain outside this slice. Normal test, fixture and vendor exclusions apply.
 
 The [database coverage guide](extended-database-coverage.md) lists supported
 receiver and query shapes in more detail. Optional compiler backends are separate

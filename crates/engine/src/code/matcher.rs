@@ -207,6 +207,9 @@ pub(crate) fn scan_source(
     native_pass_microseconds[0] = native_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    if language == Language::Ruby && parse_issue_ranges.is_empty() {
+        super::ruby::add_open3_observations(path, &root, &mut evidence);
+    }
     let mut php_operand_nodes = BTreeMap::new();
     let mut seen = BTreeSet::new();
     let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();

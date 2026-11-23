@@ -1063,6 +1063,7 @@ fn is_callable_scope(kind: &str, language: Language) -> bool {
             kind,
             "function_definition" | "method_declaration" | "anonymous_function" | "arrow_function"
         ),
+        Language::Ruby => matches!(kind, "method" | "singleton_method" | "lambda"),
     }
 }
 

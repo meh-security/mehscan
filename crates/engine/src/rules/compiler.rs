@@ -158,6 +158,7 @@ pub(crate) fn parser_language(language: Language) -> SupportLang {
         Language::Tsx => SupportLang::Tsx,
         Language::Python => SupportLang::Python,
         Language::Php => SupportLang::PhpMixed,
+        Language::Ruby => SupportLang::Ruby,
         Language::Go => SupportLang::Go,
         Language::Rust => SupportLang::Rust,
     }

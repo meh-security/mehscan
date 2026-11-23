@@ -19,6 +19,7 @@ pub enum Language {
     Php,
     Go,
     Rust,
+    Ruby,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

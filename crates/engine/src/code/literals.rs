@@ -523,6 +523,7 @@ fn is_constant_declarator<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
         Language::Rust => kind == "const_item",
         Language::Python => kind == "assignment",
         Language::Php => kind == "assignment_expression",
+        Language::Ruby => false,
     }
 }
 
@@ -542,6 +543,7 @@ fn is_mutable_declaration<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
         Language::Rust => kind == "let_declaration",
         Language::Php => kind == "augmented_assignment_expression",
         Language::Python => matches!(kind, "augmented_assignment" | "named_expression"),
+        Language::Ruby => matches!(kind, "assignment" | "operator_assignment"),
     }
 }
 
