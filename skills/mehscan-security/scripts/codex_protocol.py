@@ -326,13 +326,26 @@ def build_schema(task, *, bound_handles=True):
             "action":{"type":"string","enum":["keep","repair","reopen"]},"claim":{"type":"string","maxLength":300}})}
         schema["required"].append("qa_actions")
     if task.get("review_role") in ("second_pass_fast", "second_pass_compare"):
-        schema["properties"]["review_checks"] = {"type":"array", "items":object_schema({
+        error_codes = {"type":"array", "items":{"type":"string", "enum":[
+            "wrong_property", "relied_on_unread_guard", "caller_constraint_ignored", "invalid_counterexample",
+            "unsupported_impact", "lost_adjacent_lead", "unnecessary_research"]}}
+        common = {
             "review_id":review_id_schema(task["review_ids"], bound_handles=bound_handles),
-            "action":{"type":"string", "enum":["keep", "repair", "reopen", "insufficient"]},
-            "claim":{"type":"string", "maxLength":300},
-            "proof_status":{"type":"string", "enum":["supported", "unsupported", "undetermined"]},
-            "investigation_status":{"type":"string", "enum":["sufficient", "missing_available_evidence", "external_blocker", "budget_limited", "execution_failed"]},
-            "error_codes":{"type":"array", "items":{"type":"string", "enum":["wrong_property", "relied_on_unread_guard", "caller_constraint_ignored", "invalid_counterexample", "unsupported_impact", "lost_adjacent_lead", "unnecessary_research"]}}})}
+            "investigation_status":{"type":"string", "enum":["sufficient", "missing_available_evidence",
+                "external_blocker", "budget_limited", "execution_failed"]},
+            "claim":{"type":"string", "maxLength":300, "pattern":r"\S"},
+            "error_codes":error_codes,
+        }
+        schema["properties"]["review_checks"] = {"type":"array", "items":{"anyOf":[
+            object_schema({**common, "action":{"type":"string", "enum":["keep"]},
+                "claim":{"type":"string", "maxLength":300},
+                "proof_status":{"type":"string", "enum":["supported"]},
+                "error_codes":{**error_codes, "maxItems":0}}),
+            object_schema({**common, "action":{"type":"string", "enum":["repair", "reopen"]},
+                "proof_status":{"type":"string", "enum":["supported", "unsupported", "undetermined"]}}),
+            object_schema({**common, "action":{"type":"string", "enum":["insufficient"]},
+                "proof_status":{"type":"string", "enum":["undetermined"]}}),
+        ]}}
         schema["required"].append("review_checks")
     # The unbound schema pins the continuation protocol, not a turn's changing
     # handles or remaining research allowance. The actual wire schema makes a
