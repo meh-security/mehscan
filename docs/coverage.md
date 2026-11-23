@@ -18,7 +18,7 @@ runtime analysis.
 | Rust | Selected unsafe memory, parser and transport sizes, archive extraction, filesystem operations, typed HTTP clients, credentials and SQL. General macro expansion, trait dispatch and cross-object state remain outside the bounded source analysis. |
 | PHP | A partial profile for recognized native and framework APIs. Arbitrary includes, indirect calls and injected or untyped receivers can prevent a relationship from being recognized. See [PHP coverage](php-coverage.md). |
 | Kotlin | A partial JVM profile for recognized typed APIs. Compiler overload/extension resolution, inferred factories, ORM models and reactive execution remain limited. See [Kotlin coverage](kotlin-coverage.md). |
-| Ruby | Partial source review for `.rb`, `.rbw`, `.gemspec`, `.rake`, `.ru`, Gemfile and Rakefile. Includes outlines, structural lookup and original-source review. Native process evidence covers selected Open3 command-string calls. |
+| Ruby | Source review for `.rb`, `.rbw`, `.gemspec`, `.rake`, `.ru`, Gemfile and Rakefile. Native evidence covers selected Rails, process, file, HTTP and object-loading contracts. Framework and library coverage is bounded. |
 
 Ruby process evidence recognizes `Open3.capture2`, `capture2e` and `capture3`
 with one interpolated string after an earlier direct, top-level
@@ -26,9 +26,27 @@ with one interpolated string after an earlier direct, top-level
 library binding and unresolved inherited receivers prevent attribution.
 The review retains the exact command
 and asks who controls it and how Ruby selects shell or direct execution.
-Fixed commands and separate arguments stay outside this native queue.
-General Ruby dispatch, Rails semantics, ERB and gem dependency analysis
-remain outside this slice. Normal test, fixture and vendor exclusions apply.
+Explicit `::Kernel.system`, `::Kernel.exec` and `::Kernel.spawn` with a single
+interpolated command string also carry process evidence. Fixed commands and
+separate arguments stay outside this native queue.
+Rails analysis binds unique controller and model declarations through explicit
+source ancestry. Supported cases include selected Active Record methods with
+interpolated query text and `Arel.sql` fragments, explicit HTML trust in
+`render html:`, inline or file rendering, redirects and file delivery. A dynamic
+redirect with a literal `allow_other_host: true` retains the option and destination
+for review even when the request relationship is unresolved. Directly represented `params` reads can support a
+bounded path. Structured conditions, ordinary rendering and unbound receivers
+remain separate source contexts. Changed scans use the declarations in their
+analyzed files. Use targeted lookup for unchanged ancestors.
+
+Object-loading evidence covers selected Marshal operations and explicit
+YAML or Psych `unsafe_load` with a same-file library load. HTTP evidence covers
+selected Net::HTTP calls with a same-file library load. Selected Ruby File
+read and write calls retain evidence for the path operand. Review retains runtime
+dispatch, caller authority and applicable policy as open checks. ERB, Haml and
+Slim are available for original-source review. General Ruby dispatch, native
+template semantics and gem dependency analysis require separate support.
+Normal test, fixture and vendor exclusions apply.
 
 The [database coverage guide](extended-database-coverage.md) lists supported
 receiver and query shapes in more detail. Optional compiler backends are separate

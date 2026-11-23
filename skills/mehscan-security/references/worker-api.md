@@ -63,6 +63,7 @@ review; never cite a guide as application evidence.
 | [`deserialization-kotlin`](deserialization-kotlin-checks.md) | Kotlin decoding, platform-specific serializers, polymorphic registrations, defaults/coercion, stream sequences, construction hooks or option forwarding |
 | [`crypto-configuration`](buckets/crypto-configuration.md) | Signing/encryption, password hashing, randomness, cookie or CORS settings |
 | [`native-memory`](buckets/native-memory.md) | C/C++ bounds, lifetime, ownership or native parser state |
+| [`ruby-rails`](ruby-rails-review.md) | Ruby and Rails request or model binding, callbacks, templates, resource interpretation or effective library policy |
 | [`rust-security`](rust-security.md) | Rust safe APIs, soundness, Cargo features/targets, advisory applicability or source discovery without native candidates |
 | [`rust-memory`](rust-memory.md) | Rust unsafe extents/initialization, panic cleanup, Send/Sync, FFI lifetimes, pinning or cancellation |
 | [`rust-boundaries`](rust-boundaries.md) | Rust parser and cumulative resource limits, archive containment, protocol transitions or credential consumers |

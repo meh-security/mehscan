@@ -887,6 +887,11 @@ pub(crate) fn scan_profiled(
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
     );
+    let ruby_project = super::ruby::RubyProject::from_sources(
+        prepared
+            .iter()
+            .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+    );
     let rust_originals: BTreeMap<_, _> = prepared
         .iter()
         .filter_map(|file| {
@@ -947,6 +952,7 @@ pub(crate) fn scan_profiled(
         &python_project_context,
         &rust_project_context,
         &php_project_context,
+        &ruby_project,
         &dotnet_project_context,
         options.scan_secrets,
         worker_count,
@@ -1081,6 +1087,7 @@ pub(crate) fn scan_profiled(
                     &python_project_context,
                     &rust_project_context,
                     &php_project_context,
+                    &ruby_project,
                     &dotnet_project_context,
                     false,
                     resolve_worker_count(options.jobs, projected_files.len())?,
@@ -1260,6 +1267,7 @@ fn analyze_prepared_files(
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
+    ruby_project: &super::ruby::RubyProject,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
     worker_count: usize,
@@ -1290,6 +1298,7 @@ fn analyze_prepared_files(
                     python_project_context,
                     rust_project_context,
                     php_project_context,
+                    ruby_project,
                     dotnet_project_context,
                     scan_secrets,
                 )
@@ -1331,6 +1340,7 @@ fn analyze_prepared_files(
                                 python_project_context,
                                 rust_project_context,
                                 php_project_context,
+                                ruby_project,
                                 dotnet_project_context,
                                 scan_secrets,
                             ),
@@ -1371,6 +1381,7 @@ fn scan_prepared_file(
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
+    ruby_project: &super::ruby::RubyProject,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
 ) -> ParseOutcome {
@@ -1403,6 +1414,7 @@ fn scan_prepared_file(
             python_project_context,
             rust_project_context,
             php_project_context,
+            ruby_project,
             dotnet_project_context,
             build_symbols: &file.build_symbols,
         },

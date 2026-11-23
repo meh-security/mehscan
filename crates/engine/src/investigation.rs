@@ -22613,7 +22613,7 @@ impl RepositorySources {
                     };
                     (None, source)
                 }
-                FileClass::Ignored
+                FileClass::Ignored | FileClass::UnsupportedSource
                     if include_templates && is_investigation_template(&file.relative) =>
                 {
                     let Ok(source) = crate::code::read_secret_text(&file.absolute) else {
@@ -23031,6 +23031,9 @@ fn is_investigation_template(path: &str) -> bool {
                     | "jinja2"
                     | "j2"
                     | "mustache"
+                    | "erb"
+                    | "haml"
+                    | "slim"
             )
         })
 }
@@ -23512,7 +23515,9 @@ mod tests {
                 "package sample\nimport localAlias \"needle\"\n",
             ),
             ("imports.rs", "use needle::Thing as LocalAlias;\n"),
+            ("imports.rb", "require 'needle'\n"),
             ("lookalike.js", "const text = 'needle'; // import needle\n"),
+            ("lookalike.rb", "text = \"require 'needle'\"\n"),
         ] {
             fs::write(root.join(path), source).unwrap();
         }
@@ -23532,7 +23537,7 @@ mod tests {
         assert!(
             !imports
                 .iter()
-                .any(|symbol| symbol.location.path == "lookalike.js")
+                .any(|symbol| symbol.location.path.starts_with("lookalike."))
         );
         assert!(
             imports

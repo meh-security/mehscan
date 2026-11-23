@@ -5,8 +5,13 @@ use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use mehscan_core::{
     Capability, Capture, Confidence, Evidence, EvidenceKind, OperandFact, OperandFactKind,
-    Provenance, Resolution,
+    Provenance, Resolution, SecurityPath,
 };
+
+mod operations;
+mod project;
+
+pub(super) use project::RubyProject;
 
 use super::context::{enclosing_symbol, unknown_textual_context};
 use super::matcher::{evidence_id, location};
@@ -102,7 +107,21 @@ pub(super) fn add_open3_observations(
     }
 }
 
+pub(super) fn add_observations(
+    path: &str,
+    root: &RubyNode<'_>,
+    project: &RubyProject,
+    evidence: &mut Vec<Evidence>,
+) -> Vec<SecurityPath> {
+    add_open3_observations(path, root, evidence);
+    operations::observations(path, root, project, evidence)
+}
+
 fn loads_open3(node: &RubyNode<'_>) -> bool {
+    loads_library(node, "open3")
+}
+
+fn loads_library(node: &RubyNode<'_>, library: &str) -> bool {
     node.kind() == "call"
         && node.field("receiver").is_none()
         && node.field("block").is_none()
@@ -110,8 +129,13 @@ fn loads_open3(node: &RubyNode<'_>) -> bool {
             .field("method")
             .is_some_and(|method| method.text() == "require")
         && sole_argument(node).is_some_and(|argument| {
+            let text = argument.text();
             argument.kind() == "string"
-                && matches!(argument.text().as_ref(), "'open3'" | "\"open3\"")
+                && ['\'', '"'].into_iter().any(|quote| {
+                    text.strip_prefix(quote)
+                        .and_then(|text| text.strip_suffix(quote))
+                        == Some(library)
+                })
         })
 }
 
@@ -133,15 +157,20 @@ fn is_open3_receiver(node: &RubyNode<'_>) -> bool {
                 .is_some_and(|name| name.text() == "Open3"))
 }
 
+fn replaces_require(node: &RubyNode<'_>) -> bool {
+    matches!(
+        node.kind().as_ref(),
+        "method" | "singleton_method" | "alias"
+    ) && node
+        .field("name")
+        .is_some_and(|name| name.text() == "require")
+}
+
 fn replaces_library_binding(node: &RubyNode<'_>) -> bool {
-    let kind = node.kind();
-    if matches!(kind.as_ref(), "method" | "singleton_method" | "alias")
-        && node
-            .field("name")
-            .is_some_and(|name| name.text() == "require")
-    {
+    if replaces_require(node) {
         return true;
     }
+    let kind = node.kind();
     match kind.as_ref() {
         "module" | "class" => node.field("name"),
         "assignment" | "operator_assignment" => node.field("left"),

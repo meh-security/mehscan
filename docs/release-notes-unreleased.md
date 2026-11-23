@@ -2,6 +2,6 @@
 
 ## Features
 
-- Add partial Ruby support for source navigation, review planning and selected Open3 command-string review.
+- Add Ruby source reviews with selected Rails, process, file, HTTP and object-loading evidence.
 
 [Full changelog](https://github.com/meh-security/mehscan/compare/v0.15.0...main)

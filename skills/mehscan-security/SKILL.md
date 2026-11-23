@@ -104,6 +104,9 @@ XML processing, that route uses [XML parser checks](references/xml-parser-checks
 available as `xml-parsers`, then its relevant platform section. Ordinary usage
 loads deeper guidance only for a concrete unresolved implementation relationship.
 All these checks use source reasoning without target execution.
+For Ruby and Rails operations, use [Ruby and Rails source review](references/ruby-rails-review.md)
+when framework binding, callbacks, rendering or library policy decides the
+question. Workers can request `ruby-rails`.
 For Rust source, use [Rust security review](references/rust-security.md), available
 as `rust-security`. Load `rust-memory` or `rust-boundaries` for the relevant
 advisory-derived patterns and verification controls. Rust guidance applies to

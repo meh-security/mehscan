@@ -527,3 +527,225 @@ fn changed_ruby_inventory_scopes_work_and_keeps_unchanged_source_readable() {
             .contains("Open3.capture3")
     );
 }
+
+#[test]
+fn rails_ancestry_binds_exact_operands_and_keeps_framework_controls_separate() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path();
+    let root = base.join("source");
+    let source = root.to_str().unwrap();
+    write(
+        &root,
+        "models/application_record.rb",
+        "class ApplicationRecord < ::ActiveRecord::Base\nend\n",
+    );
+    write(
+        &root,
+        "models/article.rb",
+        "class Article < ApplicationRecord\nend\n",
+    );
+    write(
+        &root,
+        "controllers/application_controller.rb",
+        "class ApplicationController < ::ActionController::Base\nend\n",
+    );
+    write(
+        &root,
+        "controllers/portal/base_controller.rb",
+        "module Portal\nclass BaseController < ApplicationController\nend\nend\n",
+    );
+    write(
+        &root,
+        "controllers/portal/entries_controller.rb",
+        r#"require "net/http"
+require "yaml"
+
+module Portal
+  class EntriesController < BaseController
+    def list
+      Article.where("title = #{params[:title]}")
+      Article.where(published: true).order("updated_at #{params.fetch(:direction)}")
+      Article.where("id = ?", params[:id])
+      Article.find_by(id: params[:id])
+      Article.where("title = #{normalize(params[:title])}")
+      render html: params[:text].html_safe
+      render html: params[:text]
+      render inline: params.require(:template)
+      redirect_to params[:return_to]
+      redirect_to article_url(params[:id])
+      send_file params[:path]
+      send_file @export_path
+      ::Marshal.load(params[:encoded])
+      YAML.unsafe_load(params[:settings])
+      YAML.safe_load(params[:settings])
+      ::Net::HTTP.get(::URI.parse(params[:url]))
+      ::Arel.sql("created_at #{params[:sort]}")
+      ::File.read(params[:path])
+      ::File.write(params[:target], "content")
+      ::Kernel.system("printf #{params[:label]}")
+      redirect_to configured_url, allow_other_host: true
+      redirect_to default_url, allow_other_host: false
+      render plain: static_text, html: params[:text].html_safe
+    end
+
+    def local(params)
+      Article.where("kind = #{params[:kind]}")
+      render html: params[:text].html_safe
+    end
+  end
+end
+"#,
+    );
+    write(
+        &root,
+        "controllers/lookalikes.rb",
+        r#"class Unrelated
+  def display(params)
+    render html: params[:body].html_safe
+    redirect_to params[:return_to]
+    Store.where("name = #{params[:name]}")
+  end
+end
+"#,
+    );
+    write(&root, "views/example.html.erb", "<%= @example.title %>\n");
+    let scanned = mehscan(&["scan", source, "--format", "json"]);
+    let paths = scanned["security_paths"].as_array().unwrap();
+    let evidence = scanned["evidence"].as_array().unwrap();
+    let mut counts = std::collections::BTreeMap::new();
+    for path in paths {
+        assert_eq!(path["state"], "direct");
+        assert!(
+            path["uncertainty_reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("runtime_dispatch_unverified"))
+        );
+        let sink = evidence
+            .iter()
+            .find(|item| item["id"] == path["sink_evidence_id"])
+            .unwrap();
+        let source = evidence
+            .iter()
+            .find(|item| item["id"] == path["source_evidence_id"])
+            .unwrap();
+        assert_eq!(source["rule_id"], "ruby-rails-request-parameter");
+        assert_eq!(
+            source["captures"]["api_binding"]["location"]["path"],
+            "controllers/application_controller.rb"
+        );
+        assert_eq!(
+            sink["location"]["path"],
+            "controllers/portal/entries_controller.rb"
+        );
+        *counts.entry(sink["rule_id"].as_str().unwrap()).or_insert(0) += 1;
+    }
+    assert_eq!(
+        counts,
+        std::collections::BTreeMap::from([
+            ("ruby-active-record-query-text", 2),
+            ("ruby-arel-query-text", 1),
+            ("ruby-file-read", 1),
+            ("ruby-file-write", 1),
+            ("ruby-kernel-command-string", 1),
+            ("ruby-marshal-load", 1),
+            ("ruby-net-http-request", 1),
+            ("ruby-rails-inline-template", 1),
+            ("ruby-rails-raw-html", 1),
+            ("ruby-rails-redirect", 1),
+            ("ruby-rails-send-file", 1),
+            ("ruby-yaml-unsafe-load", 1),
+        ])
+    );
+    assert!(
+        evidence
+            .iter()
+            .all(|item| item["location"]["path"] != "controllers/lookalikes.rb")
+    );
+    assert_eq!(
+        evidence
+            .iter()
+            .filter(|item| item["captures"]["redirect_policy"]["text"] == "allow_other_host: true")
+            .count(),
+        1
+    );
+
+    let inventory = base.join("inventory");
+    mehscan(&[
+        "investigate",
+        "review-inventory",
+        source,
+        "--output",
+        inventory.to_str().unwrap(),
+    ]);
+    let plan = mehscan(&[
+        "investigate",
+        "source-review-plan",
+        source,
+        "--inventory",
+        inventory.to_str().unwrap(),
+    ]);
+    assert!(
+        plan["assignments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|assignment| {
+                assignment["windows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|window| window["path"] == "views/example.html.erb")
+            })
+    );
+    let view = mehscan(&[
+        "investigate",
+        "source",
+        source,
+        "--path",
+        "views/example.html.erb",
+        "--start-line",
+        "1",
+        "--end-line",
+        "1",
+    ]);
+    assert_eq!(view["results"]["text"], "<%= @example.title %>\n");
+}
+
+#[test]
+fn ruby_keeps_ambiguous_framework_bindings_out_of_direct_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "base.rb",
+        "class ApplicationController < ActionController::Base\nend\n",
+    );
+    write(root, "reopened.rb", "class ApplicationController\nend\n");
+    write(
+        root,
+        "shadow.rb",
+        r#"module Local
+  module ActiveRecord
+    class Base
+    end
+  end
+  class Record < ActiveRecord::Base
+  end
+end
+
+class ReportController < ApplicationController
+  def submit
+    render inline: params[:template]
+    Local::Record.where("name = #{params[:name]}")
+  end
+end
+"#,
+    );
+    let scan = mehscan(&["scan", root.to_str().unwrap(), "--format", "json"]);
+    assert!(
+        scan.get("security_paths")
+            .is_none_or(|paths| paths.as_array().unwrap().is_empty())
+    );
+    assert!(scan["evidence"].as_array().unwrap().is_empty());
+}
