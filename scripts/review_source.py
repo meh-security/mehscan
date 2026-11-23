@@ -30,7 +30,7 @@ def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
         "manifest_sha256":worker.digest_file(args.work_plan), "commands":commands, "scanner_sha256":scanner_sha,
         "controller":{name:worker.digest_file(Path(__file__).with_name(name)) for name in modules},
         "options":{name:getattr(args, name, None) for name in (
-            "review_goal", "coverage_target", "max_calls", "input_token_budget", "admission_seconds", "cost_budget",
+            "review_goal", "coverage_target", "max_calls", "input_token_budget", "call_only_budget", "admission_seconds", "cost_budget",
             "include_supporting_source", "domain_session_mode", "question_routing")},
         "rates_sha256":worker.digest_file(args.cost_rates) if getattr(args, "cost_rates", None) else None,
         "fact_audit_policy_sha256":worker.digest_file(args.fact_audit_policy) if getattr(args, "fact_audit_policy", None) else None}
@@ -507,6 +507,9 @@ def run(args, legacy, worker):
         or runtime["engine_sha256"] != scanner_sha
     ):
         raise ValueError("source review runtime changed")
+    call_only = bool(getattr(args, "call_only_budget", False))
+    if call_only and (runtime.get("provider") or runtime.get("orchestration")):
+        raise ValueError("call-only review requires an unbound local reviewer")
     question_routing = bool(getattr(args, "question_routing", False))
     if question_routing and (not work_path or not runtime.get("orchestration") or not args.expert_command):
         raise ValueError("question routing requires a work plan, native bound routine/expert profiles and --expert-command")
@@ -678,7 +681,7 @@ def run(args, legacy, worker):
                 continuation_parent, stage, root, package, plan, work_registry, recovery_binding, worker)
         else:
             review_budget.initialize(budget_path, max_calls=managed_calls,
-                input_limit=getattr(args, "input_token_budget", 1_500_000),
+                input_limit=None if call_only else getattr(args, "input_token_budget", 1_500_000),
                 admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
                 started_at=started_epoch if work_registry else None)
         args._review_budget = str(budget_path)
@@ -2514,7 +2517,7 @@ def run(args, legacy, worker):
     if continuation:
         summary["continuation"] = {"from":continuation["parent"], "carried_cases":len(carried_cases),
             "carried_native_ids":sorted(carried_heads), "prior_reserved_calls":continuation["spent_calls"],
-            "new_source_calls":len(source_metrics) - continuation["source_receipts"]}
+            "new_source_calls":sum(row["calls"] for row in results if row.get("case_id") not in carried_cases)}
         summary["effective_args"]["_continued_heads"] = carried_heads
     if source_resume:
         summary["recovery"] = {"parent":str(source_resume.resolve()), "lineage_origin":str(lineage_output),

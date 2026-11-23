@@ -216,7 +216,7 @@ def extend_scope(parent, stage, root, package, plan, registry, binding, worker):
     question_cases = {rid:cases for rid, cases in summary.get("question_cases", {}).items() if rid in heads}
     continuation = {"parent":str(parent), "case_binding":case_binding,
         "cases":sorted(saved), "heads":heads, "reconsider_native_ids":sorted(changed),
-        "spent_calls":budget["reserved_calls"], "source_receipts":len(receipts(stage, worker)),
+        "spent_calls":budget["reserved_calls"],
         "case_assignments":{case:new_items[case]["assignment_id"] for case in saved},
         "question_cases":question_cases,
         "followups":[row for row in summary.get("followups", []) if row["review_id"] in heads and row["review_id"] not in changed],

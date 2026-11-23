@@ -125,8 +125,11 @@ def _write(path, state):
 def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
                reservation_per_call=RESERVATION, admission_seconds=ADMISSION_SECONDS,
                native_percent=None, max_call_input_tokens=MAX_CALL_INPUT, cost=None, started_at=None):
-    for name, value in (("max_calls", max_calls), ("input_limit", input_limit),
-                        ("reservation_per_call", reservation_per_call),
+    if input_limit is None and cost is not None:
+        raise ValueError("call-only review cannot apply a token-based cost policy")
+    if input_limit is not None and (type(input_limit) is not int or input_limit < 1):
+        raise ValueError("input_limit must be a positive integer")
+    for name, value in (("max_calls", max_calls), ("reservation_per_call", reservation_per_call),
                         ("max_call_input_tokens", max_call_input_tokens)):
         if type(value) is not int or value < 1:
             raise ValueError(name + " must be a positive integer")
@@ -147,6 +150,8 @@ def initialize(path, *, max_calls=MAX_CALLS, input_limit=MAX_INPUT,
                       "max_call_input_tokens": max_call_input_tokens,
                       "observed_input_tokens": 0, "leases": {}, "fenced": False,
                       "limitations": "Observed input limit with in-flight reservation headroom; a provider call can exceed its reservation."}
+        if input_limit is None:
+            state["limitations"] = "Calls and admission time are bounded. Token use and cost may be unreported."
         if cost is not None:
             state["cost"] = cost
         if native_percent is not None:
@@ -187,7 +192,8 @@ def _admission_reason(state, lane=None, completion_owner=None):
     if cost and cost["limit_micros"] is not None and cost["observed_micros"] + (active + protected + 1) * cost["reservation_micros"] > cost["limit_micros"]:
         return "review estimated cost allowance and in-flight reservation reached"
     reservation = state["reservation_per_call"]
-    if state["observed_input_tokens"] + (active + protected + 1) * reservation > state["input_limit"]:
+    if (state["input_limit"] is not None
+            and state["observed_input_tokens"] + (active + protected + 1) * reservation > state["input_limit"]):
         return "review observed input limit and in-flight headroom reached"
     if lane is not None and state.get("lanes"):
         if lane not in state["lanes"]:
@@ -284,8 +290,9 @@ def reserve(path, kind, lane=None, completion_owner=None):
         return lease
 
 
-def finish(path, lease, receipt):
-    """Unknown/oversized input fences future admissions, but lets active calls drain."""
+def finish(path, lease, receipt, *, completed_local=False):
+    """Settle known usage or an explicitly call-only local response."""
+
     receipt = receipt if isinstance(receipt, dict) else {}
     usage = receipt.get("usage")
     tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
@@ -296,7 +303,11 @@ def finish(path, lease, receipt):
         entry = state["leases"][lease]
         if entry["status"] != "reserved":
             raise ValueError("review budget lease already settled")
-        entry.update(status="settled" if known else "unknown", settled_at=time.time())
+        call_only = state["input_limit"] is None
+        unmetered = call_only and completed_local and not known
+        entry.update(status="settled" if known or unmetered else "unknown", settled_at=time.time())
+        if unmetered:
+            entry["usage"] = "unreported"
         if known:
             entry["input_tokens"] = tokens
             state["observed_input_tokens"] += tokens
@@ -323,8 +334,8 @@ def finish(path, lease, receipt):
         # Reservation estimates concurrent headroom; it is not the per-call fence.
         # Existing ledgers retain the threshold with which they were initialized.
         call_limit = state.get("max_call_input_tokens", state["reservation_per_call"])
-        if (not known or tokens > call_limit
-                or state["observed_input_tokens"] > state["input_limit"]):
+        if (not (known or unmetered) or (not call_only and (
+                tokens > call_limit or state["observed_input_tokens"] > state["input_limit"]))):
             state["fenced"] = True
         _write(path, state)
-    return known
+    return known or unmetered
