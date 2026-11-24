@@ -13,6 +13,11 @@ deployment configuration open.
 - Bind the exact parameter and the consumer. Parameter presence checks and
   strong parameter allowlists answer different questions from authorization.
   Trace ownership or tenant constraints to the actual selected record and write.
+- For Rack applications, verify the effective middleware stack, its ordering
+  and session configuration against the locked versions. For request integrity,
+  check all applicable middleware before drawing a conclusion from an individual
+  handler or origin check. Keep the verdict pending if a deciding middleware
+  contract is unavailable.
 - A missing route, dynamic receiver, local replacement or unresolved policy
   remains an evidence gap.
 
@@ -41,6 +46,11 @@ deployment configuration open.
 - For Ruby object loading, identify the actual Marshal, YAML or Psych method
   and where the bytes originate. Review class and alias policy in the effective
   version and caller context.
+- For payment transitions, verify how the locked gateway reports a failed
+  capture and whether the caller checks that result before recording local
+  state. Establish the policy that requires successful capture and the
+  downstream consumer that grants the protected benefit before alleging a
+  payment bypass.
 
 Use the smallest exact source ranges that answer the named question. Keep
 independent policy, runtime and caller limitations visible in the result.

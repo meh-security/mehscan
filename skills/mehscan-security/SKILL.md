@@ -5,6 +5,29 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 # Mehscan security
 
+## Six-stage repository workflow
+
+1. **Scope and memory.** Pin the source revision, scan the authorized source and
+   create a review inventory. Keep the repository key, stream and local memory
+   stable across related attempts.
+2. **Priority plan.** Use the zero-call planning checkpoint and bind a ranked
+   work plan to its source ranges and inventory. Include consequential workflows
+   that have no native candidates.
+3. **Value investigation.** Run the bound work plan with the configured reviewer.
+   Save settled findings, open questions and provider usage.
+4. **Comprehensive follow-up, when requested.** Expand the plan on the effective
+   inventory with [the saved Value continuation](../../docs/review-worker.md#continue-value-into-comprehensive).
+   Keep the original questions and shared allowance.
+5. **Audit, when requested.** Run Fast for selected proof questions or Full for
+   every eligible claim. Follow [the saved-attempt audit command](references/second-pass-review.md#run-with-the-local-worker)
+   with the effective inventory, current ownership receipt and bundle directory.
+6. **Report and retain.** Reconcile the final findings and open checks. Close
+   the effective native generation, check the memory receipt and inspect the
+   [execution trace](references/execution-trace.md).
+
+See the [repository review stages](../../docs/review-worker.md#review-stages)
+for the associated commands and artifacts.
+
 Default to **Value**: pursue the highest-severity findings supported by plausible
 source evidence first, within the user's budget. Rank by credible impact, actor
 exposure and evidence of a failed control, then the cost of the next deciding check;

@@ -61,6 +61,57 @@ def query_flags(rows):
     return flags
 
 
+def query_summary(row):
+    return {key: row.get(key) for key in ("round", "query", "result_id", "reused")}
+
+
+def source_jobs(run, review_id):
+    stage = run / "source-review"
+    summary_path = stage / "summary.json"
+    summary = read(summary_path) if summary_path.is_file() else {}
+    cases = set(summary.get("question_cases", {}).get(review_id, []))
+    assignments = set(summary.get("question_assignments", {}).get(review_id, []))
+    continuation = stage / "continuation.json"
+    carried = set(read(continuation).get("cases", [])) if continuation.is_file() else set()
+    jobs = []
+    for directory in sorted((stage / "jobs").glob("*")):
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        job_context = directory / "context.json"
+        result_path = directory / "result.json"
+        checkpoint_path = directory / "recovery.json"
+        if not any(path.is_file() for path in (job_context, result_path, checkpoint_path)):
+            continue
+        context = read(job_context) if job_context.is_file() else {}
+        result = read(result_path) if result_path.is_file() else {}
+        checkpoint = read(checkpoint_path) if checkpoint_path.is_file() else {}
+        case_id = result.get("case_id") or (context.get("work_item") or {}).get("id")
+        assignment_id = result.get("assignment_id") or context.get("source_assignment_id")
+        ids = {row["review_id"] for row in context.get("native_questions", []) if "review_id" in row}
+        if review_id is not None and review_id not in ids:
+            # Case membership distinguishes separately investigated named checks in one assignment.
+            if case_id not in cases and not (not cases and assignment_id in assignments):
+                continue
+        lookups = []
+        lookup_files = [(path.name.split("-", 1)[0], path) for path in directory.glob("[0-9]*-lookups.json")]
+        for number, path in sorted(lookup_files, key=lambda item: (len(item[0]), item[0])):
+            if not number.isdecimal():
+                continue
+            turn = int(number)
+            lookups.extend({**row, "round": turn} for row in read(path))
+        jobs.append({
+            "job_id": directory.name, "case_id": case_id, "assignment_id": assignment_id,
+            "carried_from_prior_attempt": case_id in carried,
+            "checkpoint_status": result.get("status", checkpoint.get("phase", "in_progress")),
+            "calls": result.get("calls", checkpoint.get("calls")),
+            "query_units": result.get("queries", checkpoint.get("queries")),
+            "unknown_provider_calls": result.get("unknown_provider_calls", checkpoint.get("unknown_provider_calls", 0)),
+            "queries": [query_summary(row) for row in lookups],
+            "attention_flags": query_flags(lookups),
+        })
+    return jobs
+
+
 def summarize(run, review_id=None):
     run = Path(run)
     if run.is_symlink() or not run.is_dir():
@@ -88,7 +139,9 @@ def summarize(run, review_id=None):
         jid = path.stem
         own = [e for e in events if e.get("job_id") == jid]
         conversations = {e["conversation_id"] for e in own if e.get("conversation_id")}
-        lookups = job.get("results") or [r for r in research if r.get("query", {}).get("review_id") in ids]
+        evidence = job.get("results") or [r for r in research if r.get("query", {}).get("review_id") in ids]
+        lookups = [row for row in evidence if row.get("origin_kind") != "source_assignment"]
+        imported = [row for row in evidence if row.get("origin_kind") == "source_assignment"]
         corrections = [r for r in feedback if r.get("conversation_id") in conversations]
         flags = query_flags(lookups)
         for event in own:
@@ -130,14 +183,18 @@ def summarize(run, review_id=None):
             "recovery_ids":(job.get("fast_audit") or {}).get("review_ids"),
             "source_assignment_ids":job.get("source_assignment_ids",[]),
             "decisions":decisions, "attention_flags":flags, "events":own,
-            "queries":[{k:r.get(k) for k in ("round","query","result_id","reused")} for r in lookups]})
-    if review_id is not None and not jobs:
+            "queries":[query_summary(row) for row in lookups],
+            "imported_source_evidence":[{**query_summary(row), "source_assignment_id": row.get("source_assignment_id")}
+                                        for row in imported]})
+    source = source_jobs(run, review_id)
+    if review_id is not None and not jobs and not source:
         raise ValueError("review ID is not present in this attempt")
     worker = read(run / "worker.json") if (run / "worker.json").is_file() else {}
     incomplete_jobs = [j["job_id"] for j in jobs if j["checkpoint_status"] != "drafted"]
     result = {"run":str(run.resolve()), "execution_status":worker.get("status", "running_or_unknown"),
         "semantic_quality":"not_established_by_execution_trace", "trace_history":"recorded" if events else "legacy_reconstruction",
-        "mechanical_assessment":"admitted" if worker.get("status") == "admitted" else "not_admitted_or_still_running",
+        "mechanical_assessment":"admitted" if worker.get("native_admission", worker.get("status") == "admitted")
+                                else "not_admitted_or_still_running",
         "incomplete_trace_rows":torn or research_torn or feedback_torn,
         "job_count":len(jobs), "unfinished_jobs":incomplete_jobs,
         "model_drafts_recorded":sum(j["model_draft_recorded"] for j in jobs),
@@ -148,7 +205,8 @@ def summarize(run, review_id=None):
         "runtime_error":{k:worker[k] for k in ("reason","detail") if k in worker},
         "native_events":[e for e in events if e["event"].startswith("native_")],
         "prior_attempt":worker.get("recovered_from"),
-        "jobs":jobs}
+        "jobs":jobs, "source_jobs":source,
+        "source_attention_counts":dict(Counter(f["kind"] for job in source for f in job["attention_flags"]))}
     if worker.get("source_review"):
         result["source_review"]=worker["source_review"]
     return result
@@ -156,13 +214,14 @@ def summarize(run, review_id=None):
 
 def markdown(result):
     lines = ["# Review execution", "", "Status: " + result["execution_status"] + ". Trace: " + result["trace_history"] + ".",
+        "Mechanical admission: " + result["mechanical_assessment"].replace("_", " ") + ".",
         "Execution records do not establish semantic correctness.", "",
         "| Review IDs | Job state | Calls | Query units | Attention flags |", "| --- | --- | ---: | ---: | --- |"]
     source=result.get("source_review")
     if source:
         lines[4:4]=[f"Source review: {source['completed_assignments']}/{source['assignments']} assignments completed, "
             f"{source['source_questions']} new questions, {source.get('calls','unknown')} source-stage calls. "
-            "Source calls are separate from the native finalization jobs below; inspect source-review/jobs for original turns.", ""]
+            "Source jobs are listed separately from native finalization jobs.", ""]
     for job in result["jobs"]:
         lines.append("| " + ", ".join(job["review_ids"]) + " | " + str(job["checkpoint_status"]) + " | " +
             str(job["calls"]) + " | " + str(job["query_units"]) + " | " +
@@ -186,6 +245,15 @@ def markdown(result):
         for row in job["decisions"]:
             lines.append("- " + str(row["decision"]) + ": " + str(row["summary"]))
             lines.extend("  - Remaining: " + q for q in row.get("checks") or [])
+    if result.get("source_jobs"):
+        lines += ["", "## Source jobs", "", "| Case or assignment | State | Calls | Query units | Attention flags |",
+                  "| --- | --- | ---: | ---: | --- |"]
+        for job in result["source_jobs"]:
+            name = job["case_id"] or job["assignment_id"] or job["job_id"]
+            if job["carried_from_prior_attempt"]:
+                name += " (carried)"
+            flags = ", ".join(sorted({flag["kind"] for flag in job["attention_flags"]}))
+            lines.append(f"| {name} | {job['checkpoint_status']} | {job['calls']} | {job['query_units']} | {flags} |")
     return "\n".join(lines) + "\n"
 
 
