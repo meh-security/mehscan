@@ -2,7 +2,14 @@
 
 Mehscan is a local source-code security scanner. It collects evidence for review without building or running the application.
 
-C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go and Rust are supported. PHP, Kotlin and Ruby have partial support. [Language and framework coverage](docs/coverage.md)
+## Supported languages
+
+| Support | Languages |
+| --- | --- |
+| Supported | C, C++, C#, Go, Java, JavaScript, Python, Rust, TypeScript/TSX |
+| Partial | Kotlin, PHP, Ruby |
+
+See the [language and framework coverage guide](docs/coverage.md) for scope and limitations.
 
 ## Quick start
 
