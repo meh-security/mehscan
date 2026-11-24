@@ -2072,6 +2072,8 @@ def run_locked(args):
             raise ValueError("direct expert IDs must belong to this exact work package")
         bundle_binding = None
         if args.phase in ("all", "native") and requested:
+            if not args.run:
+                raise ValueError("--run is required for selected native claims. For --first-pass, use that attempt's bundle directory.")
             selected_run = outside(args.run, root)
             selected_manifest = read(selected_run / "manifest.json")
             source_profiles.check_bundles(source_profile, [b["review_ids"] for b in selected_manifest["bundles"]])
@@ -2854,7 +2856,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("scanner", "source-root", "inventory", "store", "stream", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
         parser.add_argument("--" + option, required=True)
-    parser.add_argument("--run")
+    parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")
     parser.add_argument("--memory-store", help="use the same local memory database as state work")

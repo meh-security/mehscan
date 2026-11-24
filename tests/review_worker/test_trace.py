@@ -11,6 +11,41 @@ from review_trace import ReviewTrace, summarize, markdown
 
 
 class Trace(unittest.TestCase):
+    def test_admitted_incomplete_source_work_separates_executed_queries_and_evidence(self):
+        with tempfile.TemporaryDirectory() as name:
+            run = Path(name)
+            stage = run / "source-review"
+            source_job = stage / "jobs/case-job"
+            source_job.mkdir(parents=True)
+            (run / "jobs").mkdir()
+
+            def save(path, value):
+                path.write_text(json.dumps(value), encoding="utf-8")
+
+            query = {"tool": "source", "arguments": {"path": "shop.rb"}}
+            imported = {"query": query, "result_id": "fact", "origin_kind": "source_assignment",
+                        "source_assignment_id": "assignment"}
+            save(run / "jobs/native.json", {"binding": {"review_ids": ["claim"]},
+                "status": "drafted", "results": [imported, imported]})
+            save(run / "worker.json", {"status": "incomplete", "native_admission": True})
+            ReviewTrace(run / "review-trace.jsonl").emit("job_started", job_id="native")
+            save(stage / "summary.json", {"question_cases": {"claim": ["checkout"]}})
+            save(stage / "continuation.json", {"cases": ["checkout"]})
+            save(source_job / "result.json", {"case_id": "checkout", "assignment_id": "assignment",
+                                              "status": "complete", "calls": 2, "queries": 1})
+            save(source_job / "0-lookups.json", [{"query": query, "result_id": "fact", "result": {}}])
+
+            trace = summarize(run, "claim")
+            self.assertEqual(trace["execution_status"], "incomplete")
+            self.assertEqual(trace["mechanical_assessment"], "admitted")
+            self.assertEqual(trace["jobs"][0]["queries"], [])
+            self.assertEqual(len(trace["jobs"][0]["imported_source_evidence"]), 2)
+            self.assertEqual(trace["attention_counts"], {})
+            self.assertTrue(trace["source_jobs"][0]["carried_from_prior_attempt"])
+            self.assertEqual(trace["source_jobs"][0]["calls"], 2)
+            self.assertEqual(trace["source_jobs"][0]["queries"][0]["round"], 0)
+            self.assertIn("checkout (carried)", markdown(trace))
+
     def test_trace_exposes_disappearing_relationship_and_native_failure_without_relabeling(self):
         with tempfile.TemporaryDirectory() as name:
             run = Path(name)

@@ -18,11 +18,17 @@ progress also live in job checkpoints for compatible recovery. Older attempts
 can reconstruct queries, saved drafts and job status but do not have a complete
 per-turn progress history. Keep original attempts when recovering.
 
+The source job section reconstructs per-case calls and executed lookups from
+source-review checkpoints. It labels carried cases so their historical calls can
+be distinguished from current dispatches. Imported source evidence is listed
+separately from native lookups in the JSON view.
+
 Ask these questions in order:
 
 1. **Was execution complete?** Inspect controller admission, native failures,
-   unfinished jobs and unknown provider calls. A drafted answer is not native
-   admission. Pending can be a completed review outcome.
+   unfinished jobs and unknown provider calls. Read mechanical admission and
+   overall coverage status independently. Pending can be a completed review
+   outcome.
 2. **Did research address the selected question?** Compare query purposes and
    returned source with the selected operation/actor/effect. Repeated empty
    symbol searches may indicate a locator or tool-use problem; unrelated helper

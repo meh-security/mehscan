@@ -70,6 +70,15 @@ result marked outside scope. TP/FP aliases refer to the first labels, not truth.
 To check an already admitted attempt, refresh `state work` for the chosen IDs,
 pass that current work package, and add `--first-pass OLD_ATTEMPT --supersede`.
 Use the current source/runtime/provider binding and a new output directory.
+Pass the matching bundle directory with `--run`. For a source-first Value or
+Comprehensive attempt, this is usually `OLD_ATTEMPT/run`. Use the effective
+inventory and claim receipt from its source handoff. For Full, append these
+options to the ordinary worker invocation with those current bindings:
+
+```text
+--phase native --first-pass OLD_ATTEMPT --run OLD_ATTEMPT/run --second-pass full --second-pass-scope all --supersede
+```
+
 `--validate-only` produces source-validated reports without changing native state.
 Select scope with the normal work package/bundles, including clean and pending
 claims. A partial second pass never becomes complete coverage.

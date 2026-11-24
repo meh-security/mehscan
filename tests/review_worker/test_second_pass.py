@@ -319,6 +319,26 @@ class SecondPass(unittest.TestCase):
             self.assertEqual(len(frozen),1)
             self.assertEqual(trace["history"],"legacy_reconstruction")
 
+    def test_imported_source_evidence_is_shared_without_repeating_its_lookup_trace(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            jobs = root / "jobs"
+            jobs.mkdir()
+            fact = {"result_id": "source", "origin_package_id": "package", "origin_review_id": None,
+                    "origin_kind": "source_assignment",
+                    "query": {"tool": "source", "arguments": {"path": "shop.rb"}},
+                    "result": {"operation": "get_source", "results": {"text": "Source evidence"}}}
+            for job in ("first", "second"):
+                (jobs / f"{job}.json").write_text(json.dumps({"binding": {"review_ids": ["claim"]},
+                                                            "results": [fact]}))
+
+            handoff, trace, frozen = review.prior_material(root, ["claim"], 4096)
+
+            self.assertEqual([row["result_id"] for row in handoff["facts"]], ["source"])
+            self.assertEqual(trace["queries"], [])
+            self.assertEqual(trace["flags"], [])
+            self.assertEqual(len(frozen), 2)
+
     def test_related_first_source_is_reused_without_peer_verdicts_or_unrelated_facts(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name);(root/"jobs").mkdir()

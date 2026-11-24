@@ -502,6 +502,9 @@ def prior_material(base, ids, byte_limit, deciding_paths=None, *, jobs=None, rel
         for row, fact in selected:
             # Only broker-returned evidence; checkpoint prose is deliberately not carried.
             (facts if own else peer_facts).append(fact)
+            if row.get("origin_kind") == "source_assignment":
+                # The source job owns these lookups. Native jobs only import the evidence.
+                continue
             query = row.get("query", {}) if own else fact["query"]
             value = row.get("result", {})
             lookup_trace.append({"round":row.get("round"), "query":query,
