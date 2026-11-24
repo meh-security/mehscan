@@ -324,6 +324,13 @@ even when the overall attempt is incomplete; those artifacts cover the completed
 subset. Explicit exact-ID work with `--phase native`, source profiles,
 compiler-assisted facts and opt-in operation grouping retain their existing paths.
 
+A trusted local reviewer without provider token receipts can use
+`--call-only-budget` with an all-phase `--work-plan`. Use `--max-calls` and
+`--admission-seconds` to bound dispatch. Completed responses count as calls
+and keep unreported usage visible. A lost or failed response without a
+receipt still fences new calls. Continuation and Full audit use the same saved
+allowance. Token-based limits and cost policies require a metered reviewer.
+
 ## Comprehensive investigation and follow-up
 
 Repository Comprehensive uses the same work plan and shared allowance for both

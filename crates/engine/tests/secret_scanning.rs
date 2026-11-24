@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use mehscan_core::{Capability, Confidence, EvidenceFilter, EvidenceKind, SecretDetector};
+use mehscan_core::{
+    Capability, Confidence, EvidenceFilter, EvidenceKind, Language, SecretDetector,
+};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -84,11 +86,11 @@ fn detects_and_redacts_credentials_in_code_and_comments() {
         result.coverage.security_surfaces.get("credential_material"),
         Some(&7)
     );
-    assert!(
-        result.coverage.cwe.iter().any(|coverage| {
-            coverage.cwe == "CWE-798" && coverage.supported_languages.len() == 12
-        })
-    );
+    assert!(result.coverage.cwe.iter().any(|coverage| {
+        coverage.cwe == "CWE-798"
+            && coverage.supported_languages.len() == 13
+            && coverage.supported_languages.contains(&Language::Ruby)
+    }));
 }
 
 #[test]

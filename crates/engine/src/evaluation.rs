@@ -1347,6 +1347,9 @@ fn relative_path_string(path: &Path) -> String {
 }
 
 fn language_for_path(path: &str) -> Option<Language> {
+    if crate::repository::is_ruby_source(Path::new(path)) {
+        return Some(Language::Ruby);
+    }
     let path = path.to_ascii_lowercase();
     if path.ends_with(".c") {
         Some(Language::C)
@@ -1396,6 +1399,7 @@ const fn language_id(language: Language) -> &'static str {
         Language::Rust => "rs",
         Language::Kotlin => "kt",
         Language::Php => "php",
+        Language::Ruby => "rb",
     }
 }
 

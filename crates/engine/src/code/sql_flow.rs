@@ -5063,7 +5063,7 @@ fn push_path(
     });
 }
 
-fn path_id(
+pub(super) fn path_id(
     source: &Evidence,
     sink: &Evidence,
     state: SecurityPathState,

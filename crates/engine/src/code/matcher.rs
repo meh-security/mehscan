@@ -108,6 +108,7 @@ pub(crate) struct ScanDependencies<'a> {
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
     pub php_project_context: &'a super::php::PhpProjectContext,
+    pub ruby_project: &'a super::ruby::RubyProject,
     pub dotnet_project_context: &'a DotnetProjectContext,
     pub build_symbols: &'a BTreeMap<String, bool>,
 }
@@ -152,6 +153,7 @@ pub(crate) fn scan_source(
         python_project_context,
         rust_project_context,
         php_project_context,
+        ruby_project,
         dotnet_project_context,
         build_symbols,
     } = dependencies;
@@ -207,6 +209,11 @@ pub(crate) fn scan_source(
     native_pass_microseconds[0] = native_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    let ruby_paths = if language == Language::Ruby && parse_issue_ranges.is_empty() {
+        super::ruby::add_observations(path, &root, ruby_project, &mut evidence)
+    } else {
+        Vec::new()
+    };
     let mut php_operand_nodes = BTreeMap::new();
     let mut seen = BTreeSet::new();
     let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
@@ -2506,15 +2513,19 @@ pub(crate) fn scan_source(
         rust_project_context.modules.annotate(path, &mut evidence);
     }
     let paths_started = Instant::now();
-    let mut security_paths = super::security_paths::build_security_paths(
-        path,
-        &root,
-        language,
-        &mut evidence,
-        &symbol_environment,
-        relations,
-        node_context,
-    );
+    let mut security_paths = if language == Language::Ruby {
+        ruby_paths
+    } else {
+        super::security_paths::build_security_paths(
+            path,
+            &root,
+            language,
+            &mut evidence,
+            &symbol_environment,
+            relations,
+            node_context,
+        )
+    };
     node_context.retain_proved_helper_returns(
         path,
         &root,
@@ -2529,6 +2540,12 @@ pub(crate) fn scan_source(
         .iter()
         .map(|item| item.id.as_str())
         .collect::<BTreeSet<_>>();
+    if language == Language::Ruby {
+        security_paths.retain(|path| {
+            retained_evidence_ids.contains(path.source_evidence_id.as_str())
+                && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+        });
+    }
     native_arithmetic_paths.retain(|path| {
         retained_evidence_ids.contains(path.source_evidence_id.as_str())
             && retained_evidence_ids.contains(path.sink_evidence_id.as_str())

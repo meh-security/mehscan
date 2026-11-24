@@ -183,7 +183,10 @@ Use only supplied evidence in this final-only comparison; do not request another
 research loop. Missing deciding evidence leaves a precise pending question.
 Return an ordinary draft plus review_checks for exactly the assigned IDs.
 action=keep retains the baseline label AND material proof (proof_status=supported,
-no error_codes). action=repair with proof_status=supported proposes a correction
+no error_codes). The original decision may be pending if the supplied evidence
+supports its precise reason for staying open. Use action=reopen when an
+unconfirmed premise requires a different remaining check. action=repair with
+proof_status=supported proposes a correction
 to label, explanation or conditions; name the specific old claim that fails and
 why the returned draft follows from the source. This includes a pending-to-closed
 result only when its exact missing fact has been settled. Other repair/reopen

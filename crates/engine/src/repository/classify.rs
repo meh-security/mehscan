@@ -34,9 +34,10 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
     {
         return FileClass::SecretOnly;
     }
-    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
-        return FileClass::Ignored;
-    };
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     let class = match extension.to_ascii_lowercase().as_str() {
         "c" => FileClass::Supported(Language::C),
         // C and C++ share the .h suffix. Without compilation metadata the C++
@@ -59,12 +60,13 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "go" => FileClass::Supported(Language::Go),
         "rs" => FileClass::Supported(Language::Rust),
         "php" | "phtml" | "php5" | "php7" | "php8" => FileClass::Supported(Language::Php),
+        _ if is_ruby_source(path) => FileClass::Supported(Language::Ruby),
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" | "pug" | "hbs" => {
             FileClass::SecretOnly
         }
-        "as" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "as" | "erb" | "rbs" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,
@@ -84,6 +86,22 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
     } else {
         class
     }
+}
+
+pub(crate) fn is_ruby_source(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("Gemfile") || name.eq_ignore_ascii_case("Rakefile")
+        })
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ["rb", "rbw", "gemspec", "rake", "ru"]
+                    .iter()
+                    .any(|ruby_ext| ext.eq_ignore_ascii_case(ruby_ext))
+            })
 }
 
 pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
@@ -225,6 +243,13 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
         || lower.contains(".integration-spec.")
         || lower.contains(".unit-spec.")
         || lower.ends_with("_test.go")
+        || [".rb", ".rbw"].into_iter().any(|ext| {
+            lower.strip_suffix(ext).is_some_and(|stem| {
+                matches!(stem, "spec" | "test")
+                    || stem.ends_with("_spec")
+                    || stem.ends_with("_test")
+            })
+        })
         || (lower.ends_with(".rs")
             && (matches!(lower.as_str(), "test.rs" | "tests.rs")
                 || lower.ends_with("_test.rs")

@@ -3457,6 +3457,7 @@ fn parse_language(value: &str) -> Result<Language, String> {
         "python" | "py" => Ok(Language::Python),
         "go" | "golang" => Ok(Language::Go),
         "php" => Ok(Language::Php),
+        "ruby" | "rb" => Ok(Language::Ruby),
         "rust" | "rs" => Ok(Language::Rust),
         _ => Err(format!("unsupported language {value:?}")),
     }

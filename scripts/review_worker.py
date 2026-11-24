@@ -72,8 +72,11 @@ def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=No
     if budget_path and lease is None:
         lease = review_budget.reserve(budget_path, frame["kind"])
     failure = None
+    completed = False
     try:
-        return execute(command, cwd, env, timeout, json.dumps(frame))
+        result = execute(command, cwd, env, timeout, json.dumps(frame))
+        completed = isinstance(result, dict) and bool(result)
+        return result
     except Exception as error:
         failure = error
         raise
@@ -84,7 +87,8 @@ def execute_provider(command, cwd, env, timeout, frame, provider, budget_path=No
                                         provider, require_complete_usage=False)
             except Exception:
                 receipt = None
-            if not review_budget.finish(budget_path, lease, receipt):
+            if not review_budget.finish(budget_path, lease, receipt,
+                                        completed_local=completed and provider is None):
                 detail = "provider input usage is unknown; shared review budget fenced"
                 if failure is not None:
                     detail += "; original failure: " + type(failure).__name__ + ": " + str(failure)[:1000]
@@ -2016,6 +2020,9 @@ def run_locked(args):
                 raise ValueError("explicit source profiles require native review work")
             source_profile = source_profiles.load(source_profile_path, payload)
         bound_runtime = payload.get("runtime")
+        if budget_path and review_budget.snapshot(budget_path)["input_limit"] is None and (
+                (bound_runtime or {}).get("provider") or (bound_runtime or {}).get("orchestration")):
+            raise ValueError("call-only review requires an unbound local reviewer")
         if bound_runtime is None:
             raise ValueError("AI worker requires a native runtime-bound plan; use plan-template --skill-root")
         if bound_runtime["schema_version"] != "1" or bound_runtime["worker_protocol"] != 2 or bound_runtime["policy"] != payload["policy"]:
@@ -2864,7 +2871,11 @@ def main():
                         help="share a thread across domain cases, or isolate cases while retaining the same evidence plan")
     parser.add_argument("--native-share", type=int, default=80, help="initial native share of managed calls (0 AI-only, 100 native-only)")
     parser.add_argument("--max-calls", type=int, default=40, help="shared provider-call ceiling for Value and work goals")
-    parser.add_argument("--input-token-budget", type=int, default=1_500_000, help="observed input admission limit with in-flight reservation headroom")
+    token_budget = parser.add_mutually_exclusive_group()
+    token_budget.add_argument("--input-token-budget", type=int, default=1_500_000,
+                              help="observed input admission limit with in-flight reservation headroom")
+    token_budget.add_argument("--call-only-budget", action="store_true",
+                              help="allow completed local reviewer calls without token receipts on a named work plan")
     parser.add_argument("--admission-seconds", type=int, default=1200, help="Value new-call admission window; active work can drain")
     parser.add_argument("--include-supporting-source", action="store_true", help="include seed/performance tooling and declaration-only source in standalone AI assignments")
     parser.add_argument("--group-operations", action="store_true", help="native pilot: share complete Python ORM callable source for 2–6 selected IDs; keep independent decisions")
@@ -2900,6 +2911,9 @@ def main():
     args = parser.parse_args()
     if not (0 <= args.native_share <= 100 and args.max_calls > 0 and args.input_token_budget > 0 and args.admission_seconds > 0):
         parser.error("native share must be 0..100 and whole-review budgets must be positive")
+    if args.call_only_budget and (not args.work_plan or args.phase != "all" or args.first_pass
+            or args.provider_contract or args.cost_budget is not None or args.cost_rates):
+        parser.error("--call-only-budget requires an all-phase work plan with an unbound local reviewer and no cost policy")
     if not ((args.research_rounds is None or 0 <= args.research_rounds <= 10)
             and (args.research_queries is None or 0 <= args.research_queries <= 100)
             and (args.research_bytes is None or 1 <= args.research_bytes <= 8 * 1024 * 1024)

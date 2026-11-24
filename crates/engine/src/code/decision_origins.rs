@@ -1051,7 +1051,7 @@ pub(super) fn annotate_process_semantics(language: Language, source: &str, item:
         push_tag(&mut item.tags, "process-invocation:unresolved-shell");
         return;
     }
-    if language == Language::Python
+    if matches!(language, Language::Python | Language::Ruby)
         && item.context.operand_facts.iter().any(|f| {
             f.kind == mehscan_core::OperandFactKind::ProcessShellMode && f.value == "unresolved"
         })
@@ -1514,6 +1514,7 @@ fn language_tag(language: Language) -> &'static str {
         Language::Kotlin => "kotlin",
         Language::Php => "php",
         Language::Python => "python",
+        Language::Ruby => "ruby",
         Language::Rust => "rust",
         Language::Tsx => "tsx",
         Language::Typescript => "typescript",

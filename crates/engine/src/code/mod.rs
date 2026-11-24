@@ -138,6 +138,7 @@ mod razor;
 mod reachability;
 mod reactive_cleanup;
 mod route_context_cleanup;
+mod ruby;
 mod rust_cfg;
 mod rust_context;
 mod rust_filesystem;

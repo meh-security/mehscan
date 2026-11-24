@@ -320,6 +320,7 @@ pub(super) fn emit<'a>(
                 Language::Php => "php",
                 Language::Go => "go",
                 Language::Rust => "rust",
+                Language::Ruby => "ruby",
             },
             if write == Some(true) { "write" } else { "read" }
         )

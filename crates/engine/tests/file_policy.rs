@@ -17,7 +17,7 @@ fn ordinary_excluded_extensions_are_counted_without_per_file_ledger_entries() {
         fs::write(root.join(format!("asset_{index}.as")), "").expect("ignored file");
     }
     for index in 0..2 {
-        fs::write(root.join(format!("script_{index}.rb")), "").expect("unsupported file");
+        fs::write(root.join(format!("script_{index}.scala")), "").expect("unsupported file");
     }
     for index in 0..3 {
         fs::write(root.join(format!("image_{index}.png")), "").expect("non-source file");
@@ -44,7 +44,7 @@ fn ordinary_excluded_extensions_are_counted_without_per_file_ledger_entries() {
         1
     );
     assert_eq!(
-        result.coverage.omitted_files_by_extension[".rb"].unsupported_source,
+        result.coverage.omitted_files_by_extension[".scala"].unsupported_source,
         2
     );
     let omitted = result

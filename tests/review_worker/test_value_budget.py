@@ -156,6 +156,45 @@ class Budget(unittest.TestCase):
         self.assertEqual(execute.call_count, 1)
         self.assertTrue(self.state()["fenced"])
 
+    def test_call_only_review_counts_completed_local_responses_without_inventing_usage(self):
+        local = self.path.with_name("call-only.json")
+        budget.initialize(local, max_calls=2, input_limit=None)
+        frame = {"kind": "source_review", "conversation_id": "conversation", "research": {"round": 0}}
+        with patch.object(worker, "execute", return_value={"draft": {}}) as execute, \
+                patch.object(worker, "observed_turn", return_value=None):
+            for _ in range(2):
+                self.assertEqual(worker.execute_provider([], local.parent, {}, 10, frame, None, local), {"draft": {}})
+            with self.assertRaises(budget.BudgetExhausted):
+                worker.execute_provider([], local.parent, {}, 10, frame, None, local)
+        self.assertEqual(execute.call_count, 2)
+        state = budget.snapshot(local)
+        self.assertIsNone(state["input_limit"])
+        self.assertFalse(state["fenced"])
+        for entry in state["leases"].values():
+            self.assertEqual(entry["status"], "settled")
+            self.assertEqual(entry["usage"], "unreported")
+            self.assertNotIn("input_tokens", entry)
+
+    def test_call_only_review_fences_failed_dispatches_and_preserves_default_metering(self):
+        local = self.path.with_name("call-only.json")
+        budget.initialize(local, input_limit=None)
+        frame = {"kind": "source_review", "conversation_id": "conversation", "research": {"round": 0}}
+        with patch.object(worker, "execute", side_effect=TimeoutError("no confirmed response")):
+            with self.assertRaisesRegex(ValueError, "TimeoutError"):
+                worker.execute_provider([], local.parent, {}, 10, frame, None, local)
+        self.assertTrue(budget.snapshot(local)["fenced"])
+        empty = self.path.with_name("empty-response.json")
+        budget.initialize(empty, input_limit=None)
+        with patch.object(worker, "execute", return_value=None):
+            with self.assertRaisesRegex(ValueError, "usage is unknown"):
+                worker.execute_provider([], empty.parent, {}, 10, frame, None, empty)
+        self.assertTrue(budget.snapshot(empty)["fenced"])
+        with patch.object(worker, "execute", return_value={"draft": {}}), \
+                patch.object(worker, "observed_turn", return_value=None):
+            with self.assertRaisesRegex(ValueError, "usage is unknown"):
+                worker.execute_provider([], self.path.parent, {}, 10, frame, None, self.path)
+        self.assertTrue(self.state()["fenced"])
+
     def test_lock_selects_windows_and_posix_primitives(self):
         handle = Mock()
         handle.fileno.return_value = 7

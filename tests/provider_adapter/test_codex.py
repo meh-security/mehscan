@@ -129,6 +129,23 @@ class Adapter(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"matching controller mode"):
             reviewer.run(self.config,self.task,factory)
 
+    def test_second_pass_schema_matches_pending_proof_actions(self):
+        from jsonschema import Draft202012Validator
+
+        self.task.update(kind="native_bundle", review_ids=["id"], review_role="second_pass_compare")
+        row = {"review_id": "id", "action": "keep", "claim": "The scheme policy is outside scope.",
+               "proof_status": "supported", "investigation_status": "external_blocker", "error_codes": []}
+        for bound_handles in (True, False):
+            schema = protocol.build_schema(self.task, bound_handles=bound_handles)
+            check = Draft202012Validator(schema["properties"]["review_checks"])
+            self.assertTrue(check.is_valid([row]))
+            self.assertFalse(check.is_valid([{**row, "proof_status": "undetermined"}]))
+            self.assertFalse(check.is_valid([{**row, "error_codes": ["wrong_property"]}]))
+            self.assertTrue(check.is_valid([{**row, "action": "reopen", "proof_status": "undetermined"}]))
+            self.assertFalse(check.is_valid([{**row, "action": "insufficient"}]))
+            self.assertFalse(check.is_valid([{**row, "action": "reopen", "claim": " "}]))
+            self.assertTrue(check.is_valid([{**row, "action": "insufficient", "proof_status": "undetermined"}]))
+
     def test_omitted_modes_use_stable_addressed_defaults_and_resume(self):
         self.config.pop("schema_mode")
         self.config.pop("source_presentation")
