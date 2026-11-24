@@ -1,204 +1,59 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/release.yml"
-      - "scripts/**"
-      - "action.yml"
-      - "docs/installation.md"
-      - "docs/review-*.md"
-      - "docs/codex-reviewer.md"
-      - "docs/github-*.md"
-      - "docs/output-contract.md"
-      - "docs/examples/**"
-      - "skills/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
-      - "docs/release-notes-*.md"
 
 permissions: {}
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  build:
-    name: Build, test, and attest (${{ matrix.platform }})
-    runs-on: ${{ fromJSON('{"linux-x86_64":"ubuntu-24.04","windows-x86_64":"windows-2025","macos-x86_64":"macos-15-intel","macos-aarch64":"macos-15"}')[matrix.platform] }}
-    timeout-minutes: 60
-    env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-    strategy:
-      fail-fast: false
-      matrix:
-        # Apple Silicon archives also run on manual builds and release tags.
-        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux-x86_64","windows-x86_64","macos-x86_64"]' || '["linux-x86_64","windows-x86_64","macos-x86_64","macos-aarch64"]') }}
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Test public installer contracts
-        shell: pwsh
-        run: ./scripts/test-installer.ps1
-
-      - name: Test stable and prerelease publication arguments
-        shell: pwsh
-        run: ./scripts/test-release-tags.ps1
-
-      - name: Set up Python
-        # Archive smoke exercises the installed stdlib Python review worker.
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
-        with:
-          python-version: '3.13'
-
-      - name: Test Unix installer contracts
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          bash -n skills/mehscan-security/scripts/install-mehscan.sh
-          bash skills/mehscan-security/scripts/install-mehscan.sh --help
-          python3 -B scripts/test-unix-installer.py
-
-      - name: Verify the tagged commit belongs to main
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        run: |
-          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
-          if ($LASTEXITCODE -ne 0) {
-            throw "Refusing to release a commit that is not reachable from main"
-          }
-
-      - name: Install the minimum supported Rust toolchain
-        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
-
-      - name: Select the minimum supported Rust toolchain
-        run: rustup default 1.88.0
-
-      - name: Cache Cargo dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-release-cargo-1.88.0-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-release-cargo-1.88.0-
-
-      - name: Test Cargo batch orchestration
-        if: github.event_name != 'pull_request'
-        run: python -m unittest discover -s tests/ci -v
-
-      - name: Test all targets
-        # CI covers all three PR archive platforms.
-        if: github.event_name != 'pull_request'
-        run: python scripts/test-cargo-batches.py
-
-      - name: Build and smoke-test the release archive
-        shell: pwsh
-        run: |
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $version = "${{ github.ref_name }}".TrimStart("v")
-            $package = ./scripts/build-preview.ps1 -Version $version | ConvertFrom-Json
-          } else {
-            $package = ./scripts/build-preview.ps1 | ConvertFrom-Json
-          }
-          if ($package.platform -cne "${{ matrix.platform }}") {
-            throw "Unexpected archive platform: $($package.platform)"
-          }
-          $package | ConvertTo-Json -Depth 5
-
-      - name: Attest the CI-built release archive
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: target/release-artifacts/*.zip
-
-      - name: Upload the release archive and checksum
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mehscan-release-${{ matrix.platform }}
-          path: |
-            target/release-artifacts/*.zip
-            target/release-artifacts/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 1
-
-  publish:
-    name: Publish GitHub release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: build
+  publish-recovery:
+    if: github.ref == 'refs/heads/release/v0.16.0-publish-recovery'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
+      actions: read
+      attestations: read
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: v0.16.0
+      RELEASE_COMMIT: 3a4e300f446261a9eea5eec37aa3588fccbb3f98
 
     steps:
       - name: Check out the tagged release notes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/v0.16.0
           persist-credentials: false
 
-      - name: Download the attested release files
+      - name: Download the attested release files from the original run
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          github-token: ${{ github.token }}
+          run-id: '45458489307'
           pattern: mehscan-release-*
           merge-multiple: true
           path: dist
 
-      - name: Verify the complete release asset set
-        shell: pwsh
+      - name: Verify and publish the exact asset set
+        shell: bash
         run: |
-          $expected = @('linux-x86_64', 'windows-x86_64', 'macos-x86_64', 'macos-aarch64') | ForEach-Object {
-            "mehscan-$env:GITHUB_REF_NAME-$_.zip"
-            "mehscan-$env:GITHUB_REF_NAME-$_.zip.sha256"
-          } | Sort-Object
-          $actual = @(Get-ChildItem dist -File | Select-Object -ExpandProperty Name | Sort-Object)
-          if (($actual -join "`n") -cne ($expected -join "`n")) {
-            throw "Release requires all four platform archives and their checksums"
-          }
-          foreach ($archive in Get-ChildItem dist -Filter '*.zip') {
-            $recorded = ((Get-Content "$($archive.FullName).sha256" -Raw).Trim() -split '\s+')[0]
-            $actualHash = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($recorded -cne $actualHash) { throw "Checksum mismatch: $($archive.Name)" }
-          }
-          if (-not (Test-Path "docs/release-notes-$env:GITHUB_REF_NAME.md" -PathType Leaf)) {
-            throw "Missing reviewed release notes"
-          }
-
-      - name: Create the GitHub release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = $env:GITHUB_REF_NAME
-          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
-            throw "Invalid release tag: $tag"
-          }
-          $releaseArguments = @('release', 'create', $tag)
-          $releaseArguments += @(Get-ChildItem -LiteralPath dist -File | ForEach-Object { $_.FullName })
-          $releaseArguments += @('--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--notes-file', "docs/release-notes-$tag.md", '--title', $tag)
-          if ($tag -match '^v[0-9]+\.[0-9]+\.[0-9]+-') {
-            $releaseArguments += @('--prerelease', '--latest=false')
-          }
-          & gh @releaseArguments
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed' }
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 8
+          assets=()
+          for platform in linux-x86_64 windows-x86_64 macos-x86_64 macos-aarch64; do
+            archive="dist/mehscan-$RELEASE_TAG-$platform.zip"
+            test -s "$archive"
+            test -s "$archive.sha256"
+            expected=$(awk 'NR == 1 {print $1}' "$archive.sha256")
+            actual=$(sha256sum "$archive" | cut -d' ' -f1)
+            test "$actual" = "$expected"
+            gh attestation verify "$archive" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$RELEASE_COMMIT"
+            assets+=("$archive" "$archive.sha256")
+          done
+          gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO" --verify-tag \
+            --notes-file "docs/release-notes-$RELEASE_TAG.md" --title "$RELEASE_TAG"
