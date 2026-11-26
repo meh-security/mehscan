@@ -397,13 +397,30 @@ class Questions(unittest.TestCase):
 
     def test_expert_owner_empty_fast_queue_makes_no_extra_calls(self):
         f, command = self.prepare()
-        code, calls, record = self.invoke(command + ['--second-pass', 'fast', '--max-calls', '1'])
+        command += ['--second-pass', 'fast', '--max-calls', '1']
+        with patch.object(worker, "run", wraps=worker.run) as run:
+            code, calls, record = self.invoke(command)
+        submitted = run.call_args.args[0]
+        for option in ("inventory", "claim", "work-package", "reviewer-command", "provider-contract", "expert-command"):
+            self.assertEqual(getattr(submitted, option.replace("-", "_")), command[command.index("--" + option) + 1])
         self.assertEqual(code, 0, record)
         self.assertEqual(calls, [('expert','investigator')])
         audit = json.loads((f.base/'worker/second-pass.json').read_text())
         self.assertEqual(audit['accounting']['second_pass']['calls'], 0)
         summary=json.loads((f.base/'worker/source-review/summary.json').read_text())
         self.assertEqual(Path(summary['effective_args']['reviewer_command']), f.base/'expert-command.json')
+
+        previous = f.base / "worker"
+        budget = Path(summary["budget_path"])
+        before = budget.read_bytes()
+        retry = list(command)
+        retry[retry.index("--output") + 1] = str(f.base / "recovered")
+        code, calls, replay = self.invoke([*retry, "--resume-from", str(previous)])
+        self.assertEqual(code, 0, replay)
+        self.assertEqual(calls, [])
+        self.assertTrue(replay["recovered_admission"])
+        self.assertEqual(replay["admission_sequence"], record["admission_sequence"])
+        self.assertEqual(budget.read_bytes(), before)
 
     def test_completion_reserves_two_owner_turns_after_optional_preparation(self):
         f, command = self.prepare()

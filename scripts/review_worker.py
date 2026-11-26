@@ -4,6 +4,7 @@ import argparse
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import contextmanager
+from copy import copy
 import hashlib
 import json
 import os
@@ -938,6 +939,7 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    args = copy(args)
     assignment = getattr(args, "assignment", None)
     if assignment and args.phase != "native":
         raise ValueError("local assignments require --phase native")
@@ -991,7 +993,7 @@ def run(args):
         return run_locked(args)
 
 
-def run_locked(args):
+def run_locked(args, *, source_prepared=None):
     assignment = getattr(args, "assignment", None)
     group_operations = getattr(args, "group_operations", False)
     if type(group_operations) is not bool or group_operations and args.phase != "native":
@@ -1052,14 +1054,14 @@ def run_locked(args):
         if first_record["status"] not in ("admitted", "source_validated") and not admitted_partial:
             raise ValueError("first pass must have source-validated native results")
     work_followup = None
+    budget_path = None
     if first_directory and (first_directory / "source-review/work-plan.json").is_file() and not (
             first_directory / "source-review/work-handoff.json").is_file():
         raise ValueError("work-plan first pass lacks a bound handoff; cannot start a fresh follow-up allowance")
     if first_directory and (first_directory / "source-review/work-handoff.json").is_file():
         import review_work
-        handoff, parent_source, parent_budget = review_work.read_handoff(first_directory, root, sys.modules[__name__])
-        args._review_budget = parent_budget
-        work_followup = {"parent_attempt":str(first_directory), "budget_path":parent_budget,
+        _, _, budget_path = review_work.read_handoff(first_directory, root, sys.modules[__name__])
+        work_followup = {"parent_attempt":str(first_directory), "budget_path":budget_path,
             "case_coverage":"Historical first-pass checks; this follow-up audits native claims.",
             "handoff_sha256":digest_file(first_directory / "source-review/work-handoff.json")}
     rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
@@ -1078,13 +1080,10 @@ def run_locked(args):
         if Path(argument).is_file():
             outside(argument, root)
     output = outside(args.output, root, False)
-    source_prepared = getattr(args,"_source_prepared",None)
-    budget_path = getattr(args, "_review_budget", None)
     if source_prepared:
+        source_prepared = outside(source_prepared, root)
         budget_path = read(source_prepared).get("budget_path", budget_path)
-    if source_prepared:
-        prepared_path=outside(source_prepared,root)
-        if prepared_path.parent.parent != output and not getattr(args,"resume_from",None):
+        if source_prepared.parent.parent != output and not getattr(args,"resume_from",None):
             raise ValueError("source handoff must belong to this attempt")
         if output.exists() and sorted(p.name for p in output.iterdir()) != ["source-review"]:
             raise ValueError("source handoff cannot overwrite an existing attempt")

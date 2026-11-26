@@ -359,19 +359,20 @@ def run_admitted_work(args, summary_path, summary, run_native):
     required = {"inventory", "claim", "work_package", "run"}
     if not required <= handoff.keys() <= required | {"reviewer_command", "provider_contract", "_continued_heads"}:
         raise ValueError("source handoff has unexpected effective arguments")
-    for name, value in handoff.items():
-        setattr(args, name, value)
-    args._source_prepared = str(summary_path)
-    return run_native(args)
+    native_args = copy.copy(args)
+    vars(native_args).update(handoff)
+    if summary.get("question_routing"):
+        # The source owner is already the sole reviewer in the admitted plan.
+        native_args.expert_command = None
+    return run_native(native_args, source_prepared=summary_path)
 
 
 def resume_native_handoff(args, root, output, previous, run_native, worker):
     data = worker.read(previous)
     if data.get("work_review"):
-        handoff, data, inherited_budget = review_work.read_handoff(Path(args.resume_from), root, worker)
+        handoff, data, _ = review_work.read_handoff(Path(args.resume_from), root, worker)
         if getattr(args, "work_plan", None) and worker.digest_file(args.work_plan) != handoff["manifest_sha256"]:
             raise ValueError("work-plan continuation requires the original unchanged manifest")
-        args._review_budget = inherited_budget
     if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
             and not data.get("budget_path")):
         raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
@@ -697,7 +698,6 @@ def run(args, run_native, worker):
                 input_limit=None if call_only else getattr(args, "input_token_budget", 1_500_000),
                 admission_seconds=getattr(args, "admission_seconds", 1200), cost=cost,
                 started_at=started_epoch if work_registry else None)
-        args._review_budget = str(budget_path)
         if work_registry:
             worker.write(stage / "input-work.json", package)
             source_recovery.seal(stage,
@@ -730,12 +730,10 @@ def run(args, run_native, worker):
         review_budget.initialize(budget_path, max_calls=getattr(args, "max_calls", 40),
             input_limit=getattr(args, "input_token_budget", 1_500_000),
             admission_seconds=getattr(args, "admission_seconds", 1200), native_percent=native_share)
-        args._review_budget = str(budget_path)
     elif staged:
         budget_path = stage / "budget.json"
         review_budget.initialize(budget_path, max_calls=args.max_calls, input_limit=args.input_token_budget,
                                  admission_seconds=args.admission_seconds, started_at=started_epoch)
-        args._review_budget = str(budget_path)
     selected_set = set(selected)
     by_id = {a["id"]: a for a in plan["assignments"]}
     excluded_ids = excluded_native_questions(plan)
@@ -2339,9 +2337,6 @@ def run(args, run_native, worker):
         final_runtime["provider"] = runtime["orchestration"]["expert"]
         worker.write(private / "provider.json", final_runtime["provider"])
         runtime_options = ["--skill-root", str(skill), "--provider-contract", str(private / "provider.json")]
-        args.provider_contract = str(private / "provider.json")
-        args.reviewer_command = args.expert_command
-        args.expert_command = None
     draft = native(
         [
             "state",
@@ -2526,7 +2521,10 @@ def run(args, run_native, worker):
     if work_registry:
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
-        summary["effective_args"].update(reviewer_command=args.reviewer_command, provider_contract=args.provider_contract)
+        summary["effective_args"].update(
+            reviewer_command=args.expert_command if question_routing else args.reviewer_command,
+            provider_contract=str(private / "provider.json") if question_routing else args.provider_contract,
+        )
     if continuation:
         summary["continuation"] = {"from":continuation["parent"], "carried_cases":len(carried_cases),
             "carried_native_ids":sorted(carried_heads), "prior_reserved_calls":continuation["spent_calls"],
