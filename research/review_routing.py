@@ -4,7 +4,10 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import review_context as context
 import review_worker as worker

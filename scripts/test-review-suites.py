@@ -13,7 +13,6 @@ RESEARCH_DIR = ROOT / "research"
 # Research modules still in the worker test directory. Everything else stays product
 # coverage, including evidence/accounting regressions inside pilot tests.
 RESEARCH_MODULES = {
-    "test_review_routing", "test_review_hybrid",
     "test_workspace_batch", "test_workspace_planner",
 }
 

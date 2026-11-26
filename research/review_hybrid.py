@@ -4,8 +4,12 @@ import argparse
 from argparse import Namespace
 import json
 from pathlib import Path
+import sys
 import time
 from unittest.mock import patch
+
+RESEARCH = Path(__file__).resolve().parent
+sys.path[:0] = [str(RESEARCH), str(RESEARCH.parent / "scripts")]
 
 import review_context as context
 import review_routing as routing
@@ -177,6 +181,11 @@ def _routing_inputs(args):
             "engine_sha256":worker.digest_file(args.scanner) if args.planner_plan else None}
 
 
+def runtime():
+    files = (Path(__file__), Path(routing.__file__), Path(pilot.__file__), Path(worker.__file__))
+    return {path.name: worker.digest_file(path) for path in files}
+
+
 def prepare(args):
     design=worker.read(args.design)
     if not design.get("batch_mode") or not design.get("hybrid_mode"):
@@ -228,9 +237,8 @@ def prepare(args):
     worker.write(root/"hybrid-native-inputs.json",native_inputs)
     files=[root/"hybrid-routing.json",root/"hybrid-inputs.json",root/"hybrid-schedule.json",root/"hybrid-native-inputs.json"]
     files.extend(p for p in (root/"treatment/native-inputs").rglob("*.json") if p.is_file())
-    runtime={name:worker.digest_file(Path(__file__).parent/name) for name in ("review_hybrid.py","review_routing.py","review_workspace_pilot.py","review_worker.py")}
     worker.write(root/"hybrid-binding.json",{"schema_version":VERSION,"files":{str(p.relative_to(root)):worker.digest_file(p) for p in files},
-        "runtime":runtime,"routing_id":plan["routing_id"],"prepared_state_id":identity(bridge.workspace.snapshot()),"native_admission":False})
+        "runtime":runtime(),"routing_id":plan["routing_id"],"prepared_state_id":identity(bridge.workspace.snapshot()),"native_admission":False})
     return {"prepared":True,"claims":len(plan["claims"]),"units":len(compiled["units"]),"components":len(compiled["components"]),"model_calls":0,"native_admission":False}
 
 
@@ -240,8 +248,8 @@ def load(root):
     if binding["schema_version"]!=VERSION: raise ValueError("hybrid version differs")
     for name,digest in binding["files"].items():
         if worker.digest_file(root/name)!=digest: raise ValueError("frozen hybrid input changed: "+name)
-    for name,digest in binding["runtime"].items():
-        if worker.digest_file(Path(__file__).parent/name)!=digest: raise ValueError("hybrid runtime changed: "+name)
+    if binding["runtime"] != runtime():
+        raise ValueError("hybrid runtime changed")
     plan=worker.read(root/"hybrid-routing.json");options=worker.read(root/"hybrid-inputs.json")
     routing.validate(plan,setup["source_root"],worker.read(Path(setup["inventory"])/"inventory.json"),worker.read(root/"control/bundles/manifest.json"),**options)
     compiled=schedule(plan,worker.read(root/"control/bundles/manifest.json"),pilot.native_case_limits(design))

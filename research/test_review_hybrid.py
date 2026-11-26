@@ -2,15 +2,16 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import uuid
 
-PRODUCT=Path(__file__).resolve().parents[2]
+PRODUCT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(PRODUCT/"scripts"))
-sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0,str(PRODUCT/"tests/review_worker"))
 import review_hybrid as hybrid
 import review_routing as routing
 import review_worker as worker
@@ -219,6 +220,11 @@ class HybridNativeTests(unittest.TestCase):
 
     def test_modified_schedule_blocks_execution_before_provider(self):
         f,root=self.prepare()
+        result = subprocess.check_output(
+            [sys.executable, "-I", str(root / "package/research/review_hybrid.py"), "check", "--root", str(root)],
+            cwd=f.base, text=True,
+        )
+        self.assertEqual(json.loads(result), {"valid": True, "model_calls": 0})
         path=root/"hybrid-schedule.json";data=worker.read(path);data["units"][0]["route"]="native";worker.write(path,data)
         with self.assertRaisesRegex(ValueError,"frozen hybrid input changed"):hybrid.run(root)
         self.assertFalse((root/"treatment/.execution").exists())

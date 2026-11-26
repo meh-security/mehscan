@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-PRODUCT = Path(__file__).resolve().parents[2]
+PRODUCT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(PRODUCT/"scripts"))
 import review_routing as routing
 import review_worker as worker
@@ -201,7 +201,7 @@ class ReviewRoutingTests(unittest.TestCase):
         self.entry("a");self.bundle("a")
         inv=self.base/"inventory.json";manifest=self.base/"manifest.json"
         worker.write(inv,self.inventory);worker.write(manifest,self.manifest)
-        command=[sys.executable,str(PRODUCT/"scripts/review_routing.py"),"--source-root",str(self.root),
+        command=[sys.executable,str(PRODUCT/"research/review_routing.py"),"--source-root",str(self.root),
                  "--inventory",str(inv),"--manifest",str(manifest)]
         output=self.base/"routing"
         result=subprocess.run(command+["--output",str(output)],capture_output=True,text=True,encoding="utf-8")

@@ -1,17 +1,13 @@
 """Fresh native-bound closure under an unchanged final-call allowance."""
 from argparse import Namespace
 import copy
-import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import test_workspace_bridge as fixtures
 import test_workspace_actions as action_fixtures
-import review_hybrid as hybrid
-import review_worker as worker
 from review_workspace import MAX_CONTEXT_BYTES
 from review_workspace_bridge import NativeWorkspace
 
@@ -54,30 +50,15 @@ class ConsumerBridgeTests(unittest.TestCase):
         prior=copy.deepcopy(b.workspace.snapshot()['claims'][first['review_id']]['draft']['result'])
         # These are synthetic observed fixture costs, not paid turns or a claim
         # that five otherwise empty investigations would be useful.
-        unit={'id':'initial','route':'workspace','review_ids':[c['review_id']for c in self.claims],
-              'original_bundle_ids':['original'],'component_id':'component','selection':None}
-        per={'model_calls':6,'queries':8,'received_bytes':65536,'seconds':600}
-        compiled={'units':[unit],'components':[{'id':'component','original_bundle_ids':['original'],
-                  'unit_ids':['initial'],'limits':per}], 'per_unit_limits':per}
-        ledger=hybrid.Ledger(f.base/'ledger.json',compiled,f.limits,f.experiment)
         for n in range(5):
             sid=b.apply('fixture-session-'+str(n),{'kind':'session','work_id':'initial','parent_session':None,
                         'max_bytes':MAX_CONTEXT_BYTES})['session_id']
             b.apply('fixture-call-'+str(n),{'kind':'start_call','session_id':sid})
             b.apply('fixture-usage-'+str(n),{'kind':'finish_call','call_id':'fixture-call-'+str(n),
                     'usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':1,'elapsed_ms':1}})
-            metrics=f.base/('fixture-metrics-'+str(n)+'.jsonl')
-            task={'conversation_id':sid,'provider_metrics':str(metrics),'research':{'round':0}}
-            index,_=ledger.reserve_call('initial',task)
-            metrics.write_text(json.dumps({'conversation_id':sid,'round':0,'provider':b.runtime['provider'],
-                               'usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':1},'elapsed_ms':1})+'\n')
-            ledger.observe_call(index,task,b.runtime['provider'])
-        command=[sys.executable,str(f.skill/'scripts/codex_reviewer.py'),'--config',str(f.config_path)]
-        command_path=f.base/'command.json';command_path.write_text(json.dumps(command))
-        opts={'command':str(command_path),'config':str(f.config_path)}
         def reply(task,packet):
             self.assertEqual(task['research']['rounds_remaining'],0)
-            self.assertEqual(task['research']['queries_remaining'],0)
+            self.assertEqual(task['research']['workspace_budget']['used']['model_calls'],5)
             self.assertEqual(set(task['review_ids']),{first['review_id'],second['review_id']})
             self.assertEqual({q['review_id']for q in packet['native_questions']},set(task['review_ids']))
             consumers=packet['workspace_evidence']['answer_consumers']
@@ -92,14 +73,8 @@ class ConsumerBridgeTests(unittest.TestCase):
                      'reason':'The shown helper converts text without constraining grammar.',
                      'evidence':[self.a.handle(task,packet,'helper.js')]}],
                     'lookups':[],'decisions':[confirmed,self.a.decision(second)]}
-        original=worker.execute
-        def execute(argv,cwd,env,timeout,payload=None):
-            return self.a.invoke(reply)(json.loads(payload))if argv==command else original(argv,cwd,env,timeout,payload)
-        with patch.object(worker,'execute',new=execute):hybrid.run_workspace(unit,opts,b,ledger)
-        ledger.finish('initial',True)
+        self.a.turn('last-confirmation',reply)
         self.assertEqual(b.workspace.snapshot()['used']['model_calls'],6)
-        self.assertEqual(ledger.usage()['attempted_calls'],6)
-        self.assertEqual(ledger.usage()['unobserved_calls'],0)
         self.assertEqual(b.workspace.snapshot()['used']['queries'],0)
         self.assertEqual(b.workspace.view('initial')['claims'],[])
         self.assertEqual(b.workspace.view('initial')['answer_consumers'],{})

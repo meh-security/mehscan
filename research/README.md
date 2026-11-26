@@ -1,4 +1,6 @@
-# Work-formation experiment
+# Review experiments
+
+## Work formation
 
 This checkout-only diagnostic compares deterministic work grouping with a bounded provider proposal for the same claims. Run these commands from the repository root.
 
@@ -16,3 +18,21 @@ python -m unittest discover -s research -p test_work_formation_experiment.py
 ```
 
 The existing `python scripts/test-review-suites.py --tier research --output results.json` command includes these checks. Use `--list` for the complete inventory and classifications. Product and smoke executions discover only the worker test directory.
+
+## Routing and hybrid comparison
+
+From the checkout, create a routing proposal for a prepared inventory and bundle manifest. To validate the saved proposal against the same source, replace `--output` with `--check`.
+
+```sh
+python research/review_routing.py --source-root SOURCE --inventory INVENTORY --manifest MANIFEST.json --output ROUTES
+```
+
+The hybrid comparison consumes `ROUTES/routing.json`. Supply the same planner plan and selections if the proposal used them. The study design enables both batch and hybrid mode.
+
+```sh
+python research/review_hybrid.py prepare --routing ROUTES/routing.json --routing-inventory INVENTORY/inventory.json --routing-manifest MANIFEST.json --design DESIGN.json --output STUDY --private PRIVATE_DIR --scanner PATH_TO_MEHSCAN --provider-config CONFIG.json --provider-executable PATH_TO_CODEX
+python STUDY/package/research/review_hybrid.py check --root STUDY
+python STUDY/package/research/review_hybrid.py run --root STUDY
+```
+
+Preparation and checking make zero model calls. Running the comparison uses the study's provider allowance. For an older frozen study, use its original bundled driver under `package/scripts/` so its runtime hashes match.

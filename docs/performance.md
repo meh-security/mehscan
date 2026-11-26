@@ -46,7 +46,7 @@ This sample covers lightweight claims and closes. A production-sized journal wit
 
 Reading a nonempty batch now takes three assessment-content queries regardless of its size. One loads the assessments in review order, one loads their questions, and one loads their evidence. Previously, each assessment added two queries. A 1,024-assessment batch went from 2,049 queries to three. Empty batches still take one query.
 
-| CLI workflow | Assessments in batch | Before (`fa24326`) | Batched reads |
+| CLI workflow | Assessments in batch | Before (`c4d51e9`) | Batched reads |
 | --- | ---: | ---: | ---: |
 | `memory assessments` | 0 | 18.03 ms | 18.96 ms |
 | `memory assessments` | 1 | 17.56 ms | 18.70 ms |
@@ -62,7 +62,7 @@ The complete JSON output matched byte for byte in every comparison, including th
 
 For each nonempty publication, `memory sync context` executes four queries to load assessments, questions, evidence and file dependencies. Turso now reuses the compiled statements on the same connection. Each execution binds the selected batch ID and reads the current rows.
 
-| Selected publications | Assessments per publication | Before (`6e68d7d`) | With statement reuse |
+| Selected publications | Assessments per publication | Before (`bc496c0`) | With statement reuse |
 | ---: | ---: | ---: | ---: |
 | 0 | — | 21.61 ms | 20.18 ms |
 | 1 | 1 | 20.95 ms | 20.22 ms |
