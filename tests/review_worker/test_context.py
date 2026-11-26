@@ -111,7 +111,6 @@ class Context(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "POSIX source-root aliases")
     def test_source_root_alias_accepts_contained_files_and_rejects_escape(self):
-        import review_workspace
         import review_worker
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
@@ -121,7 +120,6 @@ class Context(unittest.TestCase):
             alias = base / "alias"
             alias.symlink_to(root, target_is_directory=True)
             self.assertEqual(context.relative_file(alias, "app.js"), root / "app.js")
-            self.assertEqual(review_workspace.source(alias, "app.js"), (root / "app.js").read_bytes())
             query = {"tool":"source", "review_id":"selected", "arguments":{
                 "path":"app.js", "start_line":1, "end_line":1}}
             review_worker.research_arguments(query, alias, ["selected"], base / "journals")
@@ -129,9 +127,6 @@ class Context(unittest.TestCase):
             (root / "escape.js").symlink_to(base / "outside.js")
             with self.assertRaisesRegex(ValueError, "escapes"):
                 context.relative_file(alias, "escape.js")
-            (root / "local.js").symlink_to(root / "app.js")
-            with self.assertRaisesRegex(ValueError, "symlinks"):
-                review_workspace.source(alias, "local.js")
 
     def test_worker_api_docs_and_all_guidance_modules_ship_with_the_release(self):
         from review_api_docs import render

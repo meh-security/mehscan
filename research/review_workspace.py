@@ -14,6 +14,10 @@ import sqlite3
 import sys
 import time
 
+
+# Product modules are also available when this driver is run from a frozen study.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+
 import review_context as context
 from review_evidence import AtomicState
 

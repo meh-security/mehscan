@@ -12,6 +12,10 @@ import subprocess
 import sys
 import time
 
+
+# Product modules are also available when this driver is run from a frozen study.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+
 import review_context as context
 import review_source_profile as source_profiles
 import review_worker as worker
@@ -169,7 +173,8 @@ def prepare(args):
     product = Path(__file__).resolve().parents[1]
     for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_evidence.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
                  "review_worker.py","review_budget.py","review_second_pass.py","review_context.py","skill-runtime-v2.json","review_source_profile.py","review_orchestration.py","review_trace.py","review_export.py"):
-        shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
+        script_directory = Path(__file__).parent if name.startswith("review_workspace") else Path(worker.__file__).parent
+        shutil.copyfile(script_directory / name, package / "scripts" / name)
     (package / "research").mkdir()
     for name in ("review_routing.py", "review_hybrid.py"):
         shutil.copyfile(product / "research" / name, package / "research" / name)

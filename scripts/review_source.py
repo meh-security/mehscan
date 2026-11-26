@@ -1,6 +1,10 @@
 """Default AI source assignments: discover, assess and native-finalize in shared context."""
 
+from argparse import Namespace
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from functools import partial
 import copy
 import json
 from pathlib import Path
@@ -354,7 +358,14 @@ def retain_training_turns(summary, output):
                 shutil.copyfile(source, target)
 
 
-def run_admitted_work(args, summary_path, summary, run_native):
+@dataclass
+class NativeStage:
+    args: Namespace
+    summary: Path | None = None
+    finish: Callable[[dict], dict] | None = None
+
+
+def native_stage(args, summary_path, summary, finish):
     # The journal verifies these effective inputs again on the native path.
     handoff = summary["effective_args"]
     required = {"inventory", "claim", "work_package", "run"}
@@ -366,7 +377,7 @@ def run_admitted_work(args, summary_path, summary, run_native):
     if summary.get("question_routing"):
         # The source owner is already the sole reviewer in the admitted plan.
         native_args.expert_command = None
-    return run_native(native_args, source_prepared=summary_path)
+    return NativeStage(native_args, summary_path, finish)
 
 
 def recovery_summary(attempt, root, worker):
@@ -383,7 +394,7 @@ def recovery_summary(attempt, root, worker):
     return attempt / "source-review/summary.json"
 
 
-def resume_native_handoff(args, root, output, previous, run_native, worker):
+def resume_native_handoff(args, root, output, previous, worker):
     origin = previous.parent.parent
     data = worker.read(previous)
     if data.get("work_review"):
@@ -393,7 +404,11 @@ def resume_native_handoff(args, root, output, previous, run_native, worker):
     if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
             and not data.get("budget_path")):
         raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
-    result = run_admitted_work(args, previous, data, run_native)
+    return native_stage(args, previous, data, partial(finish_recovered, previous, data, output, worker))
+
+
+def finish_recovered(previous, data, output, worker, result):
+    origin = previous.parent.parent
     prior = None
     ledger = previous.with_name("work-ledger.json")
     if data.get("work_review") and ledger.is_file():
@@ -414,7 +429,7 @@ def resume_native_handoff(args, root, output, previous, run_native, worker):
     return result
 
 
-def run(args, run_native, worker):
+def prepare(args, worker):
     root = Path(args.source_root).resolve(strict=True)
     output = worker.outside(args.output, root, False)
     domain_path = getattr(args, "domain_plan", None)
@@ -426,7 +441,7 @@ def run(args, run_native, worker):
     if getattr(args, "reuse_source_results", None) and (getattr(args, "first_pass", None) or args.phase != "all" or getattr(args, "resume_from", None)):
         raise ValueError("source-result reuse requires a fresh all-phase source attempt")
     if getattr(args, "first_pass", None) or args.phase != "all":
-        return run_native(args)
+        return NativeStage(args)
     if getattr(args, "validate_only", False) or getattr(args, "source_profile", None):
         raise ValueError(
             "exact-bundle validation and bound source profiles require --phase native"
@@ -449,9 +464,9 @@ def run(args, run_native, worker):
             if recovery["binding"].get("continuation_receipt") != args._continuation_receipt:
                 raise ValueError("recovery requires the continuation started from this receipt and claim")
         if previous.is_file():
-            return resume_native_handoff(args, root, output, previous, run_native, worker)
+            return resume_native_handoff(args, root, output, previous, worker)
         if not (attempt / "source-review").is_dir():
-            return run_native(args)
+            return NativeStage(args)
         if not getattr(args, "work_plan", None) or not (previous.parent / "source-recovery.json").is_file():
             raise ValueError("source recovery requires the original work plan and a bound checkpoint")
         source_resume = attempt
@@ -522,12 +537,16 @@ def run(args, run_native, worker):
         if args.provider_contract
         else []
     )
+    if resolution_path and not args.work_package:
+        args.work_package = str(worker.outside(source_resume, root) / "source-review/input-work.json")
     package = worker.read(args.work_package) if resolution_path else native(["state", "work", *common, *runtime_options])
     if getattr(args, "_continuation_receipt", None):
         heads = package["payload"]["expected_parents"]
         if any(heads[rid] != expected for rid, expected in args._continuation_heads.items() if rid in heads):
             raise ValueError("closed decisions differ from current journal heads")
+    if not args.work_package:
         args.work_package = str(stage / "input-work.json")
+        worker.write(args.work_package, package)
     elif package != worker.read(args.work_package):
         raise ValueError("source assignment requires current unaltered native work")
     payload = package["payload"]
@@ -2564,7 +2583,7 @@ def run(args, run_native, worker):
             "new_receipted_calls":len(source_metrics) - inherited_source_calls,
             "elapsed_ms_scope":"Current recovery attempt; provider receipts retain prior turn durations."}
     if question_routing:
-        summary["question_routing"] = {"routine":runtime["provider"], "owner":final_runtime["provider"],
+        summary["question_routing"] = {"source_generation": claim["generation"], "routine":runtime["provider"], "owner":final_runtime["provider"],
             "budget":"question-budget.json", "authority":"Question answers are supporting evidence; expert owns security conclusions."}
     worker.write(stage / "summary.json", summary)
     with (stage / "provider-metrics.jsonl").open("w", encoding="utf8") as handle:
@@ -2572,8 +2591,15 @@ def run(args, run_native, worker):
             handle.write(json.dumps(metric) + "\n")
     if work_registry:
         review_work.freeze_handoff(stage, worker.digest_file(work_path), case_store.binding, worker)
-    result = run_admitted_work(args, stage / "summary.json", summary, run_native)
-    if continuation:
+    finish = partial(finish_source, stage, summary, work_registry, case_store if work_registry else None,
+                     work_path, results, budget_path, source_metrics, worker)
+    return native_stage(args, stage / "summary.json", summary, finish)
+
+
+def finish_source(stage, summary, work_registry, case_store, work_path, results, budget_path, source_metrics, worker, result):
+    output = stage.parent
+    comprehensive = summary.get("comprehensive")
+    if summary.get("continuation"):
         result["continuation"] = summary["continuation"]
     report = None
     if work_registry:
@@ -2598,7 +2624,7 @@ def run(args, run_native, worker):
         if report["goal"] == "coverage" and not report["target_complete"]:
             result["status"] = "incomplete"
     if comprehensive:
-        report_comprehensive(result, report, unplanned_source)
+        report_comprehensive(result, report, summary["unplanned_source_assignments"])
     if report is not None:
         if comprehensive:
             report["comprehensive_coverage"] = result["comprehensive_coverage"]

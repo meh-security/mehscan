@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
@@ -102,13 +103,13 @@ def main():
     git("add", "app.js")
     git("commit", "--quiet", "-m", "target")
     target = git("rev-parse", "HEAD")
-    inventory, bundles = base / "inventory", base / "bundles"
+    inventory = base / "inventory"
     call(scanner, "investigate", "review-inventory", source, "--changed-from", previous, "--target", target,
          "--diff-mode", "files", "--repository-key", "test:installed-package", "--output", inventory)
     memory = base / "memory.turso"
     project = native("project", "bind", "--source-root", source, "--inventory", inventory,
                      "--stream", "package-smoke", "--memory-store", memory)["project_run"]
-    claim_file, work_file = base / "claim.json", base / "work.json"
+    claim_file = base / "claim.json"
     save(claim_file, native("state", "claim", "--project-run", project, "--attempt-id", "installed",
                             "--expected-generation", "0", "--operation-key", "claim"))
     common = ["--project-run", project, "--claim", claim_file, "--skill-root", skill]
@@ -119,9 +120,6 @@ def main():
     plan_file = base / "plan.json"
     save(plan_file, plan)
     call(scanner, "state", "plan", *common, "--input", plan_file, "--operation-key", "plan")
-    call(scanner, "investigate", "review-bundles", source, "--inventory", inventory,
-         "--review-ids", ",".join(plan["selected_review_ids"]), "--output", bundles)
-    save(work_file, native("state", "work", *common))
     reviewer = base / "reviewer.py"
     reviewer.write_text('''import json, sys
 from pathlib import Path
@@ -180,8 +178,8 @@ print(json.dumps(result))
         path = base / (key + ".json")
         save(path, receipt)
         return path
-    first = json.loads(call(*worker, "--project-run", project, "--claim", claim_file, "--work-package", work_file,
-                            "--run", bundles, "--output", attempt, "--source-selection", selection,
+    first = json.loads(call(*worker, "--project-run", project, "--claim", claim_file,
+                            "--output", attempt, "--source-selection", selection,
                             failure_record=attempt / "worker.json"))
     record = json.loads((attempt / "worker.json").read_text(encoding="utf-8"))
     assert record["completion"]["pending_review_ids"]
@@ -214,6 +212,53 @@ print(json.dumps(result))
     call(sys.executable, "-B", skill / "scripts/codex_reviewer.py", "--help")
     assert native("report", "--close-receipt", audit_receipt) == json.loads((second / "findings.json").read_text(encoding="utf-8"))
     effective = native("project", "resolve", "--project-run", audit["project_run"])
+    closed = json.loads(audit_receipt.read_text(encoding="utf-8"))
+    exported = native("memory", "export", "--close-receipt", audit_receipt)
+    assert exported == native("memory", "export", "--store", memory, "--source-root", source,
+                              "--inventory", effective["inventory"], "--stream", effective["stream"],
+                              "--batch", closed["memory"]["batch"])
+    original = json.loads(first_receipt.read_text(encoding="utf-8"))
+    assert native("memory", "export", "--close-receipt", first_receipt)["batch"] == original["memory"]["batch"]
+    forged = base / "wrong-batch.json"
+    save(forged, {**closed, "memory": original["memory"]})
+    try:
+        native("memory", "export", "--close-receipt", forged)
+    except RuntimeError as error:
+        assert "retained batch differs from the journal close" in str(error), error
+    else:
+        raise AssertionError("export accepted another generation's batch")
+    manual_inventory = base / "manual-inventory"
+    shutil.copytree(effective["inventory"], manual_inventory)
+    manual_project = native("project", "bind", "--source-root", source, "--inventory", manual_inventory,
+                            "--stream", "manual", "--memory-store", memory)["project_run"]
+    manual_claim = base / "manual-claim.json"
+    save(manual_claim, native("state", "claim", "--project-run", manual_project, "--expected-generation", "0",
+                              "--attempt-id", "manual", "--operation-key", "claim-manual"))
+    lane = ["--project-run", manual_project, "--claim", manual_claim, "--skill-root", skill]
+    manual_plan = base / "manual-plan.json"
+    save(manual_plan, native("state", "plan-template", "--project-run", manual_project, "--skill-root", skill,
+                             "--policy", "value", "--selection", "policy"))
+    native("state", "plan", *lane, "--input", manual_plan, "--operation-key", "manual-plan")
+    manual_work = base / "manual-work.json"
+    save(manual_work, native("state", "work", *lane))
+    record_args = ["state", "record", *lane, "--work-package", manual_work, "--run", second / "run",
+                   "--reviewer", "manual-reviewer", "--operation-key", "manual-record"]
+    manual = native(*record_args)
+    assert native(*record_args)["project_run"] == manual["project_run"]
+    manual_receipt = base / "manual-close.json"
+    save(manual_receipt, native("state", "end", "--project-run", manual["project_run"], "--claim", manual_claim,
+                                "--status", "finished", "--operation-key", "manual-close"))
+    manual_findings = native("report", "--close-receipt", manual_receipt)
+    assert manual_findings["decision_records"] and manual_findings["triage"]["reviewer"] == "manual-reviewer"
+    assert native("memory", "export", "--close-receipt", manual_receipt)["stream"] == "manual"
+    manual_audit_claim = base / "manual-audit-claim.json"
+    save(manual_audit_claim, native("state", "claim", "--close-receipt", manual_receipt,
+                                    "--attempt-id", "manual-audit", "--operation-key", "manual-audit"))
+    manual_audit = base / "manual-audit"
+    checked_manual = json.loads(call(*worker, "--close-receipt", manual_receipt, "--claim", manual_audit_claim,
+                                     "--output", manual_audit, "--second-pass", "fast", "--supersede",
+                                     failure_record=manual_audit / "worker.json"))
+    assert checked_manual["status"] == "admitted", checked_manual
     saved = native("memory", "assessments", "--store", memory, "--source-root", source,
                    "--inventory", effective["inventory"], "--stream", effective["stream"])
     retained = saved["batches"][0]["assessments"]

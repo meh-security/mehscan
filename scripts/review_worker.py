@@ -977,7 +977,11 @@ def run(args):
         if args.phase == "all":
             import review_source
             try:
-                return review_source.run(args, run_locked,sys.modules[__name__])
+                stage = review_source.prepare(args, sys.modules[__name__])
+                if not isinstance(stage, review_source.NativeStage):
+                    return stage
+                result = run_locked(stage.args, source_prepared=stage.summary)
+                return stage.finish(result) if stage.finish else result
             except Exception as error:
                 output=outside(args.output,root,False)
                 # Retain the attempt; handoff failure must not buy a fresh call.
@@ -1047,7 +1051,9 @@ def run_locked(args, *, source_prepared=None):
         correction_handoff, correction_ledger, first_directory = review_work.read_resolution_handoff(
             first_directory, root, sys.modules[__name__])
     if first_directory:
-        first_record = read(first_directory / "worker.json")
+        manual_parent = (closed_report is not None and first_directory.parent ==
+                         Path(args.store) / "manual-admissions" and first_directory.name.isdecimal())
+        first_record = {"status": "admitted"} if manual_parent else read(first_directory / "worker.json")
         partial_work = first_directory / "source-review/work-ledger.json"
         admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
             and partial_work.is_file() and read(partial_work).get("native_admission_status") == "admitted"
@@ -1197,7 +1203,9 @@ def run_locked(args, *, source_prepared=None):
     package_path = output / "work.json"
     closed_heads = {r["response"]["review_id"]: [r["decision_id"]]
                     for r in closed_report["decision_records"]} if closed_report is not None else None
-    requested = sorted(closed_heads) if closed_heads is not None else read(supplied_work_path)["payload"]["review_ids"]
+    requested = sorted(closed_heads) if closed_heads is not None else None
+    if supplied_work_path:
+        requested = read(supplied_work_path)["payload"]["review_ids"]
     shared_facts = []  # Raw source facts only, never old-verdict reuse.
     application_cache = {}
 
@@ -1234,7 +1242,9 @@ def run_locked(args, *, source_prepared=None):
         options = ["--assignment", assignment] if assignment else []
         if assignment and read_completed:
             options += ["--read-completed-assignment", "true"]
-        return native(["state", "work", *common, "--review-ids", ",".join(requested), *options], timeout)
+        if requested is not None:
+            options += ["--review-ids", ",".join(requested)]
+        return native(["state", "work", *common, *options], timeout)
 
     def job_for(task):
         identity_parts = [task["kind"], task.get("review_ids", []),
@@ -2045,6 +2055,8 @@ def run_locked(args, *, source_prepared=None):
                 raise ValueError("recovery requires the same current source, runtime and scope")
         write(package_path, package)
         payload = package["payload"]
+        if requested is None:
+            requested = payload["review_ids"]
         continued_heads = getattr(args, "_continued_heads", {})
         if any(payload["expected_parents"].get(rid) != [head] for rid, head in continued_heads.items()):
             raise ValueError("a carried decision changed before native finalization")
@@ -2110,6 +2122,10 @@ def run_locked(args, *, source_prepared=None):
                     "--max-reviews", str(read(first_directory / "run/manifest.json")["max_reviews_per_bundle"])])
         bundle_binding = None
         if args.phase in ("all", "native") and (requested or source_prepared):
+            if not args.run and getattr(args, "project_run", None) and requested:
+                args.run = output / "selected-bundles"
+                native(["investigate", "review-bundles", str(root), "--inventory", str(inventory),
+                        "--review-ids", ",".join(requested), "--output", str(args.run)])
             if not args.run:
                 raise ValueError("--run is required for selected native claims. For --first-pass, use that attempt's bundle directory.")
             selected_run = outside(args.run, root)
@@ -2519,7 +2535,10 @@ def run_locked(args, *, source_prepared=None):
                 if second_mode != "off":
                     original_metrics = []
                     if first_directory:
-                        first_work = read(first_directory / "work.json")["payload"]
+                        first_work_path = first_directory / "work.json"
+                        # Manual admissions without a bound package rely on the native receipt claim.
+                        first_work = (payload if manual_parent and not first_work_path.exists()
+                                      else read(first_work_path)["payload"])
                         if closed_report is not None and first_work["runtime"] != bound_runtime:
                             raise ValueError("closed first-pass runtime differs from the current plan")
                         for key in ("snapshot_id", "inventory_input_fingerprint", "repository", "assessment_context"):
@@ -2804,6 +2823,10 @@ def run_locked(args, *, source_prepared=None):
             receipt = {**args._project_bindings, "inventory": str(inventory),
                        "inventory_fingerprint": payload["inventory_input_fingerprint"],
                        "report_manifest_sha256": digest_file(manifest)}
+            if source_prepared:
+                routing = read(source_prepared).get("question_routing", {})
+                if "source_generation" in routing:
+                    receipt["routed_source_generation"] = routing["source_generation"]
             receipt.pop("admitted_report", None)
             if "admission_sequence" in record:
                 receipt["admitted_report"] = {"generation": generation,
@@ -2925,8 +2948,8 @@ def bind_project_run(args):
             raise ValueError("--close-receipt supplies the project, parent attempt, bundles and work")
         close = read(args.close_receipt)
         args.project_run = close["project_run"]
-    elif not args.work_package:
-        raise ValueError("--work-package is required unless using a close receipt")
+    elif not args.work_package and not args.project_run:
+        raise ValueError("supply --work-package with explicit state paths or use --project-run")
     if not args.project_run:
         missing = [name for name in ("source_root", "inventory", "store", "stream") if not getattr(args, name)]
         if missing:
@@ -2992,7 +3015,7 @@ def main():
     for option in ("source-root", "inventory", "store", "stream"):
         parser.add_argument("--" + option)
     parser.add_argument("--close-receipt", help="audit or extend a closed project review using a fresh receipt-bound claim")
-    parser.add_argument("--work-package", help="current native work package (resolved from the journal for --close-receipt)")
+    parser.add_argument("--work-package", help="current native work package (resolved from the journal for project runs and close receipts)")
     parser.add_argument("--project-run", help="project_run file from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")

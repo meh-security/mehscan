@@ -76,8 +76,8 @@ def write(path, value):
 
 def runtime():
     return {str(p.relative_to(PRODUCT)):worker.digest_file(p) for p in
-        (Path(__file__), PRODUCT/"scripts/review_workspace_planner.py",
-         PRODUCT/"scripts/review_workspace.py", PRODUCT/"scripts/review_worker.py",
+        (Path(__file__), PRODUCT/"research/review_workspace_planner.py",
+         PRODUCT/"research/review_workspace.py", PRODUCT/"scripts/review_worker.py",
          PRODUCT/"scripts/review_context.py", PRODUCT/"scripts/skill-runtime-v2.json", ADAPTER/"codex_launcher.py",
          ADAPTER/"codex_reviewer.py", ADAPTER.parent/"references/reviewer-base.md")}
 

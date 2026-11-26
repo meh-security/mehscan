@@ -210,6 +210,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let closed_snapshot = if command.as_deref() == Some("export") {
+        CloseReceipt::supply_publication(&mut args, false)?
+    } else {
+        None
+    };
     if args.root != Path::new(".") {
         return Err("memory operations accept named options only".into());
     }
@@ -237,11 +242,14 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         let store = resolve_store(store.as_deref(), &root, repository)?;
         return super::print_json(&shared::run(&store, repository, input.as_deref(), &root)?);
     }
-    let snapshot = load_snapshot(
-        &root,
-        &inventory,
-        matches!(command.as_deref(), Some("retain" | "compare" | "prepare")),
-    )?;
+    let snapshot = match closed_snapshot {
+        Some(snapshot) => snapshot,
+        None => load_snapshot(
+            &root,
+            &inventory,
+            matches!(command.as_deref(), Some("retain" | "compare" | "prepare")),
+        )?,
+    };
     if command.as_deref() == Some("prepare") {
         return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
     }
@@ -649,7 +657,7 @@ fn help() {
         "  mehscan memory shared-facts --source-root ROOT --inventory DIR [--store FILE] [--input PAGE]"
     );
     println!(
-        "  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
+        "  mehscan memory export --close-receipt FILE\n  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
     );
     println!(
         "  mehscan memory knowledge-put --source-root ROOT --inventory DIR --input FILE [--store FILE]\n  mehscan memory knowledge-list --source-root ROOT --inventory DIR [--item ID] [--history true] [--store FILE]\n  mehscan memory knowledge-withdraw --source-root ROOT --inventory DIR --item ID --author NAME --expected-revision ID [--store FILE]"

@@ -25,7 +25,7 @@ struct ProjectConfig {
 }
 
 /// The prepared reference carries the project bindings shared by journal and worker commands.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct PreparedProject {
     schema_version: u32,
     pub(crate) source_root: PathBuf,
@@ -35,6 +35,8 @@ pub(crate) struct PreparedProject {
     report_manifest_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) admitted_report: Option<AdmittedReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) routed_source_generation: Option<u64>,
     pub(crate) repository_key: String,
     pub(crate) state_store: PathBuf,
     pub(crate) memory_store: PathBuf,
@@ -42,7 +44,7 @@ pub(crate) struct PreparedProject {
     memory: ProjectMemory,
 }
 
-#[derive(PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AdmittedReport {
     pub(crate) generation: u64,
     pub(crate) findings_sha256: String,
@@ -52,8 +54,16 @@ pub(crate) struct AdmittedReport {
 pub(crate) struct CloseReceipt {
     pub(crate) sequence: u64,
     result: CloseResult,
+    memory: Option<CloseMemory>,
     pub(crate) project_run: PathBuf,
     pub(crate) admitted_report: AdmittedReport,
+}
+
+#[derive(Deserialize)]
+struct CloseMemory {
+    status: String,
+    batch: Option<String>,
+    snapshot: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +83,67 @@ impl CloseReceipt {
             return Err("invalid attempt or generation in close receipt".into());
         }
         Ok(receipt)
+    }
+
+    /// Bind publication to the retained batch at the exact journal close, including historical closes.
+    pub(super) fn supply_publication(
+        args: &mut ParsedArguments,
+        peer: bool,
+    ) -> Result<Option<super::Snapshot>, String> {
+        let Some(path) = args.optional("--close-receipt") else {
+            return Ok(None);
+        };
+        let close = Self::read(Path::new(&path))?;
+        let project = PreparedProject::read(&close.project_run)?;
+        outside_source(Path::new(&path), &project.source_root)?;
+        close.validate_project(&project)?;
+        close.findings()?;
+        let memory = close
+            .memory
+            .filter(|m| m.status == "retained")
+            .ok_or("publication requires a retained close receipt")?;
+        let snapshot = super::load_snapshot(&project.source_root, &project.inventory, false)?;
+        let id = snapshot.id(&fingerprint(&snapshot.repository)?)?;
+        let admission = crate::review_state::memory_admission(
+            &project.state_store,
+            &project.stream,
+            close.result.generation,
+            &snapshot.repository,
+            &snapshot.source,
+            &snapshot.inventory,
+            Some(close.sequence),
+        )?;
+        let batch =
+            super::assessments::batch_id(&id, &snapshot.inventory, &project.stream, &admission)?;
+        if project.temporary()
+            || !admission.matches_close(close.sequence, &close.admitted_report.findings_sha256)
+            || admission.status != close.result.status
+            || memory.batch.as_ref() != Some(&batch)
+            || memory.snapshot.as_ref() != Some(&id)
+        {
+            return Err("retained batch differs from the journal close".into());
+        }
+        if let Some(root) = args.optional("--source-root") {
+            if fs::canonicalize(root).map_err(|e| e.to_string())? != project.source_root {
+                return Err("publication checkout differs from the closed project".into());
+            }
+        }
+        let mut supply = |key: &str, value: String| {
+            if args.options.insert(key.into(), value).is_some() {
+                Err(format!("--close-receipt already supplies {key}"))
+            } else {
+                Ok(())
+            }
+        };
+        supply("--source-root", project.source_root.display().to_string())?;
+        supply("--inventory", project.inventory.display().to_string())?;
+        supply("--stream", project.stream)?;
+        supply("--store", project.memory_store.display().to_string())?;
+        supply("--batch", batch)?;
+        if peer {
+            supply("--repository-key", project.repository_key)?;
+        }
+        Ok(Some(snapshot))
     }
 
     pub(crate) fn validate_project(&self, project: &PreparedProject) -> Result<(), String> {
@@ -106,12 +177,111 @@ impl AdmittedReport {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ProjectMemory {
     reason: Option<String>,
 }
 
 impl PreparedProject {
+    /// Stage only the bundle inputs that the native record command will validate.
+    pub(crate) fn stage_manual(&self, run: &Path) -> Result<tempfile::TempDir, String> {
+        let directory = self.state_store.join("manual-admissions");
+        outside_source(&directory, &self.source_root)?;
+        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let stage = tempfile::tempdir_in(directory).map_err(|e| e.to_string())?;
+        let target = stage.path().join("run");
+        let source = run.canonicalize().map_err(|e| e.to_string())?;
+        outside_source(&source, &self.source_root)?;
+        for name in ["requests", "responses"] {
+            fs::create_dir_all(target.join(name)).map_err(|e| e.to_string())?;
+        }
+        let copy = |relative: &Path| -> Result<(), String> {
+            let path = source
+                .join(relative)
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            if !path.starts_with(&source) || !path.is_file() {
+                return Err("manual bundle file escapes the supplied run".into());
+            }
+            fs::copy(path, target.join(relative)).map_err(|e| e.to_string())?;
+            Ok(())
+        };
+        copy(Path::new("manifest.json"))?;
+        let manifest: mehscan_core::PathReviewBundleManifest = serde_json::from_reader(
+            fs::File::open(target.join("manifest.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        if manifest.impact_scope.is_some() {
+            copy(Path::new("input-binding.json"))?;
+        }
+        for entry in manifest.bundles {
+            let name = Path::new(&entry.filename);
+            if name.file_name() != Some(name.as_os_str()) {
+                return Err("invalid manual bundle filename".into());
+            }
+            copy(&Path::new("requests").join(name))?;
+            let response = Path::new("responses").join(name);
+            if source
+                .join(&response)
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
+                copy(&response)?;
+            }
+        }
+        Ok(stage)
+    }
+
+    pub(crate) fn seal_manual(
+        &mut self,
+        stage: &Path,
+        generation: u64,
+        report: &mehscan_core::FindingReport,
+        work: Option<&mehscan_core::ReviewWorkPackage>,
+    ) -> Result<(), String> {
+        use sha2::{Digest, Sha256};
+        let findings = serde_json::to_vec_pretty(report).map_err(|e| e.to_string())?;
+        let manifest = fs::read(stage.join("run/manifest.json")).map_err(|e| e.to_string())?;
+        self.report_manifest_sha256 = Some(format!("{:x}", Sha256::digest(manifest)));
+        self.admitted_report = Some(AdmittedReport {
+            generation,
+            findings_sha256: format!("{:x}", Sha256::digest(&findings)),
+        });
+        self.routed_source_generation = None;
+        fs::write(stage.join("findings.json"), findings).map_err(|e| e.to_string())?;
+        if let Some(work) = work {
+            crate::write_json(work, Some(&stage.join("work.json")))?;
+        }
+        crate::write_json(self, Some(&stage.join("project-run.json")))
+    }
+
+    pub(crate) fn publish_manual(
+        &self,
+        stage: tempfile::TempDir,
+        sequence: u64,
+    ) -> Result<PathBuf, String> {
+        let destination = self
+            .state_store
+            .join("manual-admissions")
+            .join(sequence.to_string());
+        let path = destination.join("project-run.json");
+        if let Err(error) = fs::rename(stage.path(), &destination) {
+            // A replay can return the same journal sequence after a successful rename.
+            if !path.is_file()
+                || fs::read(&path).map_err(|e| e.to_string())?
+                    != fs::read(stage.path().join("project-run.json")).map_err(|e| e.to_string())?
+            {
+                return Err(error.to_string());
+            }
+            self.report_run(&path)?;
+            self.admitted_report
+                .as_ref()
+                .ok_or("missing manual report")?
+                .read_findings(&destination.join("findings.json"))?;
+        }
+        Ok(path)
+    }
+
     pub(crate) fn temporary(&self) -> bool {
         self.memory.reason.as_deref() == Some("temporary_mode")
     }
@@ -226,6 +396,7 @@ fn bind(mut args: ParsedArguments) -> Result<(), String> {
         },
         report_manifest_sha256: None,
         admitted_report: None,
+        routed_source_generation: None,
     };
     let path = reference.inventory.join("project-run.json");
     let stage = tempfile::NamedTempFile::new_in(&reference.inventory).map_err(|e| e.to_string())?;

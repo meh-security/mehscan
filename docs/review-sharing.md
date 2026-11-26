@@ -147,19 +147,16 @@ approved branch runs, with the checkout pinned to the job's own SHA.
 
 Use `github.com/repositories/REPOSITORY_ID` as the inventory repository key.
 Sync shared facts, set the returned state home, and run the usual local review
-in the approved stream. Close it with its effective
-inventory, and take `memory.batch` from the retention receipt. Use the same
-source root, effective inventory, stream, and local database to publish.
+in the approved stream. Close the admitted project and keep its retention receipt. The publisher verifies the frozen findings and retained batch against that journal close.
 In the Actions job, link with `--oidc-audience YOUR_SERVICE_AUDIENCE` and use the
 job identity. Keep the application token out of that job.
 
 ```sh
 python scripts/review_share.py publish --link LINK.json --scanner MEHSCAN \
-  --source-root CHECKOUT --inventory INVENTORY --stream main --batch BATCH_ID
+  --source-root CHECKOUT --close-receipt close.json
 ```
 
-Publish with the same `MEHSCAN_STATE_HOME`. Add `--store` if the review used a
-specific local database. Retry with the
+The receipt supplies the local memory database. Retry with the
 same retained batch and Actions run identity to recover the original receipt.
 The publication carries assessment summaries, pending questions, source
 references, and dependency fingerprints. Provider transcripts, raw source

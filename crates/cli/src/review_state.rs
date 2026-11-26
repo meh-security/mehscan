@@ -50,6 +50,8 @@ enum Command {
         audit_parent: Option<AuditParent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         continuation_policy: Option<ReviewCompletionPolicy>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        routed_source_generation: Option<u64>,
     },
     Record {
         key: String,
@@ -155,6 +157,8 @@ struct Attempt {
     owner: String,
     #[serde(skip_serializing)]
     closed_report: Option<AuditParent>,
+    #[serde(skip_serializing)]
+    audit_origin_generation: u64,
     admissions: BTreeSet<String>,
 }
 
@@ -332,6 +336,7 @@ impl State {
                 retry,
                 audit_parent,
                 continuation_policy,
+                routed_source_generation,
             } => {
                 label(attempt_id)?;
                 if let Some(key) = &binding.coordination_key {
@@ -390,6 +395,50 @@ impl State {
                         .as_mut()
                         .ok_or("closed Value plan has no bound runtime")?;
                     let scope = super::review_completion::template(binding, *policy);
+                    if let Some(source_generation) = routed_source_generation {
+                        let origin = item
+                            .attempts
+                            .last()
+                            .ok_or("missing closed generation")?
+                            .audit_origin_generation;
+                        if origin.checked_sub(1) != Some(*source_generation) {
+                            return Err(
+                                "routed source generation did not hand off to this review".into()
+                            );
+                        }
+                        let source = item
+                            .attempts
+                            .iter()
+                            .find(|a| {
+                                a.generation == *source_generation && a.generation < generation
+                            })
+                            .filter(|a| {
+                                a.binding.source_fingerprint == binding.source_fingerprint
+                                    && a.binding.repository == binding.repository
+                                    && a.binding.impact_scope.is_none()
+                            })
+                            .ok_or("routed Value source generation differs from this delivery")?;
+                        let original = item
+                            .completion_plans
+                            .get(&source.generation)
+                            .and_then(|plans| plans.last())
+                            .and_then(|p| p.plan.runtime.as_ref())
+                            .ok_or("missing original source runtime")?;
+                        let mut native = original.clone();
+                        native.provider = Some(
+                            native
+                                .orchestration
+                                .take()
+                                .ok_or("missing original question routing")?
+                                .expert,
+                        );
+                        if &native != runtime {
+                            return Err(
+                                "closed runtime differs from the original expert owner".into()
+                            );
+                        }
+                        *runtime = original.clone();
+                    }
                     runtime.policy = *policy;
                     plan.policy = *policy;
                     plan.selected_review_ids = scope.selected_review_ids;
@@ -433,7 +482,16 @@ impl State {
                 )?;
                 item.repository_key = repository_key.clone();
                 item.name = stream.clone();
+                let audit_origin_generation = if audit_parent.is_some() {
+                    item.attempts
+                        .last()
+                        .ok_or("missing audit parent")?
+                        .audit_origin_generation
+                } else {
+                    generation
+                };
                 item.attempts.push(Attempt {
+                    audit_origin_generation,
                     generation,
                     attempt_id: attempt_id.clone(),
                     snapshot_id: snapshot_id.clone(),
@@ -1657,11 +1715,21 @@ fn read_store(store: &Path, through: Option<u64>) -> Result<State, String> {
 
 #[derive(Serialize)]
 pub(super) struct MemoryAdmission {
+    #[serde(skip)]
+    closed_report: Option<AuditParent>,
     pub generation: u64,
     pub attempt: String,
     pub status: ReviewAttemptStatus,
     pub records: Vec<ReviewDecisionRecord>,
     pub sharing: Option<mehscan_core::ReviewSharingBinding>,
+}
+
+impl MemoryAdmission {
+    pub(super) fn matches_close(&self, sequence: u64, digest: &str) -> bool {
+        self.closed_report
+            .as_ref()
+            .is_some_and(|parent| parent.sequence == sequence && parent.findings_sha256 == digest)
+    }
 }
 
 pub(super) struct RetainedBatch {
@@ -1913,6 +1981,7 @@ pub(super) fn memory_admission(
         }
     }
     Ok(MemoryAdmission {
+        closed_report: attempt.closed_report.clone(),
         generation,
         attempt: attempt.attempt_id.clone(),
         status: attempt.status,
@@ -2145,6 +2214,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let mut manual = None;
     let mut close_inventory = None;
     let mut admitted_close = None;
     let close = if operation == "claim" {
@@ -2167,6 +2237,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     } else {
         None
     };
+    let mut routed_source_generation = None;
     let project_path = if let Some(close) = &close {
         Some(close.project_run.clone())
     } else {
@@ -2174,9 +2245,15 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     };
     if let Some(path) = project_path {
         let project = super::review_memory::PreparedProject::read(&path)?;
+        if operation == "record" {
+            manual = Some(project.clone());
+        }
         let temporary = project.temporary();
         if let Some(close) = &close {
             close.validate_project(&project)?;
+            if continuation_policy.is_some() {
+                routed_source_generation = project.routed_source_generation;
+            }
             if close.findings()?.decision_records.is_empty() && continuation_policy.is_none() {
                 return Err("closed report has no admitted decisions to audit".into());
             }
@@ -2619,6 +2696,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 retry,
                 audit_parent,
                 continuation_policy,
+                routed_source_generation,
             }
         }
         "record" => {
@@ -2659,6 +2737,14 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
             args.finish()?;
             let (cache, binding) = inventory(&inventory_path, &root)?;
+            let stage = manual
+                .as_ref()
+                .map(|project| project.stage_manual(&run))
+                .transpose()?;
+            let run = stage
+                .as_ref()
+                .map(|stage| stage.path().join("run"))
+                .unwrap_or(run);
             let (manifest, pairs, work) =
                 super::read_complete_bundle_responses(&run, None, allow_partial, Some(&root))?;
             let validator = super::engine(
@@ -2733,6 +2819,9 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 memory_store.as_deref(),
                 temporary,
             )?;
+            if let (Some(project), Some(stage)) = (&mut manual, &stage) {
+                project.seal_manual(stage.path(), generation, &report, work_package.as_ref())?;
+            }
             let command = Command::Record {
                 key,
                 generation,
@@ -2743,7 +2832,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 work_package,
                 assignment,
             };
-            let receipt = transact_checked(&store, &operation_key, command, |_, command| {
+            let mut receipt = transact_checked(&store, &operation_key, command, |_, command| {
                 let Command::Record {
                     work_package,
                     records,
@@ -2766,6 +2855,12 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 }
                 Ok(())
             })?;
+            if let (Some(project), Some(stage)) = (manual, stage) {
+                let sequence = receipt["sequence"]
+                    .as_u64()
+                    .ok_or("missing record sequence")?;
+                receipt["project_run"] = json!(project.publish_manual(stage, sequence)?);
+            }
             return super::print_json(&receipt);
         }
         "end" => {

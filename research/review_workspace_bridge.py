@@ -13,6 +13,10 @@ from pathlib import Path
 import sys
 import time
 
+
+# Product modules are also available when this driver is run from a frozen study.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+
 import review_context as context
 import review_source_profile as source_profiles
 import review_worker as worker
@@ -49,7 +53,7 @@ def read(path):
 
 def implementation():
     directory = Path(__file__).resolve().parent
-    return {name:worker.digest_file(directory / name) for name in (
+    return {name:worker.digest_file((directory if name.startswith("review_workspace") else Path(worker.__file__).parent) / name) for name in (
         "review_workspace_bridge.py", "review_workspace.py", "review_evidence.py", "review_workspace_actions.py",
         "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py", "skill-runtime-v2.json",
         "review_source_profile.py")}

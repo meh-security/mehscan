@@ -150,7 +150,7 @@ class WorkPlannerTests(unittest.TestCase):
         directory = self.root.parent/"inventory";directory.mkdir()
         (directory/"inventory.json").write_text(json.dumps(self.inventory))
         output = self.root.parent/"plan.json"
-        result = subprocess.run([sys.executable,str(PRODUCT/"scripts/review_workspace_planner.py"),
+        result = subprocess.run([sys.executable,str(PRODUCT/"research/review_workspace_planner.py"),
             "--scanner",str(self.scanner),"--source-root",str(self.root),"--inventory",str(directory),
             "--review-ids",",".join(e["review_id"] for e in self.entries),"--output",str(output)],
             capture_output=True,text=True,encoding="utf-8")

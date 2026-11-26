@@ -156,7 +156,7 @@ class ReviewPackageTests(unittest.TestCase):
         self.assertEqual(rendered.count('### Source 1\n'),1)
         self.assertEqual(len(package['evidence']),1)
         seed=self.f.directory/'seed.json';seed.write_text(json.dumps({'binding':self.f.binding}))
-        command=[sys.executable,str(fixtures.PRODUCT/'scripts/review_workspace.py'),'review-package',
+        command=[sys.executable,str(fixtures.PRODUCT/'research/review_workspace.py'),'review-package',
                  '--workspace',str(self.workspace.path),'--seed',str(seed)]
         actual=json.loads(subprocess.check_output(command,text=True,encoding='utf-8'))
         self.assertEqual(actual['result'],package)
@@ -197,7 +197,7 @@ class ReviewPackageTests(unittest.TestCase):
         self.draft_all(decisions={'safe':'needs_review','unsafe':'needs_review'})
         package=self.workspace.review_package();before=self.workspace.path.read_bytes()
         seed=self.f.directory/'seed.json';seed.write_text(json.dumps({'binding':self.f.binding}))
-        command=[sys.executable,str(fixtures.PRODUCT/'scripts/review_workspace.py'),'review-package',
+        command=[sys.executable,str(fixtures.PRODUCT/'research/review_workspace.py'),'review-package',
                  '--workspace',str(self.workspace.path),'--seed',str(seed)]
         focus=subprocess.check_output(command+['--format','markdown','--review-id','unsafe'],text=True,encoding='utf-8')
         self.assertIn('## Claim 3\n',focus)

@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 import time
 
+import sys
+
+# Product modules are also available when this driver is run from a frozen study.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+
 import review_workspace_pilot as pilot
 import review_worker as worker
 from review_workspace_bridge import NativeWorkspace, provider_environment

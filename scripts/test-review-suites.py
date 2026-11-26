@@ -14,14 +14,14 @@ RESEARCH_DIR = ROOT / "research"
 # full product tier. Keep POSIX-specific behavior and the native CLI boundary.
 SMOKE_TESTS = {
     "test_context.Context.test_source_root_alias_accepts_contained_files_and_rejects_escape",
-    "test_workspace_audit.AuditTests.test_root_alias_preserves_source_status_without_trusting_source_links",
+    "test_worker.Worker.test_research_rejects_symlink_escape_and_boolean_ranges",
     "test_worker.Worker.test_native_worker_records_its_local_assignment",
     "test_worker.Worker.test_tiered_local_assignment_enforces_its_reserved_provider_calls",
     "test_worker.Worker.test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow",
     "test_worker.Worker.test_native_admission_and_pending_crashes_resume_without_more_model_calls",
     "test_worker.Worker.test_native_runtime_matches_python_package_and_rejects_worker_override",
     "test_work_review.WorkReview.test_native_fast_reconciles_scoped_correction_under_original_allowance",
-    "test_workspace_bridge.NativeBridgeTests.test_native_bootstrap_fresh_context_reuse_and_complete_original_bundle_finalization",
+    "test_worker.Worker.test_source_changed_during_query_is_rejected_before_receipt_or_admission",
     "test_source_review.SourceReview.test_native_admission_rejects_unseen_fabricated_and_altered_plans",
 }
 

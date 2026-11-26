@@ -11,7 +11,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-PRODUCT = Path(__file__).resolve().parents[2]
+PRODUCT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PRODUCT / "scripts"))
 from review_workspace import Workspace
 import review_workspace_actions as actions
@@ -595,7 +595,7 @@ class WorkspaceTests(unittest.TestCase):
         seed.write_text(json.dumps({"binding":self.binding,"source_root":str(self.root),"claims":self.claims,"limits":self.limits}))
         path = self.directory / "cli.sqlite"
         def cli(command, *args):
-            output = subprocess.check_output([sys.executable,str(PRODUCT/"scripts/review_workspace.py"),command,
+            output = subprocess.check_output([sys.executable,str(PRODUCT/"research/review_workspace.py"),command,
                 "--workspace",str(path),"--seed",str(seed),*args], text=True, encoding="utf-8")
             return json.loads(output)
         self.assertFalse(cli("init")["native_admission"])

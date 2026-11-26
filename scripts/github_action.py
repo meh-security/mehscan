@@ -1239,8 +1239,8 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                     outputs({"close-receipt": str(close_path)})
             else:
                 ended = end_review(plan, execute, common, key, receipt, terminal, effective_inventory)
-            if plan.get("sharing") and ended.get("memory", {}).get("status") == "retained":
-                record["retention"] = {"batch": ended["memory"]["batch"], "inventory": str(effective_inventory)}
+            if admitted_project and plan.get("sharing") and ended.get("memory", {}).get("status") == "retained":
+                record["retention"] = {"batch": ended["memory"]["batch"]}
             record["coordination"]["state"] = "owned_" + terminal
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
             record.update(status="incomplete", reason="review_end_failed")
@@ -1255,12 +1255,13 @@ def publish_hosted(plan_path):
     record = json.loads((plan_path.parent / "run.json").read_text(encoding="utf-8"))
     if not plan.get("sharing") or not record.get("retention") or record.get("shared_facts") != "synced":
         return
-    sharing, retained = plan["sharing"], record["retention"]
+    sharing = plan["sharing"]
     client, link = load_sharing(sharing)
     binding = sharing["binding"]
+    control, _, _ = review_lane(plan, plan_path.parent)
     args = SimpleNamespace(link=Path(sharing["link"]), scanner=Path(plan["scanner"]),
-        source_root=Path(plan["checkout"]) / plan["scan_root"], inventory=Path(retained["inventory"]),
-        store=Path(hosted_memory(plan)), pull_request=binding["pull_request"], stream=binding["stream"], batch=retained["batch"])
+        source_root=Path(plan["checkout"]) / plan["scan_root"], close_receipt=control / "close.json",
+        pull_request=binding["pull_request"])
     try:
         result = client.publish(args, link)
     except (client.ShareError, OSError, ValueError, KeyError, subprocess.SubprocessError):

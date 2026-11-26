@@ -40,7 +40,17 @@ With one JavaScript input and a single journal stream, a native claim followed b
 | 100 | 170,237 | 3.71 ms |
 | 250 | 427,037 | 6.53 ms |
 
-This sample covers lightweight claims and closes. A production-sized journal with evidence-heavy decisions and concurrent writers would establish whether replay time or lock contention warrants a storage change.
+A second release-build measurement admitted 16 cited decisions per generation. The benchmark created eight more streams from each baseline, each using claim, plan, record, and close. Each writer ran a separate CLI process against the same journal. All eight closes succeeded in every run.
+
+| Baseline generations | Journal bytes | Median record, one writer | Median record, four writers | Elapsed for eight streams, one / four writers |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 82,392 | 15.2 ms | 28.6 ms | 0.39 / 0.25 s |
+| 16 | 1,319,728 | 30.9 ms | 99.0 ms | 0.91 / 0.83 s |
+| 33 | 2,722,142 | 64.4 ms | 192.2 ms | 2.13 / 2.08 s |
+
+At 2.7 MB, four writers gave almost identical total throughput and tripled median record latency. The timings include native validation and process startup. Replaying the journal under an exclusive lock is a candidate for a verified checkpoint keyed to journal sequence and chain digest. Benchmark replay and lock duration separately before changing the storage format. The existing journal has a 512 MiB ceiling.
+
+The Rust engine retains its opt-in literal-secret detector. The CLI disables it, the engine crate is unpublished, and a public GitHub code search found no external Cargo manifests referencing `mehscan-engine`. Private and unindexed path dependencies are outside that search.
 
 ## Retained and published assessment reads
 

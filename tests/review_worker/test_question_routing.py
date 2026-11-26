@@ -303,6 +303,50 @@ class Questions(unittest.TestCase):
         self.assertIn(record['status'],('admitted','incomplete','source_validated'),record)
         return code,calls,record
 
+    def test_receipt_continuation_restores_question_roles_and_spends_only_on_new_work(self):
+        f, command = self.prepare()
+        project = f.native("project", "bind", "--source-root", f.root, "--inventory", f.inventory,
+                           "--store", f.base / "state", "--stream", "source", "--memory-store", f.base / "memory.turso")
+        for flag in ("--inventory", "--source-root", "--store", "--stream", "--work-package"):
+            index = command.index(flag)
+            del command[index:index + 2]
+        command += ["--project-run", project["project_run"], "--max-calls", "8"]
+        code, first_calls, admitted = self.invoke(command)
+        self.assertEqual(code, 0, admitted)
+        receipt = f.base / "closed.json"
+        receipt.write_text(json.dumps(f.native("state", "end", "--project-run", admitted["project_run"],
+            "--claim", admitted["private_claim"], "--status", "finished", "--operation-key", "close")))
+        claim = f.base / "wider-claim.json"
+        claim.write_text(json.dumps(f.native("state", "claim", "--close-receipt", receipt, "--policy",
+            "comprehensive", "--attempt-id", "wider", "--operation-key", "extend")))
+        current = f.native("investigate", "source-review-plan", "--close-receipt", receipt)
+        path = Path(command[command.index("--work-plan") + 1])
+        plan = json.loads(path.read_text())
+        plan.update(source_plan_id=current["plan_id"], source_fingerprint=current["source_fingerprint"])
+        item = plan["items"][0]
+        item["assignment_id"] = next(a["id"] for a in current["assignments"]
+                                     if set(item["review_roles"]["verify"]) <= set(a["review_ids"]))
+        added = copy.deepcopy(item)
+        added.update(id="extended-source", review_roles={"verify": []})
+        plan["items"].append(added)
+        expanded = f.base / "expanded.json"
+        expanded.write_text(json.dumps(plan))
+        output = f.base / "extended"
+        command[command.index("--project-run")] = "--close-receipt"
+        for flag, value in {"--close-receipt": receipt, "--claim": claim, "--work-plan": expanded,
+                            "--output": output}.items():
+            command[command.index(flag) + 1] = str(value)
+        self.expected_native_by_case = {"extended-source": False}
+        code, calls, completed = self.invoke(command)
+        # The expanded named checks close, while out-of-plan native questions stay open.
+        self.assertEqual(code, 2, completed)
+        self.assertTrue(completed["source_unanswered_results"])
+        self.assertEqual(completed["source_review"]["work_review"]["completed_items"], 2)
+        self.assertTrue(calls)
+        self.assertEqual({case for case, _, _ in self.call_cases}, {"extended-source"})
+        self.assertIn(("expert", "investigator"), calls)
+        self.assertLessEqual(len(first_calls) + len(calls), 8)
+
     def test_saved_factual_answers_survive_interruption_before_owner(self):
         for boundary in ('owner_start', 'owner_draft', 'research'):
             with self.subTest(boundary=boundary):

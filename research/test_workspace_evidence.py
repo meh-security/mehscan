@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from review_workspace import Workspace
 from review_workspace_evidence import VERSION, REUSE_VERSION, dependency, prepare
 
@@ -238,7 +238,7 @@ class NativeEvidencePreparationTests(unittest.TestCase):
             "packages":["finale-rest"]}]}
         path = fixture.base / "evidence-request.json"
         path.write_text(json.dumps(request), encoding="utf-8")
-        command = [sys.executable, str(Path(__file__).resolve().parents[2] / "scripts/review_workspace_bridge.py"),
+        command = [sys.executable, str(Path(__file__).resolve().parents[1] / "research/review_workspace_bridge.py"),
             "prepare-evidence", "--evidence-request", str(path), "--operation-key", "shared-evidence"]
         for key, value in vars(fixture.args).items():
             command += ["--" + key.replace("_", "-"), str(value)]

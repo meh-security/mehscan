@@ -144,7 +144,7 @@ impl Operation {
 
 pub(super) fn help() {
     println!(
-        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream and again to enable shared resolutions on older upstreams. Writers pull the initialized schema before staging.\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE] [--resolution FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
+        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream and again to enable shared resolutions on older upstreams. Writers pull the initialized schema before staging.\n  mehscan memory sync stage --close-receipt FILE --replica FILE --remote URL --publisher-label LABEL\n  Explicit-path stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE] [--resolution FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
     );
 }
 
@@ -155,6 +155,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let closed_snapshot = if operation.as_deref() == Some("stage") {
+        super::CloseReceipt::supply_publication(&mut args, true)?
+    } else {
+        None
+    };
     let replica = PathBuf::from(args.required("--replica")?);
     let remote = args.required("--remote")?;
     let repository_key = args.required("--repository-key")?;
@@ -170,7 +175,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         Some("context" | "stage") => {
             let inventory = PathBuf::from(args.required("--inventory")?);
             let stream = args.required("--stream")?;
-            let snapshot = load_snapshot(&root, &inventory, false)?;
+            let snapshot = match closed_snapshot {
+                Some(snapshot) => snapshot,
+                None => load_snapshot(&root, &inventory, false)?,
+            };
             let selection = selection(snapshot, &repository_key, stream)?;
             if operation.as_deref() == Some("stage") {
                 let batch = args.required("--batch")?;

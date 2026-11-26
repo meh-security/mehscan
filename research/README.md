@@ -37,6 +37,6 @@ python STUDY/package/research/review_hybrid.py run --root STUDY
 
 Preparation and checking make zero model calls. Running the comparison uses the study's provider allowance. For an older frozen study, use its original bundled driver under `package/scripts/` so its runtime hashes match.
 
-## Workspace comparison tests
+## Workspace pilot and comparison tests
 
-The research tier exercises the pilot's control and treatment runs, matched batch comparisons, and work-group planning. Run them with the other checkout experiments using `python scripts/test-review-suites.py --tier research --output results.json`. Set `MEHSCAN_TEST_SCANNER` to a built Mehscan CLI for the native integration cases.
+The eleven `review_workspace*.py` drivers and their workspace, evidence, bridge, routing, audit, and comparison tests live together here. Run the pilot from the repository root with `python research/review_workspace_pilot.py --help`. Frozen pilot packages keep their bundled drivers under `package/scripts/`. The installed worker and provider adapter own the supported review and provider protocols. Run them with the other checkout experiments using `python scripts/test-review-suites.py --tier research --output results.json`. Set `MEHSCAN_TEST_SCANNER` to a built Mehscan CLI for the native integration cases.

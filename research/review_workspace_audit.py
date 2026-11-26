@@ -8,6 +8,11 @@ from pathlib import Path
 import re
 import sqlite3
 
+import sys
+
+# Product modules are also available when this driver is run from a frozen study.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+
 import review_context as context
 
 VERSION = "mehscanWorkspaceTurnAudit/v1"

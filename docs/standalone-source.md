@@ -24,7 +24,7 @@ mehscan project prepare "$SOURCE" --config /review-config/payments.json \
 The command creates a standard full review inventory and a `project.json`
 receipt in the new output directory. The receipt lists the repository key,
 stream, native snapshot, inventory fingerprint, journal path, and local
-memory database. Pass `--project-run /path/to/inventory/project-run.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, work package, reviewer and output for the attempt. Manual clients pass the project run and private claim through the
+memory database. Pass `--project-run /path/to/inventory/project-run.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, reviewer configuration and attempt output. The worker derives current work and bundles from the authorized plan. An explicitly supplied work package still pins the handoff. Manual clients pass the project run and private claim through the
 [ordinary review workflow](review-worker.md#prepare-review-work). Use
 `--stream NAME` for a different review track. When both the configuration and
 command omit a stream, the command uses `imported`. The optional artifact
@@ -55,9 +55,9 @@ mehscan state end --project-run "$(jq -r .project_run worker-result.json)" \
 mehscan report --close-receipt close.json --format markdown --output findings.md
 ```
 
-Use `finished` for a completed review execution, including one that records pending questions. For an interrupted worker with an admitted report, use `incomplete`. A planning checkpoint has no admitted report. When recording responses directly with `state record`, close with the prepared project and its private claim, then render the validated bundle directory with `report --run`.
+Use `finished` for a completed review execution, including one that records pending questions. For an interrupted worker with an admitted report, use `incomplete`. A planning checkpoint has no admitted report. For a manual review, `state record --project-run FILE --claim FILE --run BUNDLES` also returns an admitted `project_run`. Close that reference using the same private claim. The journal keeps a frozen copy of the validated requests, responses and findings under its state directory. Repeating the record with the same operation key returns the same reference. A subsequent automated audit requires a plan with a bound worker runtime.
 
-Choose an operation key unique to this close and reuse it on retry. The journal verifies ownership and generation. The close receipt names the selected attempt and binds its findings by SHA-256. Keep its attempt directory at the recorded location. Reporting reads the admitted findings, including their original reviewer and any unresolved or missing answers. JSON, SARIF, combined JSON/SARIF and Markdown use the same saved report. The private claim file stays with the operator.
+Choose an operation key unique to this close and reuse it on retry. The journal verifies ownership and generation. The close receipt names the selected attempt and binds its findings by SHA-256. Keep its attempt directory at the recorded location. Reporting reads the admitted findings, including their original reviewer and any unresolved or missing answers. JSON, SARIF, combined JSON/SARIF and Markdown use the same saved report. The private claim file stays with the operator. Use `mehscan memory export --close-receipt close.json` to inspect the retained publication payload. The receipt resolves the batch from that exact generation even after a later review closes.
 
 For a named work plan, JSON includes `source_review_cases`. Markdown lists the same questions under **Named source checks**, with their answers, cited lines and outstanding facts at source handoff. A run can have zero native candidates and still have unresolved named checks. Native decision counts and SARIF alerts come from native review decisions. The close receipt renders the frozen report even if the working ledger later changes.
 

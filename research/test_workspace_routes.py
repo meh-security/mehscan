@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1] / "scripts"))
 from review_workspace import Workspace
 from review_workspace_routes import reference_route_windows, attach_route_context
 sys.path.insert(0,str(Path(__file__).resolve().parent))

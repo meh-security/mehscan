@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-PRODUCT = Path(__file__).resolve().parents[2]
+PRODUCT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(PRODUCT / "scripts"))
 sys.path.insert(0,str(PRODUCT / "skills/mehscan-security/scripts"))
 import codex_reviewer

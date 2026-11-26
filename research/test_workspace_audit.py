@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import review_workspace_audit as audit
 
 
@@ -115,6 +115,8 @@ class AuditTests(unittest.TestCase):
         self.state['source_root'] = str(alias / 'source')
         def status():
             return audit.source_status(self.state)['files'][0]['status']
+        from review_workspace import source
+        self.assertEqual(source(alias / 'source', self.file.name), self.file.read_bytes())
         self.assertEqual(status(), 'current')
         self.file.write_text('changed\n')
         self.assertEqual(status(), 'stale')
@@ -123,6 +125,8 @@ class AuditTests(unittest.TestCase):
         target = self.root / 'other.ts'
         target.write_text('inside')
         self.file.symlink_to(target.resolve())
+        with self.assertRaisesRegex(ValueError, 'symlinks'):
+            source(alias / 'source', self.file.name)
         self.assertEqual(status(), 'unavailable')
         self.file.unlink()
         outside = self.base / 'outside.ts'

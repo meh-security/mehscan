@@ -1099,7 +1099,7 @@ mehscan state plan --project-run "$PROJECT" --claim PRIVATE/claim.json --input R
 mehscan state work --project-run "$PROJECT" --claim PRIVATE/claim.json --skill-root TRUSTED/mehscan-security > RUN/work.json
 ```
 
-Pass `--project-run "$PROJECT" --claim PRIVATE/claim.json --work-package RUN/work.json` to the worker with the authorized plan, reviewer and output directory. After admission, [close from the worker result](standalone-source.md#close-and-report-a-project-review). Create bundles for exactly its `review_ids`
+Pass `--project-run "$PROJECT" --claim PRIVATE/claim.json` to the worker with the authorized plan, reviewer and output directory. It derives work and bundles for the selected IDs. To pin an exported package, also supply `--work-package RUN/work.json`. After admission, [close from the worker result](standalone-source.md#close-and-report-a-project-review). Manual clients preparing requests themselves create bundles for exactly the work package’s `review_ids`
 using `review-bundles --inventory ... --review-ids ... --output RUN/bundles`.
 No bundle run is needed when that array is empty. `--review-ids ""` explicitly
 exports source-only work. The exported package contains no ownership token.

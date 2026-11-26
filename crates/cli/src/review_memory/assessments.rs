@@ -84,14 +84,13 @@ pub(super) fn assessment_id(
     fingerprint(&(snapshot, inventory, decision))
 }
 
-pub(super) async fn retain(
-    tx: &Connection,
+pub(super) fn batch_id(
     snapshot: &str,
     inventory: &str,
     stream: &str,
     admission: &MemoryAdmission,
-) -> Result<Retention, String> {
-    let batch = fingerprint(&(
+) -> Result<String, String> {
+    fingerprint(&(
         snapshot,
         inventory,
         stream,
@@ -103,7 +102,17 @@ pub(super) async fn retain(
             .iter()
             .map(|r| r.decision_id.as_str())
             .collect::<Vec<_>>(),
-    ))?;
+    ))
+}
+
+pub(super) async fn retain(
+    tx: &Connection,
+    snapshot: &str,
+    inventory: &str,
+    stream: &str,
+    admission: &MemoryAdmission,
+) -> Result<Retention, String> {
+    let batch = batch_id(snapshot, inventory, stream, admission)?;
     let status = match admission.status {
         ReviewAttemptStatus::Finished => "finished",
         ReviewAttemptStatus::Incomplete => "incomplete",
