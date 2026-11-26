@@ -30,14 +30,61 @@ pub(crate) struct PreparedProject {
     schema_version: u32,
     pub(crate) source_root: PathBuf,
     pub(crate) inventory: PathBuf,
-    inventory_fingerprint: String,
+    pub(crate) inventory_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     report_manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) admitted_report: Option<AdmittedReport>,
     pub(crate) repository_key: String,
     pub(crate) state_store: PathBuf,
     pub(crate) memory_store: PathBuf,
     pub(crate) stream: String,
     memory: ProjectMemory,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct AdmittedReport {
+    pub(crate) generation: u64,
+    pub(crate) findings_sha256: String,
+}
+
+pub(crate) fn closed_findings(path: &Path) -> Result<mehscan_core::FindingReport, String> {
+    use mehscan_core::ReviewAttemptStatus;
+
+    #[derive(Deserialize)]
+    struct CloseResult {
+        status: ReviewAttemptStatus,
+        generation: u64,
+    }
+    #[derive(Deserialize)]
+    struct CloseReceipt {
+        result: CloseResult,
+        project_run: PathBuf,
+        admitted_report: AdmittedReport,
+    }
+    let receipt: CloseReceipt = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("expected a project close receipt with admitted findings: {e}"))?;
+    if !receipt.project_run.is_absolute()
+        || receipt.result.status == ReviewAttemptStatus::Running
+        || receipt.result.generation != receipt.admitted_report.generation
+    {
+        return Err("invalid attempt or generation in close receipt".into());
+    }
+    let path = receipt.project_run.with_file_name("findings.json");
+    let findings = receipt.admitted_report.read_findings(&path)?;
+    serde_json::from_slice(&findings).map_err(|e| e.to_string())
+}
+
+impl AdmittedReport {
+    pub(crate) fn read_findings(&self, path: &Path) -> Result<Vec<u8>, String> {
+        use sha2::{Digest, Sha256};
+        let findings =
+            fs::read(path).map_err(|e| format!("could not read the admitted findings: {e}"))?;
+        if format!("{:x}", Sha256::digest(&findings)) != self.findings_sha256 {
+            return Err("findings differ from the admitted report".into());
+        }
+        Ok(findings)
+    }
 }
 
 #[derive(Serialize, Deserialize)]

@@ -677,12 +677,12 @@ windows=packet['primary']['windows']""")
         (self.root / "Widget.razor").write_text("changed\n")
         self.admit(data, "stale", okay=False)
 
-    def prepare_worker(self, *, proposal=True, fail=False, lookup=False, policy="value"):
+    def prepare_worker(self, *, proposal=True, fail=False, lookup=False, policy="value", project=None):
         if lookup:
             (self.root / "context.reviewdata").write_text(
                 "configuration reference\n", encoding="utf8"
             )
-        store = self.base / "state"
+        store = Path(project["state_store"]) if project else self.base / "state"
         claim = self.native(
             "state",
             "claim",
@@ -823,14 +823,10 @@ print(json.dumps({'draft':{'results':rows,
             str(ROOT / "scripts/review_worker.py"),
             "--scanner",
             str(self.scanner),
-            "--source-root",
-            str(self.root),
-            "--inventory",
-            str(self.inventory),
-            "--store",
-            str(store),
-            "--stream",
-            "source",
+            *(["--project-run", project["project_run"]] if project else [
+                "--source-root", str(self.root), "--inventory", str(self.inventory),
+                "--store", str(store), "--stream", "source",
+            ]),
             "--claim",
             str(self.base / "claim.json"),
             "--work-package",
@@ -844,6 +840,46 @@ print(json.dumps({'draft':{'results':rows,
             "--source-selection",
             str(self.base / "selection.json"),
         ]
+
+    def test_project_close_reports_the_admitted_generation(self):
+        from unittest.mock import patch
+        config = self.base / "project-config.json"
+        config.write_text(json.dumps({"repository_key": "acceptance:source", "stream": "source"}))
+        self.inventory = self.base / "prepared"
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(self.base / "state-home")}):
+            project = self.native("project", "prepare", self.root, "--config", config,
+                                  "--output", self.inventory)
+            command = self.prepare_worker(project=project)
+            worker = subprocess.run(command, capture_output=True, text=True, check=True)
+        attempt = json.loads(worker.stdout)
+        self.assertEqual(attempt["generation"], 2)
+        end = ["state", "end", "--project-run", attempt["project_run"], "--status", "finished",
+               "--operation-key", "close-project"]
+        self.assertIn("generation", self.native(*end, "--claim", self.base / "claim.json", okay=False))
+        prepared_end = ["state", "end", "--project-run", project["project_run"], "--status", "finished",
+                        "--operation-key", "close-project", "--claim", attempt["private_claim"]]
+        self.assertIn("project inventory differs", self.native(*prepared_end, okay=False))
+        close = self.native(*end, "--claim", attempt["private_claim"])
+        self.assertEqual(close["result"], {"generation": 2, "status": "finished"})
+        self.assertEqual(close["memory"]["status"], "retained")
+        replay = self.native(*end, "--claim", attempt["private_claim"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["sequence"], close["sequence"])
+        self.assertEqual(replay["admitted_report"], close["admitted_report"])
+        receipt = self.base / "close.json"
+        receipt.write_text(json.dumps(close))
+        self.assertNotIn(json.loads(Path(attempt["private_claim"]).read_text())["result"]["owner"],
+                         receipt.read_text())
+        findings = Path(attempt["directory"]) / "findings.json"
+        exports = self.native("report", "--close-receipt", receipt, "--format", "json-sarif")
+        self.assertEqual(exports["report"], json.loads(findings.read_text()))
+        self.assertEqual(exports["sarif"]["version"], "2.1.0")
+        findings.write_bytes(findings.read_bytes() + b"\n")
+        self.assertIn("findings differ", self.native("report", "--close-receipt", receipt, okay=False))
+        replacement = json.loads(Path(attempt["project_run"]).read_text())
+        replacement["admitted_report"]["findings_sha256"] = hashlib.sha256(findings.read_bytes()).hexdigest()
+        Path(attempt["project_run"]).write_text(json.dumps(replacement))
+        self.assertIn("different command", self.native(*end, "--claim", attempt["private_claim"], okay=False))
 
     def test_default_worker_finalizes_a_discovered_question_without_a_second_investigation(
         self,

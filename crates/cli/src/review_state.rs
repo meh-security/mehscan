@@ -83,6 +83,10 @@ enum Command {
         generation: u64,
         owner: String,
         status: ReviewAttemptStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        inventory_input_fingerprint: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        findings_sha256: Option<String>,
     },
     Plan {
         key: String,
@@ -731,12 +735,21 @@ impl State {
                 generation,
                 owner,
                 status,
+                inventory_input_fingerprint,
+                ..
             } => {
                 if *status == ReviewAttemptStatus::Running {
                     return Err("end status must be finished, cancelled or incomplete".into());
                 }
                 let stream = self.owned_stream(key, *generation, owner)?;
-                stream.attempts.last_mut().unwrap().status = *status;
+                let attempt = stream.attempts.last_mut().unwrap();
+                if inventory_input_fingerprint
+                    .as_ref()
+                    .is_some_and(|id| id != &attempt.binding.inventory_input_fingerprint)
+                {
+                    return Err("project inventory differs from the claimed generation".into());
+                }
+                attempt.status = *status;
                 Ok(json!({"status":status,"generation":generation}))
             }
             Command::Plan {
@@ -2037,15 +2050,36 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let mut close_inventory = None;
+    let mut admitted_close = None;
     if let Some(path) = args.optional("--project-run") {
         let project = super::review_memory::PreparedProject::read(Path::new(&path))?;
+        let temporary = project.temporary();
+        if operation == "end" {
+            if args
+                .options
+                .get("--repository-key")
+                .is_some_and(|key| key != &project.repository_key)
+            {
+                return Err("--repository-key differs from the project run".into());
+            }
+            if project.admitted_report.is_some() || args.options.contains_key("--claim") {
+                close_inventory = Some(project.inventory_fingerprint);
+            }
+            if let Some(report) = project.admitted_report {
+                let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+                let findings = path.with_file_name("findings.json");
+                outside_source(&findings, &project.source_root)?;
+                report.read_findings(&findings)?;
+                admitted_close = Some((path, report));
+            }
+        }
         let mut supply = |name: &str, value: String| -> Result<(), String> {
             if args.options.insert(name.into(), value).is_some() {
                 return Err(format!("--project-run already supplies {name}"));
             }
             Ok(())
         };
-        let temporary = project.temporary();
         if operation != "plan-template" {
             supply("--store", project.state_store.display().to_string())?;
             supply("--stream", project.stream)?;
@@ -2584,8 +2618,6 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
         "end" => {
             let repository_key = args.optional("--repository-key");
-            let generation = args.required_usize("--generation")? as u64;
-            let owner = args.required("--owner")?;
             let status = match args.required("--status")?.as_str() {
                 "finished" => ReviewAttemptStatus::Finished,
                 "cancelled" => ReviewAttemptStatus::Cancelled,
@@ -2610,6 +2642,42 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 }
                 key
             };
+            let key = stream_key(&repository_key, &stream)?;
+            let (generation, owner) = if let Some(path) = args.optional("--claim") {
+                let root = source_root
+                    .as_deref()
+                    .ok_or("--claim requires a project run or source root")?;
+                outside_source(Path::new(&path), root)?;
+                let claim: Value =
+                    serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+                        .map_err(|_| "invalid private claim receipt")?;
+                let result = &claim["result"];
+                if result["status"] != "claimed" || result["stream_key"] != key {
+                    return Err("private claim does not own this review stream".into());
+                }
+                (
+                    result["generation"]
+                        .as_u64()
+                        .ok_or("missing private claim generation")?,
+                    result["owner"]
+                        .as_str()
+                        .ok_or("missing private claim owner")?
+                        .to_owned(),
+                )
+            } else {
+                (
+                    args.required_usize("--generation")? as u64,
+                    args.required("--owner")?,
+                )
+            };
+            if admitted_close
+                .as_ref()
+                .is_some_and(|(_, report)| report.generation != generation)
+            {
+                return Err(
+                    "private claim generation differs from the admitted project run".into(),
+                );
+            }
             let memory = match (source_root, inventory) {
                 (Some(source_root), Some(inventory)) if !temporary => {
                     Some(super::review_memory::EndRetention {
@@ -2623,7 +2691,6 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 _ => return Err("memory retention requires --source-root and --inventory".into()),
             };
             args.finish()?;
-            let key = stream_key(&repository_key, &stream)?;
             let reader = memory
                 .as_ref()
                 .filter(|_| status == ReviewAttemptStatus::Finished)
@@ -2650,6 +2717,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     generation,
                     owner,
                     status,
+                    inventory_input_fingerprint: close_inventory,
+                    findings_sha256: admitted_close
+                        .as_ref()
+                        .map(|(_, report)| report.findings_sha256.clone()),
                 },
                 |state, _| {
                     if status != ReviewAttemptStatus::Finished {
@@ -2716,6 +2787,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                             Err(reason) => json!({"status":"pending","reason":reason}),
                         };
                 }
+            }
+            if let Some((path, report)) = admitted_close {
+                receipt["project_run"] = json!(path);
+                receipt["admitted_report"] = json!(report);
             }
             return super::print_json(&receipt);
         }
@@ -3045,7 +3120,7 @@ fn help() {
         "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
-        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

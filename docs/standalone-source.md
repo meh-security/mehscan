@@ -38,7 +38,24 @@ If persistent memory cannot be opened, preparation reports
 `memory.status=unavailable` and still writes the inventory. Use the reason
 to recover the store or continue in temporary mode.
 
-The compact `project-run.json` contains the local project bindings. The full `project.json` keeps the intake and upstream history and also works as a reference for older preparations. Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project-run.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation. After native admission, the worker returns `project_run` in its JSON output when the attempt has a report manifest. Use that attempt reference with `state end` to retain the effective inventory, or with `mehscan report --project-run FILE` to render its validated findings. The reference excludes the private claim and provider conversations.
+The compact `project-run.json` contains the local project bindings. The full `project.json` keeps the intake and upstream history and also works as a reference for older preparations. Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project-run.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation.
+
+## Close and report a project review
+
+After native admission, the worker prints the attempt's `project_run` and the path to its `private_claim`. Use both values from the same invocation. A source review can replace the prepared inventory and advance the claim generation.
+
+Save the worker's JSON output as `worker-result.json`, then close the attempt and render its admitted findings.
+
+```sh
+mehscan state end --project-run "$(jq -r .project_run worker-result.json)" \
+  --claim "$(jq -r .private_claim worker-result.json)" \
+  --status finished --operation-key close-delivery > close.json
+mehscan report --close-receipt close.json --format markdown --output findings.md
+```
+
+Choose an operation key unique to this close and reuse it on retry. The journal verifies ownership and generation. The close receipt names the selected attempt and binds its findings by SHA-256. Keep its attempt directory at the recorded location. Reporting reads the admitted findings, including their original reviewer and any unresolved or missing answers. JSON, SARIF, combined JSON/SARIF and Markdown use the same saved report. The private claim file stays with the operator.
+
+Older attempt references can still render findings with `mehscan report --project-run FILE`. Earlier close receipts require the original run or attempt reference for reporting.
 
 ## Compare an explicit baseline
 

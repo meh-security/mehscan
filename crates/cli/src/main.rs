@@ -60,18 +60,6 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         print_report_help();
         return Ok(());
     }
-    let (run, source_root) = if let Some(path) = parsed.optional("--project-run") {
-        let path = Path::new(&path);
-        let project = review_memory::PreparedProject::read(path)?;
-        (project.report_run(path)?, Some(project.source_root))
-    } else {
-        (
-            PathBuf::from(parsed.required("--run")?),
-            parsed.optional("--source-root").map(PathBuf::from),
-        )
-    };
-    let responses = parsed.optional("--responses").map(PathBuf::from);
-    let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
     let format = match parsed.optional("--format").as_deref().unwrap_or("json") {
         "json" => ReportOutputFormat::Json,
         "sarif" => ReportOutputFormat::Sarif,
@@ -79,7 +67,6 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         "markdown" | "md" => ReportOutputFormat::Markdown,
         value => return Err(format!("unsupported report format {value:?}")),
     };
-    let reviewer = parsed.optional("--reviewer");
     let sarif_category = parsed.optional("--sarif-category");
     let sarif_run_id = parsed.optional("--sarif-run-id");
     // Validate configured identities before reading a run or writing output.
@@ -96,28 +83,13 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         )?;
     }
     let output = parsed.optional("--output").map(PathBuf::from);
-    let include_dismissed = parsed
-        .optional_bool("--include-dismissed")?
-        .unwrap_or(false);
     let scope = parse_report_scope(&mut parsed);
-    parsed.finish()?;
-
-    let (manifest, bundle_responses, work) = read_complete_bundle_responses(
-        &run,
-        responses.as_deref(),
-        allow_partial,
-        source_root.as_deref(),
-    )?;
-    let mut report = engine(
-        mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
-            &manifest,
-            env!("CARGO_PKG_VERSION"),
-            reviewer,
-            &bundle_responses,
-            include_dismissed,
-            work,
-        ),
-    )?;
+    let mut report = if let Some(path) = parsed.optional("--close-receipt") {
+        parsed.finish()?;
+        review_memory::closed_findings(Path::new(&path))?
+    } else {
+        report_from_run(parsed)?
+    };
     report.scan.sarif_automation = Some(sarif_automation.unwrap_or(
         mehscan_core::SarifAutomationConfiguration::new(
             report.default_sarif_category(),
@@ -158,6 +130,43 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         }
         ReportOutputFormat::Markdown => write_text(&report.to_markdown(), output.as_deref()),
     }
+}
+
+fn report_from_run(mut parsed: ParsedArguments) -> Result<mehscan_core::FindingReport, String> {
+    let (run, source_root) = if let Some(path) = parsed.optional("--project-run") {
+        let path = Path::new(&path);
+        let project = review_memory::PreparedProject::read(path)?;
+        (project.report_run(path)?, Some(project.source_root))
+    } else {
+        (
+            PathBuf::from(parsed.required("--run")?),
+            parsed.optional("--source-root").map(PathBuf::from),
+        )
+    };
+    let responses = parsed.optional("--responses").map(PathBuf::from);
+    let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
+    let reviewer = parsed.optional("--reviewer");
+    let include_dismissed = parsed
+        .optional_bool("--include-dismissed")?
+        .unwrap_or(false);
+    parsed.finish()?;
+
+    let (manifest, bundle_responses, work) = read_complete_bundle_responses(
+        &run,
+        responses.as_deref(),
+        allow_partial,
+        source_root.as_deref(),
+    )?;
+    engine(
+        mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
+            &manifest,
+            env!("CARGO_PKG_VERSION"),
+            reviewer,
+            &bundle_responses,
+            include_dismissed,
+            work,
+        ),
+    )
 }
 
 /// Explicit, portable handoff metadata; it is not a security fact supplied to AI.
@@ -4640,7 +4649,7 @@ USAGE
   mehscan project prepare ROOT --config FILE --output DIR
   mehscan investigate <OPERATION> [PATH] [OPTIONS]
   mehscan state <OPERATION> [--project-run FILE] [OPTIONS]
-  mehscan report (--run DIR | --project-run FILE) [--format json|sarif|markdown|json-sarif] [--output PATH]
+  mehscan report (--run DIR | --project-run FILE | --close-receipt FILE) [--format json|sarif|markdown|json-sarif] [--output PATH]
   mehscan memory <OPERATION> [OPTIONS]
   mehscan --version
 
@@ -4654,7 +4663,7 @@ Run a command with --help for details."#
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report (--run DIR | --project-run FILE) [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown|json-sarif] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
+        "USAGE:\n  mehscan report (--run DIR | --project-run FILE | --close-receipt FILE) [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown|json-sarif] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
     );
 }
 

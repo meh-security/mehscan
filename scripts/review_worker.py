@@ -2768,9 +2768,14 @@ def run_locked(args, *, source_prepared=None):
             receipt = {**args._project_bindings, "inventory": str(inventory),
                        "inventory_fingerprint": payload["inventory_input_fingerprint"],
                        "report_manifest_sha256": digest_file(manifest)}
+            receipt.pop("admitted_report", None)
+            if "admission_sequence" in record:
+                receipt["admitted_report"] = {"generation": generation,
+                                              "findings_sha256": digest_file(output / "findings.json")}
             receipt_path = output / "project-run.json"
             write(receipt_path, receipt)
             record["project_run"] = str(receipt_path)
+            record["private_claim"] = str(claim_path)
     except Exception as error:
         record.update(status="cancelled" if _cancelled else "incomplete", reason=type(error).__name__, detail=str(error))
     finally:
@@ -2979,6 +2984,7 @@ def main():
     summary = {"status": result["status"], "generation": result["generation"], "directory": args.output}
     if "project_run" in result:
         summary["project_run"] = result["project_run"]
+        summary["private_claim"] = result["private_claim"]
     if "second_pass" in result:
         summary["second_pass"] = result["second_pass"]
     if "review_options" in result:

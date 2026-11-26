@@ -713,6 +713,8 @@ use the effective inventory of the generation being closed:
 mehscan state end --store STATE --stream STREAM --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
 
+If the worker used a prepared project, its output supplies the attempt reference and private claim path. Use those to close the effective generation and save the receipt for reporting. [Close and report a project review](standalone-source.md#close-and-report-a-project-review)
+
 The result reports `memory.status=retained` after persisting a finished or
 incomplete attempt. If applicable knowledge changes before a finished attempt
 closes, refresh the affected reviews and retry the close. If retention fails
