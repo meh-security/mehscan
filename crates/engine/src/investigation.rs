@@ -1473,8 +1473,8 @@ pub fn find_evidence(
 
 pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunnel>, EngineError> {
     let scan = scan_path(root)?;
-    let rules = crate::rules::load_builtin_rules()?;
-    let relations = crate::rules::load_builtin_relations(&rules)?;
+    let catalog = crate::rules::builtin_catalog()?;
+    let relations = &catalog.relations;
     let linked_sink_ids = scan
         .security_paths
         .iter()
@@ -1744,8 +1744,8 @@ fn build_path_review_jobs_internal(
     }
     let report = CandidateReport::from_scan(&scan)
         .map_err(|error| EngineError(format!("could not build candidate report: {error}")))?;
-    let rules = crate::rules::load_builtin_rules()?;
-    let rules_by_id = rules
+    let rules_by_id = crate::rules::builtin_catalog()?
+        .rules
         .iter()
         .map(|rule| (rule.id.as_str(), rule))
         .collect::<BTreeMap<_, _>>();
@@ -21732,16 +21732,17 @@ pub fn build_investigation_job(
     }
 
     let truncated = pending.len() > max_units;
-    let rules = crate::rules::load_builtin_rules()?;
-    let relations = crate::rules::load_builtin_relations(&rules)?;
+    let catalog = crate::rules::builtin_catalog()?;
+    let relations = &catalog.relations;
     let linked_sink_ids = scan
         .security_paths
         .iter()
         .map(|path| path.sink_evidence_id.as_str())
         .collect::<BTreeSet<_>>();
-    let guidance_by_rule: BTreeMap<_, _> = rules
-        .into_iter()
-        .map(|rule| (rule.id, rule.ai.investigate))
+    let guidance_by_rule: BTreeMap<_, _> = catalog
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), &rule.ai.investigate))
         .collect();
     let mut units = Vec::new();
     for pending in pending.into_values().take(max_units) {
@@ -21789,13 +21790,13 @@ pub fn build_investigation_job(
         for item in &evidence {
             capabilities.insert(item.capability);
             cwe_candidates.extend(item.cwe_candidates.iter().cloned());
-            if let Some(guidance) = guidance_by_rule.get(&item.rule_id) {
+            if let Some(guidance) = guidance_by_rule.get(item.rule_id.as_str()) {
                 ai_guidance.extend(guidance.iter().cloned());
             } else if let Some(guidance) = crate::secrets::guidance_for_rule(&item.rule_id) {
                 ai_guidance.extend(guidance.iter().map(|item| (*item).to_string()));
             }
         }
-        if has_unlinked_compatible_pair(&evidence, &relations, &linked_sink_ids) {
+        if has_unlinked_compatible_pair(&evidence, relations, &linked_sink_ids) {
             ai_guidance.insert(
                 "A compatible source and sink coexist in this unit, but deterministic bounded value flow did not connect them. Review the exact parameter-to-argument flow and any framework abstraction; do not assume a vulnerability from proximity alone."
                     .to_string(),
