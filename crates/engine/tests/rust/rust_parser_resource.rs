@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::fs;
 
 fn assess(source: &str) -> mehscan_core::PathReviewJob {

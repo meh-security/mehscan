@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::fs;
 fn assess(source: &str) -> Vec<String> {
     let root = support::temp_dir("panic-cleanup-obligation");

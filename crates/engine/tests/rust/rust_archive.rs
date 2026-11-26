@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::fs;
 
 fn reviews(source: &str) -> Vec<(String, String)> {

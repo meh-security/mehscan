@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::fs;
 fn assess(source: &str) -> Vec<(String, String)> {
     let root = support::temp_dir("protocol-credential-obligations");

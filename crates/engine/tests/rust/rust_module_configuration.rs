@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use mehscan_core::{AvailabilityState, ScanResult};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs};

@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::{fs, path::PathBuf};
 
 const MANIFEST: &str = "[package]\nname=\"module_witness\"\nversion=\"0.1.0\"\nedition=\"2021\"\n";
