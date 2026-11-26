@@ -254,6 +254,7 @@ fn capture_roles_by_kind_and_capability(
     let mut roles = BTreeMap::<(EvidenceKind, Capability), BTreeSet<String>>::new();
     for rule in rules {
         let entry = roles.entry((rule.kind, rule.capability)).or_default();
+        entry.extend(rule.match_spec.native_captures.iter().cloned());
         for pattern in &rule.match_spec.any {
             entry.extend(pattern.captures.keys().cloned());
         }

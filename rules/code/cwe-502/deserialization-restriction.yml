@@ -7,9 +7,7 @@
   confidence: medium
   cwe: [CWE-502]
   match:
-    any:
-      - pattern: $MAPPER.readValue($PAYLOAD, $TYPE.class)
-        captures: { payload: PAYLOAD, type: TYPE }
+    native_captures: [payload, type]
   tags: [deserialization, type-restriction, json, java]
   ai: &restriction_guidance
     investigate:

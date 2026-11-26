@@ -38,13 +38,7 @@
   confidence: medium
   cwe: [CWE-918]
   match:
-    any:
-      - pattern: $URI.getScheme().equals("https")
-        captures: { endpoint: URI }
-      - pattern: '"https".equals($URI.getScheme())'
-        captures: { endpoint: URI }
-      - pattern: $ALLOWED.contains($URI.getHost())
-        captures: { endpoint: URI, allowlist: ALLOWED }
+    native_captures: [allowlist, endpoint]
   tags: [http, network, ssrf, url, validation, java]
   ai: *url_validation_guidance
   provenance:

@@ -122,19 +122,7 @@
   capability: filesystem_read
   cwe: [CWE-22]
   match:
-    any:
-      - pattern: Files.readString($PATH)
-        captures: { path: PATH }
-      - pattern: Files.readAllBytes($PATH)
-        captures: { path: PATH }
-      - pattern: Files.newBufferedReader($PATH)
-        captures: { path: PATH }
-      - pattern: Files.newInputStream($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Files.copy($PATH, $DESTINATION, $$$ARGUMENTS)
-        captures: { path: PATH, destination: DESTINATION }
-      - pattern: Files.copy($PATH, $DESTINATION)
-        captures: { path: PATH, destination: DESTINATION }
+    native_captures: [destination, path]
   symbols:
     - canonical: java.nio.file.Files.readString
       captures: { path: 0 }
@@ -162,29 +150,7 @@
   capability: filesystem_write
   cwe: [CWE-22]
   match:
-    any:
-      - pattern: Files.write($PATH, $CONTENT)
-        captures: { path: PATH }
-      - pattern: Files.write($PATH, $CONTENT, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Files.writeString($PATH, $CONTENT)
-        captures: { path: PATH }
-      - pattern: Files.writeString($PATH, $CONTENT, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Files.newBufferedWriter($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Files.copy($SOURCE, $PATH, $$$ARGUMENTS)
-        captures: { source: SOURCE, path: PATH }
-      - pattern: Files.copy($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
-      - pattern: Files.move($SOURCE, $PATH, $$$ARGUMENTS)
-        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
-      - pattern: Files.move($SOURCE, $PATH)
-        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
-      - pattern: Files.delete($PATH)
-        captures: { path: PATH }
-      - pattern: Files.deleteIfExists($PATH)
-        captures: { path: PATH }
+    native_captures: [filesystem_source, path, source]
   symbols:
     - canonical: java.nio.file.Files.write
       captures: { path: 0 }

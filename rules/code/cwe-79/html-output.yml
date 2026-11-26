@@ -66,11 +66,7 @@
   capability: html_output
   cwe: [CWE-79]
   match:
-    any:
-      - pattern: $RESPONSE.getWriter().write($HTML)
-        captures: { content: HTML }
-      - pattern: $RESPONSE.getWriter().print($HTML)
-        captures: { content: HTML }
+    native_captures: [content]
   tags: [http, response, html, xss, servlet]
   ai: *html_guidance
   provenance:

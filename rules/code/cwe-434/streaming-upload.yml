@@ -7,9 +7,7 @@
   confidence: high
   cwe: [CWE-434]
   match:
-    any:
-      - pattern: $SECTION.Body
-        captures: { content: SECTION }
+    native_captures: [content]
   tags: [http, multipart, streaming, upload, content]
   ai: &streaming_upload_guidance
     investigate:
@@ -32,11 +30,7 @@
   confidence: high
   cwe: [CWE-434, CWE-22]
   match:
-    any:
-      - pattern: $DISPOSITION.FileName.Value
-        captures: { path: DISPOSITION }
-      - pattern: $DISPOSITION.FileNameStar.Value
-        captures: { path: DISPOSITION }
+    native_captures: [path]
   tags: [http, multipart, upload, filename, attacker-controlled]
   ai: *streaming_upload_guidance
   provenance:
@@ -54,11 +48,7 @@
   confidence: medium
   cwe: [CWE-434]
   match:
-    any:
-      - pattern: $SECTION.Body.CopyToAsync($DESTINATION)
-        captures: { content: SECTION, destination: DESTINATION }
-      - pattern: $SECTION.Body.CopyTo($DESTINATION)
-        captures: { content: SECTION, destination: DESTINATION }
+    native_captures: [content, destination]
   tags: [http, multipart, streaming, upload, storage]
   ai: *streaming_upload_guidance
   provenance: *streaming_upload_provenance
