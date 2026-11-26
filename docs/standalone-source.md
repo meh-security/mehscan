@@ -40,6 +40,8 @@ to recover the store or continue in temporary mode.
 
 The compact `project-run.json` contains the local project bindings. The full `project.json` keeps the intake and upstream history and also works as a reference for older preparations. Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project-run.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation.
 
+For an existing native inventory, `mehscan project bind --source-root "$SOURCE" --inventory "$INVENTORY" --store "$JOURNAL" --stream "$STREAM" --memory-mode temporary` creates the same `project-run.json` alongside it. This preserves the inventory’s Full, Changed or Impact scope. For retained memory, supply `--memory-store FILE` or use the repository default. Bind requires a directory with no existing project reference.
+
 ## Close and report a project review
 
 After native admission, the worker prints the attempt's `project_run` and the path to its `private_claim`. Use both values from the same invocation. A source review can replace the prepared inventory and advance the claim generation.

@@ -218,6 +218,8 @@ Fast/Full second-pass review is an explicit [local worker option](review-worker.
 The Action inputs do not enable it automatically; Value/Comprehensive choose
 coverage, not the number of review passes.
 
+The Action binds the pinned Changed inventory to a project run. Claim, plan, work and the worker use that reference. An ordinary one-shot review uses temporary memory. An enrolled review uses its configured memory store.
+
 The control directory is a separate sibling under runner temp, with restrictive
 permissions on Linux. It contains the state journal, ownership receipt and private
 handoff. Upload only `artifact-directory`, never the control directory or all of
@@ -245,6 +247,20 @@ work remain separate in `run.json`; pending answers can coexist with successful
 execution. A separate CLI consumer updates its own invocation outputs. When `provider-config`
 is supplied, the composite runs the consumer and exposes its final status; without
 it, the composite exposes the prepared `review_ready` handoff.
+
+A current BYOK review that closes successfully and passes any required delta coverage gate exposes `close-receipt` to later steps in the same job. The receipt identifies the effective generation and the digest of its admitted findings. Use the trusted scanner to render that report while the original attempt directory is available.
+
+```yaml
+- name: Render the admitted review
+  if: steps.mehscan.outputs.close-receipt != ''
+  env:
+    CLOSE_RECEIPT: ${{ steps.mehscan.outputs.close-receipt }}
+    SCANNER: ${{ runner.temp }}/mehscan-build/release/mehscan
+  shell: bash
+  run: '"$SCANNER" report --close-receipt "$CLOSE_RECEIPT" --format markdown'
+```
+
+A selection checkpoint has no admitted report. Use the Action’s delta coverage outputs for the coverage decision, including changes with zero native candidates. Keep the receipt in runner temp.
 
 The controller receives a small explicit environment allowlist without GitHub or
 provider tokens, Python path overrides or arbitrary workflow secrets. The bundled

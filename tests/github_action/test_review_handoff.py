@@ -192,6 +192,10 @@ else:
         self.assertEqual(state["attempt_status"], "finished")
         self.assertEqual(state["completion"]["security_resolution"], "not_established")
         self.assertEqual(json.loads((directory / "review/worker.json").read_text())["status"], "admitted")
+        close = Path(plan["review_control"]) / "close.json"
+        frozen = json.loads(self.execute([plan["scanner"], "report", "--close-receipt", str(close), "--format", "json"]))
+        self.assertEqual(frozen, json.loads((directory / "review/findings.json").read_text()))
+        self.assertFalse(frozen.get("decision_records"))
         self.assertEqual(result["delta_coverage"]["counts"]["reviewed"], 1)
         self.assertTrue(adapter.coverage_gate(directory / "plan.json", self.delivery.get))
 
@@ -240,6 +244,7 @@ else:
         result = self.consume(record, execute)
         self.assertEqual(result["status"], "stale", result)
         self.assertEqual(result["review_execution"], "admitted")
+        self.assertNotIn("close-receipt=", (self.workspace / "outputs").read_text())
         self.assertEqual(result["contract"]["endpoints"]["base_commit"], self.base)
         history = self.view(directory, plan, "history")
         self.assertTrue(history["decisions"])

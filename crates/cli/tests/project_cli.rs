@@ -212,6 +212,25 @@ fn project_preparation_handles_temporary_memory_and_unavailable_upstream() {
     assert!(!Path::new(prepared["memory_store"].as_str().unwrap()).exists());
     assert!(output.join("inventory.json").is_file());
 
+    // A later adapter must not replace an existing run's journal or stream.
+    let reference = output.join("project-run.json");
+    let original = fs::read(&reference).unwrap();
+    rejected(
+        fixture
+            .command()
+            .args(["project", "bind", "--source-root"])
+            .arg(&source)
+            .arg("--inventory")
+            .arg(&output)
+            .arg("--store")
+            .arg(&fixture.state)
+            .args(["--stream", "another-stream", "--memory-mode", "temporary"])
+            .output()
+            .unwrap(),
+        "could not bind inventory",
+    );
+    assert_eq!(fs::read(reference).unwrap(), original);
+
     fs::create_dir_all(prepared["memory_store"].as_str().unwrap()).unwrap();
     let local = fixture.root.path().join("local-only");
     let unavailable = ok(fixture.prepare(&source, &config, &local, &[]));
