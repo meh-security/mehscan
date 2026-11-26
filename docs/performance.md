@@ -48,7 +48,16 @@ A second release-build measurement admitted 16 cited decisions per generation. T
 | 16 | 1,319,728 | 30.9 ms | 99.0 ms | 0.91 / 0.83 s |
 | 33 | 2,722,142 | 64.4 ms | 192.2 ms | 2.13 / 2.08 s |
 
-At 2.7 MB, four writers gave almost identical total throughput and tripled median record latency. The timings include native validation and process startup. Replaying the journal under an exclusive lock is a candidate for a verified checkpoint keyed to journal sequence and chain digest. Benchmark replay and lock duration separately before changing the storage format. The existing journal has a 512 MiB ceiling.
+A follow-up compared the writer at `041e987` with the revised writer on the same 2,722,142-byte starting journal. Each version started from the same bytes three times per concurrency level. The record medians cover 24 calls per configuration. The eight-stream elapsed times are medians across the three runs. Every stream reached its finished state.
+
+| Writers | Record latency, before → after | Waiting for journal locks | Replay and prefix verification inside exclusive lock | Elapsed for eight streams |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 49.17 → 42.61 ms | <0.01 → 0.01 ms | 38.22 → 0.57 ms | 1.55 → 1.37 s |
+| 4 | 164.44 → 51.37 ms | 114.85 → 0.03 ms | 37.43 → 1.47 ms | 1.32 → 0.45 s |
+
+Starting at 256 KiB, each writer copies the journal under a shared lock, releases it, and validates that snapshot. Under the exclusive lock it verifies the prefix bytes, replays intervening transactions and then processes the requested operation. Smaller journals keep the single-lock path. The lock-wait column includes both acquisitions. The locked replay column ends before validation and durable append of the new command.
+
+With four writers, validating the prefix outside the lock still took a median 35.56 ms per record. Replay cost grows with history and the existing 512 MiB ceiling still applies. These measurements support shortening the critical section without introducing a second durable state format.
 
 The Rust engine retains its opt-in literal-secret detector. The CLI disables it, the engine crate is unpublished, and a public GitHub code search found no external Cargo manifests referencing `mehscan-engine`. Private and unindexed path dependencies are outside that search.
 

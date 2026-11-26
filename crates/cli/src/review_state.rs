@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_JOURNAL_BYTES: u64 = 512 * 1024 * 1024;
@@ -199,7 +199,7 @@ fn memory_options(args: &mut super::ParsedArguments) -> Result<(Option<PathBuf>,
 #[derive(Default)]
 struct State {
     streams: BTreeMap<String, Stream>,
-    receipts: BTreeMap<String, (String, u64, Value)>,
+    receipts: BTreeMap<String, Option<(String, u64, Value)>>,
     sequence: u64,
     last_hash: String,
 }
@@ -1542,64 +1542,140 @@ fn completion_view(stream: &Stream, attempt: &Attempt, subjects: &Value) -> Resu
         "native_coverage_limits":plan.native_coverage_limits,"security_resolution":"not_established"}))
 }
 
-fn read_state(file: &mut File, through: Option<u64>) -> Result<State, String> {
-    if file.metadata().map_err(|error| error.to_string())?.len() > MAX_JOURNAL_BYTES {
+fn journal_bytes(file: &mut File) -> Result<Vec<u8>, String> {
+    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_JOURNAL_BYTES {
         return Err("state journal exceeds local store size limit".into());
     }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+    file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
         return Err("state journal has a torn tail; explicit recovery is required".into());
     }
+    Ok(bytes)
+}
+
+#[derive(Clone, Copy)]
+enum ReceiptSelection<'a> {
+    None,
+    All,
+    Operation(&'a str),
+}
+
+fn read_state(
+    file: &mut File,
+    through: Option<u64>,
+    receipts: ReceiptSelection<'_>,
+) -> Result<State, String> {
     let mut state = State::default();
-    for raw in bytes.split_inclusive(|byte| *byte == b'\n') {
-        let line = &raw[..raw.len() - 1];
-        if line.is_empty() {
-            return Err("state journal contains an empty transaction".into());
+    state.replay(&journal_bytes(file)?, through, receipts)?;
+    Ok(state)
+}
+
+impl State {
+    /// Every transaction is verified. A writer only needs the command digest for its own retry key.
+    fn replay(
+        &mut self,
+        bytes: &[u8],
+        through: Option<u64>,
+        receipts: ReceiptSelection<'_>,
+    ) -> Result<(), String> {
+        for raw in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let line = &raw[..raw.len() - 1];
+            if line.is_empty() {
+                return Err("state journal contains an empty transaction".into());
+            }
+            let tx: Transaction = serde_json::from_slice(line)
+                .map_err(|error| format!("invalid state transaction: {error}"))?;
+            let expected = hash(
+                "mehscanStateTransaction/v1",
+                &(
+                    &tx.schema_version,
+                    tx.sequence,
+                    &tx.previous_hash,
+                    &tx.operation_key,
+                    &tx.command,
+                    &tx.result,
+                ),
+            )?;
+            if tx.schema_version != "1"
+                || tx.sequence != self.sequence + 1
+                || tx.previous_hash != self.last_hash
+                || tx.hash != expected
+                || self.receipts.contains_key(&tx.operation_key)
+            {
+                return Err(
+                    "state journal integrity/order check failed; no mutation permitted".into(),
+                );
+            }
+            let result = self.apply(&tx.command)?;
+            if result != tx.result {
+                return Err("state journal replay differs from recorded receipt".into());
+            }
+            let retain = match receipts {
+                ReceiptSelection::None => false,
+                ReceiptSelection::All => true,
+                ReceiptSelection::Operation(key) => key == tx.operation_key,
+            };
+            let receipt = if retain {
+                Some((
+                    hash("mehscanStateCommand/v1", &tx.command)?,
+                    tx.sequence,
+                    tx.result,
+                ))
+            } else {
+                None
+            };
+            self.receipts.insert(tx.operation_key, receipt);
+            self.sequence = tx.sequence;
+            self.last_hash = tx.hash;
+            if through == Some(self.sequence) {
+                return Ok(());
+            }
         }
-        let tx: Transaction = serde_json::from_slice(line)
-            .map_err(|error| format!("invalid state transaction: {error}"))?;
-        let expected = hash(
-            "mehscanStateTransaction/v1",
-            &(
-                &tx.schema_version,
-                tx.sequence,
-                &tx.previous_hash,
-                &tx.operation_key,
-                &tx.command,
-                &tx.result,
-            ),
+        if through.is_some() {
+            return Err("native completion receipt sequence is missing from state journal".into());
+        }
+        Ok(())
+    }
+}
+
+// Replay large journals without serializing independent writers on JSON decoding and native admission.
+fn lock_for_transaction(file: &mut File, operation: &str) -> Result<State, String> {
+    const OPTIMISTIC_REPLAY_BYTES: u64 = 256 * 1024;
+    let mut state = State::default();
+    if file.metadata().map_err(|e| e.to_string())?.len() < OPTIMISTIC_REPLAY_BYTES {
+        fs2::FileExt::lock_exclusive(file).map_err(|e| e.to_string())?;
+        state.replay(
+            &journal_bytes(file)?,
+            None,
+            ReceiptSelection::Operation(operation),
         )?;
-        if tx.schema_version != "1"
-            || tx.sequence != state.sequence + 1
-            || tx.previous_hash != state.last_hash
-            || tx.hash != expected
-            || state.receipts.contains_key(&tx.operation_key)
-        {
-            return Err("state journal integrity/order check failed; no mutation permitted".into());
-        }
-        let result = state.apply(&tx.command)?;
-        if result != tx.result {
-            return Err("state journal replay differs from recorded receipt".into());
-        }
-        state.receipts.insert(
-            tx.operation_key,
-            (
-                hash("mehscanStateCommand/v1", &tx.command)?,
-                tx.sequence,
-                tx.result,
-            ),
-        );
-        state.sequence = tx.sequence;
-        state.last_hash = tx.hash;
-        if through == Some(state.sequence) {
-            return Ok(state);
+        return Ok(state);
+    }
+    fs2::FileExt::lock_shared(file).map_err(|e| e.to_string())?;
+    let prefix = journal_bytes(file)?;
+    fs2::FileExt::unlock(file).map_err(|e| e.to_string())?;
+    state.replay(&prefix, None, ReceiptSelection::Operation(operation))?;
+
+    fs2::FileExt::lock_exclusive(file).map_err(|e| e.to_string())?;
+    // Keep the established fail-closed semantics even if an external tool rewrites or truncates
+    // the store between locks. Compare bytes, then admit every append against the verified state.
+    file.rewind().map_err(|e| e.to_string())?;
+    let mut buffer = [0u8; 16 * 1024];
+    for chunk in prefix.chunks(buffer.len()) {
+        let actual = &mut buffer[..chunk.len()];
+        file.read_exact(actual)
+            .map_err(|e| format!("journal prefix changed during replay: {e}"))?;
+        if actual != chunk {
+            return Err("journal prefix changed during replay".into());
         }
     }
-    if through.is_some() {
-        return Err("native completion receipt sequence is missing from state journal".into());
-    }
+    drop(prefix);
+    state.replay(
+        &journal_bytes(file)?,
+        None,
+        ReceiptSelection::Operation(operation),
+    )?;
     Ok(state)
 }
 
@@ -1628,10 +1704,9 @@ fn transact_checked(
         .append(true)
         .open(path)
         .map_err(|error| error.to_string())?;
-    fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
-    let mut state = read_state(&mut file, None)?;
+    let mut state = lock_for_transaction(&mut file, operation)?;
     let command_hash = hash("mehscanStateCommand/v1", &command)?;
-    if let Some((saved_hash, sequence, result)) = state.receipts.get(operation) {
+    if let Some(Some((saved_hash, sequence, result))) = state.receipts.get(operation) {
         if saved_hash != &command_hash {
             return Err("operation key already belongs to a different command".into());
         }
@@ -1700,7 +1775,11 @@ fn sync_journal(file: &File, _store: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn read_store(store: &Path, through: Option<u64>) -> Result<State, String> {
+fn read_store(
+    store: &Path,
+    through: Option<u64>,
+    receipts: ReceiptSelection<'_>,
+) -> Result<State, String> {
     let path = store.join("transactions.jsonl");
     if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err("state journal must not be a symlink".into());
@@ -1710,7 +1789,7 @@ fn read_store(store: &Path, through: Option<u64>) -> Result<State, String> {
         .open(path)
         .map_err(|error| error.to_string())?;
     fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
-    read_state(&mut file, through)
+    read_state(&mut file, through, receipts)
 }
 
 #[derive(Serialize)]
@@ -1812,7 +1891,7 @@ impl MemoryPreparation<'_> {
         selection: &KnowledgeSelection,
     ) -> Result<PreparedMemory, String> {
         let key = stream_key(self.repository_key, self.stream)?;
-        let mut state = read_store(self.store, None)?;
+        let mut state = read_store(self.store, None, ReceiptSelection::All)?;
         let mut full = self.native_work(&mut state, &key, selection)?;
         if let Some(runtime) = &full.payload.runtime {
             validate_runtime_skill(runtime, Some(skill), provider, source)?;
@@ -1825,7 +1904,7 @@ impl MemoryPreparation<'_> {
                 )?;
                 let command = reuse_command(key.clone(), self.owner.into(), full.clone(), batch);
                 let command_hash = hash("mehscanStateCommand/v1", &command)?;
-                if let Some((saved_hash, _, _)) = state.receipts.get(&operation) {
+                if let Some(Some((saved_hash, _, _))) = state.receipts.get(&operation) {
                     if &command_hash != saved_hash {
                         return Err(
                             "memory preparation operation conflicts with its journal receipt"
@@ -1859,7 +1938,7 @@ impl MemoryPreparation<'_> {
             let receipt = transact(self.store, &operation, command)?;
             memory = receipt["result"].clone();
             memory["replayed"] = receipt["replayed"].clone();
-            state = read_store(self.store, None)?;
+            state = read_store(self.store, None, ReceiptSelection::None)?;
             let current = self.native_work(&mut state, &key, selection)?;
             if current.payload.runtime != full.payload.runtime {
                 return Err(
@@ -1944,7 +2023,7 @@ pub(super) fn memory_admission(
     inventory: &str,
     through: Option<u64>,
 ) -> Result<MemoryAdmission, String> {
-    let state = read_store(store, through)?;
+    let state = read_store(store, through, ReceiptSelection::None)?;
     let key = stream_key(
         repository
             .repository_key
@@ -2399,7 +2478,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             .open(journal_path)
             .map_err(|error| error.to_string())?;
         fs2::FileExt::lock_shared(&file).map_err(|error| error.to_string())?;
-        let mut state = read_state(&mut file, None)?;
+        let mut state = read_state(&mut file, None, ReceiptSelection::None)?;
         let stream = state.owned_stream(
             &stream_key(
                 binding.repository.repository_key.as_deref().unwrap(),
@@ -2455,7 +2534,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             }
         };
         args.finish()?;
-        let state = read_store(&store, None)?;
+        let state = read_store(&store, None, ReceiptSelection::None)?;
         return super::print_json(&state.view(
             &stream_key(&repository_key, &stream)?,
             operation == "history",

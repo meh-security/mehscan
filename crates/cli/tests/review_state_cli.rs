@@ -2162,14 +2162,21 @@ impl Fixture {
             self.inventory.to_str().unwrap(),
         ])
     }
-    fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
-        ok(&[
+    fn claim_args<'a>(
+        &'a self,
+        stream: &'a str,
+        attempt: &'a str,
+        expected: &'a str,
+        operation: &'a str,
+        retry: bool,
+    ) -> Vec<&'a str> {
+        vec![
             "state",
             "claim",
             "--store",
             self.store.to_str().unwrap(),
             "--stream",
-            "pr:24",
+            stream,
             "--inventory",
             self.inventory.to_str().unwrap(),
             "--source-root",
@@ -2182,7 +2189,10 @@ impl Fixture {
             operation,
             "--retry",
             if retry { "true" } else { "false" },
-        ])
+        ]
+    }
+    fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
+        ok(&self.claim_args("pr:24", attempt, expected, operation, retry))
     }
     fn record_args<'a>(
         &'a self,
@@ -3133,6 +3143,59 @@ fn concurrent_claims_have_one_owner_and_corrupt_or_torn_journals_refuse_updates(
         &fixture.record_args("1", owner, if a.status.success() { "a" } else { "b" }),
         "different command",
     );
+}
+
+#[test]
+fn large_journal_concurrent_retries_append_once_per_stream() {
+    let fixture = Fixture::new("large-journal");
+    let seed = fixture.claim("seed", "0", "seed", false);
+    let journal = fixture.store.join("transactions.jsonl");
+    // Valid JSON whitespace exercises large-prefix replay with a single real seed claim.
+    let mut prefix = vec![b' '; 300 * 1024];
+    prefix.extend(fs::read(&journal).unwrap());
+    fs::write(&journal, &prefix).unwrap();
+
+    let streams = ["stream-a", "stream-b", "stream-c", "stream-d"];
+    let claims = std::thread::scope(|scope| {
+        let mut threads = Vec::new();
+        for stream in streams.into_iter().cycle().take(8) {
+            let fixture = &fixture;
+            threads.push(scope.spawn(move || {
+                let receipt = ok(&fixture.claim_args(stream, stream, "0", stream, false));
+                (stream, receipt)
+            }));
+        }
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for stream in streams {
+        let receipts = claims
+            .iter()
+            .filter(|(key, _)| *key == stream)
+            .map(|(_, receipt)| receipt)
+            .collect::<Vec<_>>();
+        assert_eq!(receipts[0]["result"], receipts[1]["result"]);
+        assert_eq!(receipts[0]["sequence"], receipts[1]["sequence"]);
+        assert_ne!(receipts[0]["replayed"], receipts[1]["replayed"]);
+    }
+    let bytes = fs::read(&journal).unwrap();
+    assert!(bytes.starts_with(&prefix));
+    assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 5);
+    let retry = fixture.claim("seed", "0", "seed", false);
+    assert_eq!(retry["result"], seed["result"]);
+    assert_eq!(retry["replayed"], true);
+    assert_eq!(fs::read(&journal).unwrap(), bytes);
+    // A retry of the first operation must verify later transactions, too.
+    let torn = &bytes[..bytes.len() - 1];
+    fs::write(&journal, torn).unwrap();
+    reject(
+        &fixture.claim_args("pr:24", "seed", "0", "seed", false),
+        "torn tail",
+    );
+    assert_eq!(fs::read(&journal).unwrap(), torn);
+    fs::remove_dir_all(&fixture.base).unwrap();
 }
 
 #[test]
