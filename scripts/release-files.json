@@ -121,6 +121,7 @@
   "skills/mehscan-security/references/reviewer-base.md",
   "skills/mehscan-security/references/triage-buckets.md",
   "skills/mehscan-security/scripts/codex_launcher.py",
+  "skills/mehscan-security/scripts/openai_responses.py",
   "skills/mehscan-security/scripts/boundary_review.py",
   "skills/mehscan-security/scripts/codex_protocol.py",
   "skills/mehscan-security/scripts/source_review_protocol.py",

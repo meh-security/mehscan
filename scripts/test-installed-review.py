@@ -40,6 +40,27 @@ def validate_document_links(package, files):
                 raise ValueError(f'Packaged document {name} links outside its payload: {link}')
 
 
+def check_installed_transports(skill):
+    # Stop at the launcher boundary so release validation needs no credentials or network.
+    probe = """import sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import codex_reviewer
+for transport, module, name in (
+    ("codex-cli", "codex_launcher", "Launcher"),
+    ("openai-responses", "openai_responses", "ResponsesLauncher"),
+):
+    with patch.object(codex_reviewer, "run_bound") as dispatch:
+        codex_reviewer.run({"transport": transport}, {})
+        launcher = dispatch.call_args.args[2]
+        assert (launcher.__module__, launcher.__name__) == (module, name)
+        assert Path(sys.modules[module].__file__).resolve().parent == Path(sys.argv[1])
+"""
+    subprocess.run([sys.executable, "-I", "-B", "-c", probe, str(skill / "scripts")],
+                   check=True, timeout=30)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", required=True, type=Path)
@@ -48,6 +69,7 @@ def main():
     validate_document_links(package, manifest['files'])
     scanner = package / ("mehscan.exe" if os.name == "nt" else "mehscan")
     skill = package / "skills/mehscan-security"
+    check_installed_transports(skill)
     base = package / "_installed-review-smoke"
     base.mkdir()
     source = base / "source"
