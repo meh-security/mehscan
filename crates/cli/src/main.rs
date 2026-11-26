@@ -4632,10 +4632,24 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report (--run DIR | --project-run FILE) [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown|json-sarif] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
+        r#"mehscan - deterministic security evidence scanner
+
+USAGE
+  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N]
+  mehscan scan [PATH] (--changed-from REF | --files-from PATH) [--diff-mode full|impact|files]
+  mehscan project prepare ROOT --config FILE --output DIR
+  mehscan investigate <OPERATION> [PATH] [OPTIONS]
+  mehscan state <OPERATION> [--project-run FILE] [OPTIONS]
+  mehscan report (--run DIR | --project-run FILE) [--format json|sarif|markdown|json-sarif] [--output PATH]
+  mehscan memory <OPERATION> [OPTIONS]
+  mehscan --version
+
+MAINTAINER TOOLS
+  mehscan benchmark [ROOT] --manifest PATH [--include-optional] [--format text|json]
+  mehscan evaluate <prepare|score|review-prepare|review-score> [ROOT] --manifest PATH [OPTIONS]
+
+Run a command with --help for details."#
     );
-    println!("\nRepository memory: mehscan memory --help");
-    println!("Prepare linked source: mehscan project --help");
 }
 
 fn print_report_help() {

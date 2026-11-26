@@ -42,6 +42,8 @@ The workflow is **scope and recall → plan → investigate → follow up → au
 
 For scripted review, see the [local worker](docs/review-worker.md) and [reviewer setup](docs/codex-reviewer.md).
 
+For a configured project, `mehscan project prepare` returns a `project_run` file. The journal and worker accept that reference. After admission, use the reference returned by the worker with `mehscan report --project-run FILE`. [Prepare and continue a project review](docs/standalone-source.md)
+
 ## Local review memory
 
 Persistent reviews use local Turso memory in both profiles. Keep the same repository key, stream, and store. Fresh plans load applicable knowledge. Unchanged native reruns with a matching plan and runtime can reuse eligible decisions with zero model calls. Keep the original attempt directory to continue saved work. [Memory and reruns](docs/review-worker.md#reuse-on-reruns)

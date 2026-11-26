@@ -18,7 +18,11 @@ The report comparison used the installed Changed-review smoke attempt, one warm-
 
 The 15 Go integration targets built 1,412,550,064 bytes of test executables. The combined target built 108,519,680 bytes with the same Rust test profile and debug info disabled. These totals count the executables in Cargo's build messages. They exclude shared dependencies and build intermediates.
 
-Cargo now discovers 312 engine integration targets, down from 326. Run `cargo test -p mehscan-engine --test go` or add a module or test name as the filter. The grouped target has 28 active cases and one optional corpus case. All 21 historical scan-schema goldens retain their own named test. Python's research tier also owns the frozen pilot-arm comparison and its source-parity check.
+After the Go pilot, the same grouping was applied to Java, Kotlin, C#, Node, Python, PHP and Rust. Cargo now discovers **139 engine integration targets**, down from 326. The 195 original modules are compiled in eight suites, with 389 active cases and 11 optional cases. Their test bodies match PR 48. The documented standalone Roslyn targets retain their names.
+
+Use `cargo test -p mehscan-engine --test LANGUAGE` with one of `go`, `java`, `kotlin`, `csharp`, `node`, `python`, `php` or `rust`. Add the old target name as a module filter to select a specific group. For example, `cargo test -p mehscan-engine --test go v2_go_g4::` runs the former Go G4 target.
+
+All 21 historical scan-schema goldens retain their own named test. Python's research tier also owns the frozen pilot-arm comparison and its source-parity check.
 
 ## Journal replay
 
