@@ -529,6 +529,27 @@ def ledger(registry, results=(), *, budget=None, metrics=()):
         authority="Potential impact is a host scheduling judgment, not a finding severity. Unclassified work has unknown importance. Completion applies only to declared checks, not whole-app safety.")
 
 
+def report_cases(ledger):
+    """Freeze the named questions and their source-phase answers with the bundle run."""
+    cases = []
+    for item in ledger["items"]:
+        answers = {row["check_id"]: row for row in item["check_results"]}
+        checks = []
+        for planned in item["required_checks"]:
+            check = {"id": planned["id"], "question": planned["question"], "status": "not_checked"}
+            answer = answers.get(planned["id"])
+            if answer:
+                for key in ("status", "summary", "conditions", "limitations", "next_deciding_fact"):
+                    if answer.get(key) is not None:
+                        check[key] = answer[key]
+                check["evidence"] = [{key: cite[key] for key in ("path", "start_line", "end_line")}
+                                     for cite in answer["evidence"]]
+            checks.append(check)
+        case = {key: item[key] for key in ("id", "owner_path", "actor", "conditions", "status", "next_deciding_facts")}
+        cases.append({**case, "checks": checks})
+    return cases
+
+
 def markdown(report):
     lines = ["# Review work and remaining obligations", "", report["authority"], "",
              "Items: " + str(report["summary"]["closed"]) + " completed / " + str(report["summary"]["items"])

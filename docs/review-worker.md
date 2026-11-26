@@ -123,7 +123,7 @@ to 400 lines and 64 KiB per range. Queryable-only source is not examined coverag
 
 `source-review.json` records examined, context-limited and deferred ranges, failed
 assignments and source-stage call counts. Canonical report scope includes a coverage
-summary. Empty results do not certify a file safe. A failed assignment remains
+summary. For named work plans, the JSON and Markdown findings reports also carry the question, check status, evidence lines, and outstanding facts from the source handoff. Later audits and corrections have their own case ledgers. Empty results do not certify a file safe. A failed assignment remains
 incomplete while successful siblings are retained; it does not trigger a replacement
 native model call. Source-stage usage contributes to total input, cache and output
 accounting. For work plans, `--resume-from` with the unchanged original invocation

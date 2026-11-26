@@ -2979,6 +2979,7 @@ pub fn build_path_review_bundles_with_run_limit(
         .map(|entry| entry.review_count)
         .sum();
     let manifest = PathReviewBundleManifest {
+        source_review_cases: Vec::new(),
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         // Persist a relocatable logical root; review locations are already
         // repository-relative and must not disclose the local checkout path.
@@ -3534,6 +3535,7 @@ pub fn build_finding_report_from_manifest(
         run,
     )?;
     report.scan.coverage = Some(manifest.coverage.clone());
+    report.source_review_cases = manifest.source_review_cases.clone();
     report.scan.scope = manifest.scope.clone();
     report.scan.impact_scope = manifest.impact_scope.clone();
     Ok(report)
@@ -3560,6 +3562,7 @@ pub fn build_finding_report_from_manifest_with_work(
         run,
     )?;
     report.scan.coverage = Some(manifest.coverage.clone());
+    report.source_review_cases = manifest.source_review_cases.clone();
     report.scan.scope = manifest.scope.clone();
     report.scan.impact_scope = manifest.impact_scope.clone();
     Ok(report)
@@ -3695,6 +3698,7 @@ fn finding_report_from_run(
     review_required.sort_by(reported_finding_order);
 
     Ok(FindingReport {
+        source_review_cases: Vec::new(),
         decision_records,
         schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
         report_kind: "triaged_findings".to_string(),

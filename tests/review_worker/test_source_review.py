@@ -641,13 +641,77 @@ windows=packet['primary']['windows']""")
         import review_context as context
         (self.root / "Widget.razor").unlink()
         (self.root / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf8")
+        from unittest.mock import patch
         self.inventory = self.base / "rust-inventory"
-        self.native("investigate", "review-inventory", self.root,
-                    "--repository-key", "acceptance:rust-source", "--output", self.inventory)
+        config = self.base / "project-config.json"
+        config.write_text(json.dumps({"repository_key": "acceptance:rust-source", "stream": "source"}))
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(self.base / "state-home")}):
+            project = self.native("project", "prepare", self.root, "--config", config, "--output", self.inventory)
         self.assertEqual(json.loads((self.inventory / "inventory.json").read_text())["entries"], [])
-        result = subprocess.run(self.prepare_worker(proposal=False), capture_output=True,
-                                text=True, encoding="utf8", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        command = self.prepare_worker(proposal=False, project=project)
+        del command[command.index("--source-selection"):]
+        selection = json.loads((self.base / "selection.json").read_text())
+        item = dict(selection["assignments"][0], id="answer", actor="Library caller", conditions="Calling answer().",
+                    question="What does answer() return to its caller?", protected_effect="The library return value",
+                    area="Library interface", reason="The return value is exposed to library callers.",
+                    next_deciding_fact="Identify the deployed caller.",
+                    priority=dict(impact="unknown", exposure="unknown", evidence="strong", basis="Visible source."),
+                    checks=[{"id":"value", "question":"Does the function return zero?"},
+                            {"id":"caller", "question":"Which deployment calls the function?"}])
+        manifest = {k:selection[k] for k in ("source_plan_id", "source_fingerprint")}
+        manifest.update(schema_version="mehscanWorkPlan/v1", items=[item])
+        work_plan = self.base / "checks.json"
+        work_plan.write_text(json.dumps(manifest))
+        reviewer = self.base / "reviewer.py"
+        reviewer.write_text(reviewer.read_text().replace("'proposals':proposals,'coverage':", """'proposals':proposals,
+    'work_checks':[{'check_id':'value','status':'violated','summary':'The body returns 42.',
+        'evidence':[cite],'next_deciding_fact':None},
+        {'check_id':'caller','status':'unresolved','summary':'No deployment is shown.',
+        'evidence':[],'next_deciding_fact':'Identify the deployed caller.'}], 'coverage':"""))
+        command += ["--work-plan", str(work_plan), "--max-calls", "1", "--review-goal", "coverage"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr + self.debug_output())
+        worker = json.loads(result.stdout)
+        self.assertEqual(worker["work_goal"]["remaining_items"], 1)
+        close = self.native("state", "end", "--project-run", worker["project_run"], "--claim", worker["private_claim"],
+                            "--status", "incomplete", "--operation-key", "close-source")
+        receipt = self.base / "close.json"
+        receipt.write_text(json.dumps(close))
+        exports = self.native("report", "--close-receipt", receipt, "--format", "json-sarif")
+        report = exports["report"]
+        self.assertEqual(report["summary"]["reviewed"], 0)
+        self.assertEqual(exports["sarif"]["runs"][0]["results"], [])
+        case, = report["source_review_cases"]
+        self.assertEqual((case["id"], case["status"]), ("answer", "investigated_unresolved"))
+        answered, open_check = case["checks"]
+        self.assertEqual(answered["status"], "violated")
+        self.assertEqual(answered["evidence"], [{"path":"lib.rs", "start_line":1, "end_line":1}])
+        self.assertEqual((open_check["status"], open_check["next_deciding_fact"]),
+                         ("unresolved", "Identify the deployed caller."))
+        markdown = subprocess.check_output([self.scanner, "report", "--close-receipt", receipt, "--format", "markdown"], text=True)
+        for value in ("Named source checks", answered["question"], answered["summary"], "lib.rs:1-1",
+                      open_check["question"], open_check["next_deciding_fact"]):
+            self.assertIn(value, markdown)
+        claim = self.base / "broader-claim.json"
+        claim.write_text(json.dumps(self.native("state", "claim", "--close-receipt", receipt,
+            "--policy", "comprehensive", "--attempt-id", "broader", "--operation-key", "claim-broader")))
+        broader = self.native("investigate", "source-review-plan", "--close-receipt", receipt)
+        manifest.update(source_plan_id=broader["plan_id"], source_fingerprint=broader["source_fingerprint"])
+        manifest["items"].append(dict(item, id="response", checks=[{"id":"other", "question":"Is a caller documented?"}]))
+        expanded = self.base / "expanded.json"
+        expanded.write_text(json.dumps(manifest))
+        output = self.base / "broader"
+        result = subprocess.run([*command[:3], "--scanner", self.scanner, "--close-receipt", receipt, "--claim", claim,
+            "--reviewer-command", self.base / "command.json", "--reviewer-label", "fixture/source",
+            "--work-plan", expanded, "--output", output], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+        continued = json.loads((output / "worker.json").read_text())
+        self.assertEqual(continued["continuation"]["new_source_calls"], 0, continued)
+        self.assertEqual(continued["continuation"]["carried_cases"], 1)
+        latest = json.loads((output / "findings.json").read_text())
+        unfunded = next(case for case in latest["source_review_cases"] if case["id"] == "response")
+        self.assertEqual(unfunded["checks"][0]["status"], "not_checked")
+        self.assertEqual(self.native("report", "--close-receipt", receipt), report)
         packets = list((self.base / "worker/source-review/jobs").glob("*/context.json"))
         self.assertTrue(packets)
         router = context.language_contracts(SKILL, ["lib.rs"])[0]["text"]

@@ -362,6 +362,7 @@ def run_admitted_work(args, summary_path, summary, run_native):
         raise ValueError("source handoff has unexpected effective arguments")
     native_args = copy.copy(args)
     vars(native_args).update(handoff)
+    native_args._source_manifest_sha256 = summary.get("bundle_manifest_sha256")
     if summary.get("question_routing"):
         # The source owner is already the sole reviewer in the admitted plan.
         native_args.expert_command = None
@@ -2491,6 +2492,7 @@ def run(args, run_native, worker):
             "Cover/Context roles are not negative verdicts. See source-review/lead-accounting.json.")
     if work_registry:
         current_work = review_work.ledger(work_registry, results, budget=review_budget.snapshot(budget_path), metrics=source_metrics)
+        manifest["source_review_cases"] = review_work.report_cases(current_work)
         manifest["scope"].append("Work goal: " + current_work["goal"] + "; target status: " + current_work["target_status"]
             + ". Remaining planned items by potential impact: " + json.dumps(current_work["summary"]["remaining_by_potential_impact"])
             + ". Unclassified native items: " + str(len(current_work["summary"]["unclassified_native_ids"]))
@@ -2544,6 +2546,7 @@ def run(args, run_native, worker):
         },
     }
     if work_registry:
+        summary["bundle_manifest_sha256"] = worker.digest_file(bundles / "manifest.json")
         summary["work_review"] = {"goal": work_registry["goal"], "funded_items": len(work_registry["cases"]),
             "completed_items": len(successful), "ledger": str(stage / "work-ledger.json")}
         summary["effective_args"].update(

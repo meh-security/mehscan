@@ -2109,10 +2109,13 @@ def run_locked(args, *, source_prepared=None):
                     "--review-ids", ",".join(requested), "--output", str(args.run),
                     "--max-reviews", str(read(first_directory / "run/manifest.json")["max_reviews_per_bundle"])])
         bundle_binding = None
-        if args.phase in ("all", "native") and requested:
+        if args.phase in ("all", "native") and (requested or source_prepared):
             if not args.run:
                 raise ValueError("--run is required for selected native claims. For --first-pass, use that attempt's bundle directory.")
             selected_run = outside(args.run, root)
+            manifest_sha256 = digest_file(selected_run / "manifest.json")
+            if getattr(args, "_source_manifest_sha256", None) not in (None, manifest_sha256):
+                raise ValueError("source handoff bundle manifest changed")
             selected_manifest = read(selected_run / "manifest.json")
             source_profiles.check_bundles(source_profile, [b["review_ids"] for b in selected_manifest["bundles"]])
             bundle_files = []
@@ -2121,7 +2124,7 @@ def run_locked(args, *, source_prepared=None):
                 if Path(filename).name != filename:
                     raise ValueError("manifest request filename is not bounded")
                 bundle_files.append([filename, digest_file(selected_run / "requests" / filename)])
-            bundle_binding = context.digest([digest_file(selected_run / "manifest.json"), bundle_files,
+            bundle_binding = context.digest([manifest_sha256, bundle_files,
                 digest_file(selected_run / "input-binding.json") if (selected_run / "input-binding.json").exists() else None])
         recovery_binding = {"schema_version": "1", "package_id": package["package_id"],
                             "source_profile_implementation_sha256":source_profile_implementation,
@@ -2731,6 +2734,8 @@ def run_locked(args, *, source_prepared=None):
                 # Validate exactly the run that state record will admit.
                 admitted_run = output / "run"
                 copy_bundle_run(run_dir, admitted_run, response_dir)
+                if digest_file(admitted_run / "manifest.json") != manifest_sha256:
+                    raise ValueError("bundle manifest changed before native admission")
                 record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
                                   "--reviewer": args.reviewer_label}
                 if assignment:
@@ -2959,7 +2964,7 @@ def bind_project_run(args):
             args._continuation_receipt = {"project_run": str(receipt_path), "parent": claim["audit_parent"],
                                           "claim": context.digest(claim)}
             args._continuation_heads = {row["response"]["review_id"]: [row["decision_id"]]
-                                        for row in report["decision_records"]}
+                                        for row in report.get("decision_records", [])}
             if not args.resume_from:
                 args.continue_comprehensive = str(parent)
         else:

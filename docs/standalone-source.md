@@ -55,6 +55,8 @@ mehscan report --close-receipt close.json --format markdown --output findings.md
 
 Choose an operation key unique to this close and reuse it on retry. The journal verifies ownership and generation. The close receipt names the selected attempt and binds its findings by SHA-256. Keep its attempt directory at the recorded location. Reporting reads the admitted findings, including their original reviewer and any unresolved or missing answers. JSON, SARIF, combined JSON/SARIF and Markdown use the same saved report. The private claim file stays with the operator.
 
+For a named work plan, JSON includes `source_review_cases`. Markdown lists the same questions under **Named source checks**, with their answers, cited lines and outstanding facts at source handoff. A run can have zero native candidates and still have unresolved named checks. Native decision counts and SARIF alerts come from native review decisions. The close receipt renders the frozen report even if the working ledger later changes.
+
 Older attempt references can still render findings with `mehscan report --project-run FILE`. Earlier close receipts require the original run or attempt reference for reporting.
 
 <a id="start-a-fast-audit-after-close"></a>
