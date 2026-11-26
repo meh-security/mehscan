@@ -288,6 +288,23 @@ else:
         self.assertFalse((directory / "review/source-review/jobs").exists())
         self.assertTrue(Path(result["source_selection"]).is_file())
 
+    def test_value_consumes_a_trusted_selection_for_the_same_pinned_source(self):
+        os.environ["MEHSCAN_REVIEW_MODE"] = "value"
+        directory, _, _ = self.ready()
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        options = json.loads(Path(result["source_selection"]).read_text())
+        selected = self.workspace / "trusted" / "selection.json"
+        selected.write_text(json.dumps({
+            "source_plan_id": options["source_plan_id"],
+            "source_fingerprint": options["source_fingerprint"],
+            "assignment_ids": [], "assignments": [],
+        }))
+        os.environ["MEHSCAN_SOURCE_SELECTION"] = str(selected)
+        directory, _, _ = self.ready()
+        selected.unlink()  # Handoff uses the private copy from preparation.
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        self.assertEqual(result["status"], "reviewed", result)
+
     def test_pending_verdict_keeps_success_separate_from_security_resolution(self):
         self.auth.write_text('{"fixture":"not-a-real-key","pending":true}')
         directory,plan,record = self.ready()

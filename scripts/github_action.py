@@ -408,6 +408,9 @@ def prepare(get=None, execute=run_command):
         raise ValueError("require-complete-delta-coverage must be true or false")
     if mode != "native" and os.environ.get("MEHSCAN_STATE_STORE", ""):
         raise ValueError("review handoff currently requires fresh one-run state; persistent review is unsupported")
+    selection_input = os.environ.get("MEHSCAN_SOURCE_SELECTION")
+    if selection_input and mode == "native":
+        raise ValueError("source-selection requires Value or Comprehensive review")
     endpoints, skip = resolve_delivery(get)
     sharing = None
     if link := os.environ.get("MEHSCAN_SHARE_LINK"):
@@ -470,6 +473,16 @@ def prepare(get=None, execute=run_command):
                           "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
                           "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
                           "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
+        if selection_input and skip is None:
+            selection = Path(selection_input)
+            if not selection.is_absolute():
+                raise ValueError("source-selection requires an absolute path")
+            selection = selection.resolve(strict=True)
+            if selection.is_relative_to(checkout) or not selection.is_file():
+                raise ValueError("source-selection must be a regular file outside target source")
+            saved = control / "requested-selection.json"
+            saved.write_bytes(selection.read_bytes())
+            plan["review"]["source_selection_sha256"] = file_digest(saved)
         if provider_path:
             plan["review"]["provider_contract"] = provider_path
 
@@ -1095,11 +1108,17 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                 "--artifact-root", str(directory), *provider_arguments(plan)]
             if (directory / "bundles").exists():
                 argv += ["--run", str(directory / "bundles")]
-            if store := hosted_memory(plan):
+            store = hosted_memory(plan)
+            if store:
                 argv += ["--memory-store", store]
-                if plan["review"]["policy"] == "value":
-                    selection = hosted_value_selection(plan, effective_inventory, work, control, execute)
-                    argv += ["--source-selection", str(selection), "--native-share", "100"]
+            if expected := plan["review"].get("source_selection_sha256"):
+                selection = control / "requested-selection.json"
+                if file_digest(selection) != expected:
+                    raise ValueError("source-selection changed after handoff")
+                argv += ["--source-selection", str(selection)]
+            elif store and plan["review"]["policy"] == "value":
+                selection = hosted_value_selection(plan, effective_inventory, work, control, execute)
+                argv += ["--source-selection", str(selection), "--native-share", "100"]
             # The native worker owns finalization/report validation and admission.
             worker_error = None
             try:

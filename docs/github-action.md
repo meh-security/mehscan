@@ -194,8 +194,13 @@ templates retain their all-ID default unless selection is requested explicitly.
 These native admission hints do not choose additional AI-discovery operations.
 The default Value worker `all` phase requires `--source-selection FILE`; without
 it, invocation prepares `source-review/plan.json`, `selection-options.json` and
-`checkpoint.json` with `selection_required` and zero AI calls. The Action does
-not automatically make this host-agent choice. Use the
+`checkpoint.json` with `selection_required` and zero AI calls. Supply the Action's optional `source-selection` input to run the selected work
+in one invocation. Use an absolute path outside the target checkout. A trusted
+caller prepares this JSON from the pinned source plan, including its
+`source_plan_id`, `source_fingerprint`, ranked `assignment_ids` and
+`assignments`. The Action copies it to private control storage and binds its
+digest to the handoff. The worker checks the plan and source before dispatch.
+Omitting the input preserves the ordinary Value checkpoint and hosted selection. Use the
 [bounded selection workflow](review-worker.md#bounded-value-selection) to inspect
 source, retain the native Value queue and supply additional discovery operations
 and a native assignment ranking to the worker. Discovery selection does not remove
