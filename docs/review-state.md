@@ -55,7 +55,7 @@ the repository namespace. The first generation expects `0`. For an existing
 stream, read `state status`, then claim its current generation. A concurrent
 update fails the comparison; reread current source/lifecycle metadata before
 deciding whether to retry. A successful claim returns `result.generation` and
-`result.owner`. Pass both to updates. A different binding or `--retry true`
+`result.owner`. With a project run, save the claim in a private file and pass `--project-run FILE --claim PRIVATE_CLAIM` to owned operations such as `plan`, `work` and `record`. Explicit `--generation` and `--owner` are also supported. A different binding or `--retry true`
 creates a new generation and invalidates the previous owner. Duplicate running
 or finished snapshots coalesce without returning an owner. Cancelled/incomplete
 snapshots can start a fresh attempt. Attempt IDs cannot be reused for a new

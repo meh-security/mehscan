@@ -2113,6 +2113,25 @@ fn runtime_template(
     })
 }
 
+fn private_claim(path: &Path, root: &Path, key: &str) -> Result<(u64, String), String> {
+    outside_source(path, root)?;
+    let claim: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|_| "invalid private claim receipt")?;
+    let result = &claim["result"];
+    if result["status"] != "claimed" || result["stream_key"] != key {
+        return Err("private claim does not own this review stream".into());
+    }
+    Ok((
+        result["generation"]
+            .as_u64()
+            .ok_or("missing private claim generation")?,
+        result["owner"]
+            .as_str()
+            .ok_or("missing private claim owner")?
+            .to_owned(),
+    ))
+}
+
 pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let operation = arguments
         .next()
@@ -2180,6 +2199,16 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 report.read_findings(&findings)?;
                 admitted_close = Some((path, report));
             }
+        }
+        if let Some(path) = args.optional("--claim") {
+            if args.options.contains_key("--generation") || args.options.contains_key("--owner") {
+                return Err("--claim already supplies --generation and --owner".into());
+            }
+            let key = stream_key(&project.repository_key, &project.stream)?;
+            let (generation, owner) = private_claim(Path::new(&path), &project.source_root, &key)?;
+            args.options
+                .insert("--generation".into(), generation.to_string());
+            args.options.insert("--owner".into(), owner);
         }
         let mut supply = |name: &str, value: String| -> Result<(), String> {
             if args.options.insert(name.into(), value).is_some() {
@@ -2770,23 +2799,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 let root = source_root
                     .as_deref()
                     .ok_or("--claim requires a project run or source root")?;
-                outside_source(Path::new(&path), root)?;
-                let claim: Value =
-                    serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-                        .map_err(|_| "invalid private claim receipt")?;
-                let result = &claim["result"];
-                if result["status"] != "claimed" || result["stream_key"] != key {
-                    return Err("private claim does not own this review stream".into());
-                }
-                (
-                    result["generation"]
-                        .as_u64()
-                        .ok_or("missing private claim generation")?,
-                    result["owner"]
-                        .as_str()
-                        .ok_or("missing private claim owner")?
-                        .to_owned(),
-                )
+                private_claim(Path::new(&path), root, &key)?
             } else {
                 (
                     args.required_usize("--generation")? as u64,
@@ -3243,7 +3256,7 @@ fn help() {
         "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
-        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state claim --close-receipt FILE [--policy comprehensive] --attempt-id ID --operation-key ID\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE. For owned project operations, --claim PRIVATE_CLAIM supplies the generation and owner from the private receipt.\n  mehscan state claim --close-receipt FILE [--policy comprehensive] --attempt-id ID --operation-key ID\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

@@ -81,12 +81,10 @@ Keep the original attempt available: recovered attempts can reference its allowa
 Continue from the latest recovery attempt; an older parent cannot be forked again.
 Pre-handoff recovery also requires the original native work to remain current.
 
-For a later audit, use the ordinary native-phase `--first-pass OLD_ATTEMPT`,
-`--second-pass fast|full` and `--supersede` workflow with current native work.
-Do not pass `--work-plan` to that native invocation. A bound work-plan parent
-automatically supplies its original budget; counters and limits are not reset.
-Use the summary's effective owner reviewer/provider configuration, without the
-source-only `--question-routing` flag.
+For a later audit, use the [closed-review workflow](second-pass-review.md#run-with-the-local-worker)
+with a fresh claim, the original owner reviewer/provider configuration and the
+requested Fast or Full mode. The receipt supplies the first pass and its named-work
+budget. Omit the source-only `--work-plan` and `--question-routing` options.
 The audit reports historical first-pass case coverage separately from its native
 claim results. Partial coverage targets can supply an admitted native subset,
 but every selected audit ID must exist in the validated first report.

@@ -67,17 +67,16 @@ to narrow eligible first-pass decisions. Default: `all` eligible verdict classes
 not an all-claim Fast audit. Scope and automatic selection filter before
 rebundling, so other claims consume no second-pass calls and retain their original
 result marked outside scope. TP/FP aliases refer to the first labels, not truth.
-To check an already admitted attempt, refresh `state work` for the chosen IDs,
-pass that current work package, and add `--first-pass OLD_ATTEMPT --supersede`.
-Use the current source/runtime/provider binding and a new output directory.
-Pass the matching bundle directory with `--run`. For a source-first Value or
-Comprehensive attempt, this is usually `OLD_ATTEMPT/run`. Use the effective
-inventory and claim receipt from its source handoff. For Full, append these
-options to the ordinary worker invocation with those current bindings:
+For a closed project review, use the [receipt-based audit commands](../../../docs/standalone-source.md#audit-a-closed-project-review).
+Claim the next generation with `state claim --close-receipt FILE`, then pass
+the same receipt and that private claim to the worker. Choose Fast or Full,
+set the scope and use a fresh output directory. The worker resolves the admitted
+inventory, bundles and decisions. Close the audit using its returned project
+run and claim.
 
-```text
---phase native --first-pass OLD_ATTEMPT --run OLD_ATTEMPT/run --second-pass full --second-pass-scope all --supersede
-```
+For a first pass still owned by the current generation, the worker also accepts
+`--phase native --first-pass OLD_ATTEMPT --run BUNDLES --supersede` with a
+current work package and the same runtime. Supply the requested audit mode.
 
 `--validate-only` produces source-validated reports without changing native state.
 Select scope with the normal work package/bundles, including clean and pending

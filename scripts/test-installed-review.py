@@ -74,7 +74,7 @@ def main():
     base.mkdir()
     source = base / "source"
     source.mkdir()
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", MEHSCAN_STATE_HOME=str(base / "state"))
     def call(*args, cwd=None, failure_record=None):
         result = subprocess.run([str(value) for value in args], cwd=cwd, env=env,
             capture_output=True, text=True, encoding="utf-8", timeout=120)
@@ -102,25 +102,26 @@ def main():
     git("add", "app.js")
     git("commit", "--quiet", "-m", "target")
     target = git("rev-parse", "HEAD")
-    inventory, store, bundles = base / "inventory", base / "state", base / "bundles"
+    inventory, bundles = base / "inventory", base / "bundles"
     call(scanner, "investigate", "review-inventory", source, "--changed-from", previous, "--target", target,
          "--diff-mode", "files", "--repository-key", "test:installed-package", "--output", inventory)
-    claim = native("state", "claim", "--store", store, "--stream", "package-smoke", "--inventory", inventory,
-                   "--source-root", source, "--attempt-id", "installed", "--expected-generation", "0", "--operation-key", "claim")
-    common = ["--store", store, "--stream", "package-smoke", "--inventory", inventory, "--source-root", source,
-              "--generation", "1", "--owner", claim["result"]["owner"]]
+    memory = base / "memory.turso"
+    project = native("project", "bind", "--source-root", source, "--inventory", inventory,
+                     "--stream", "package-smoke", "--memory-store", memory)["project_run"]
     claim_file, work_file = base / "claim.json", base / "work.json"
-    save(claim_file, claim)
-    plan = native("state", "plan-template", "--skill-root", skill, "--inventory", inventory,
-                  "--source-root", source, "--policy", "value", "--selection", "policy")
+    save(claim_file, native("state", "claim", "--project-run", project, "--attempt-id", "installed",
+                            "--expected-generation", "0", "--operation-key", "claim"))
+    common = ["--project-run", project, "--claim", claim_file, "--skill-root", skill]
+    plan = native("state", "plan-template", "--project-run", project, "--skill-root", skill,
+                  "--policy", "value", "--selection", "policy")
     assert plan["runtime"]["limits"] == {"rounds":5, "queries":24, "bytes":524288, "timeout_seconds":900}
     assert plan["selected_review_ids"], "Changed inventory has no seeded native question"
     plan_file = base / "plan.json"
     save(plan_file, plan)
-    call(scanner, "state", "plan", *common, "--skill-root", skill, "--input", plan_file, "--operation-key", "plan")
+    call(scanner, "state", "plan", *common, "--input", plan_file, "--operation-key", "plan")
     call(scanner, "investigate", "review-bundles", source, "--inventory", inventory,
          "--review-ids", ",".join(plan["selected_review_ids"]), "--output", bundles)
-    save(work_file, native("state", "work", *common, "--skill-root", skill))
+    save(work_file, native("state", "work", *common))
     reviewer = base / "reviewer.py"
     reviewer.write_text('''import json, sys
 from pathlib import Path
@@ -168,55 +169,53 @@ print(json.dumps(result))
     save(selection, {"source_plan_id": source_plan["plan_id"], "source_fingerprint": source_plan["source_fingerprint"],
                      "assignment_ids": [], "assignments": []})
     attempt = base / "attempt"
-    call(sys.executable, "-B", package / "scripts/review_worker.py", "--scanner", scanner,
-         "--source-root", source, "--inventory", inventory, "--store", store, "--stream", "package-smoke",
-         "--claim", claim_file, "--work-package", work_file, "--reviewer-command", command,
-         "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", attempt, "--skill-root", skill,
-         "--source-selection", selection, failure_record=attempt / "worker.json")
+    worker = [sys.executable, "-B", package / "scripts/review_worker.py", "--scanner", scanner,
+              "--skill-root", skill, "--reviewer-command", command, "--reviewer-label", "package-smoke/deterministic"]
+    def close(result, key):
+        assert result["status"] == "admitted", result
+        receipt = native("state", "end", "--project-run", result["project_run"], "--claim", result["private_claim"],
+                         "--status", "finished", "--operation-key", key)
+        assert receipt["admitted_report"]["generation"] == result["generation"]
+        assert receipt["memory"]["status"] == "retained", receipt
+        path = base / (key + ".json")
+        save(path, receipt)
+        return path
+    first = json.loads(call(*worker, "--project-run", project, "--claim", claim_file, "--work-package", work_file,
+                            "--run", bundles, "--output", attempt, "--source-selection", selection,
+                            failure_record=attempt / "worker.json"))
     record = json.loads((attempt / "worker.json").read_text(encoding="utf-8"))
-    assert record["status"] == "admitted", record
     assert record["completion"]["pending_review_ids"]
     assert record["completion"]["security_resolution"] == "not_established"
-    handoff = json.loads((attempt / "source-review/summary.json").read_text(encoding="utf-8"))
-    assert handoff["completed_assignments"] == handoff["assignments"] > 0
-    assert handoff["calls"] > 0 and handoff["unknown_provider_calls"] == 0
-    effective = handoff["effective_args"]
-    inventory, claim_file, work_file, bundles = [Path(effective[name]) for name in
-        ("inventory", "claim", "work_package", "run")]
-    claim = json.loads(claim_file.read_text(encoding="utf-8"))
-    common = ["--store", store, "--stream", "package-smoke", "--inventory", inventory, "--source-root", source,
-              "--generation", str(claim["result"]["generation"]), "--owner", claim["result"]["owner"]]
-    # Exercise the optional mode from the extracted files, retaining the first
-    # attempt and using native supersession rather than editing its responses.
-    save(work_file, native("state", "work", *common, "--skill-root", skill))
+    reviewed = record["source_review"]
+    assert reviewed["completed_assignments"] == reviewed["assignments"] > 0
+    assert reviewed["calls"] > 0 and record["unknown_provider_calls"] == 0
+    first_receipt = close(first, "close-value")
     second = base / "second-pass"
-    call(sys.executable, "-B", package / "scripts/review_worker.py", "--scanner", scanner,
-         "--source-root", source, "--inventory", inventory, "--store", store, "--stream", "package-smoke",
-         "--claim", claim_file, "--work-package", work_file, "--reviewer-command", command,
-         "--reviewer-label", "package-smoke/deterministic", "--run", bundles, "--output", second,
-         "--skill-root", skill, "--phase", "native", "--first-pass", attempt,
-         "--second-pass", "fast", "--second-pass-scope", "pending", "--supersede",
-         failure_record=second / "worker.json")
+    audit_claim = base / "audit-claim.json"
+    save(audit_claim, native("state", "claim", "--close-receipt", first_receipt,
+                             "--attempt-id", "audit", "--operation-key", "claim-audit"))
+    audit = json.loads(call(*worker, "--close-receipt", first_receipt, "--claim", audit_claim, "--output", second,
+                            "--second-pass", "fast", "--second-pass-scope", "pending", "--supersede",
+                            failure_record=second / "worker.json"))
+    assert audit["generation"] == first["generation"] + 1
+    audit_receipt = close(audit, "close-audit")
     checked = json.loads((second / "second-pass.json").read_text(encoding="utf-8"))
     labels = json.loads((second / "training-labels.json").read_text(encoding="utf-8"))
     assert checked["status"] == "complete" and checked["checked"] == len(plan["selected_review_ids"])
     assert checked["outcomes"]["unresolved"] == checked["checked"]
     assert not labels["auto_approved"] and labels["labels"]
     assert all(row["label_authority"] == "model_reviewed" for row in labels["labels"])
-    report_args = ("report", "--run", attempt / "run", "--source-root", source,
-                   "--reviewer", "package-smoke/deterministic")
+    report_args = ("report", "--close-receipt", first_receipt)
     exports = native(*report_args, "--format", "json-sarif")
     assert exports["sarif"] == native(*report_args, "--format", "sarif")
     assert exports["report"] == native(*report_args, "--format", "json")
     assert exports["sarif"]["version"] == "2.1.0" and exports["sarif"]["runs"][0]["results"] == []
     # This checks imports from the archive, without credentials or a client launch.
     call(sys.executable, "-B", skill / "scripts/codex_reviewer.py", "--help")
-    memory = base / "memory.turso"
-    capture = native("state", "end", *common, "--repository-key", "test:installed-package",
-                     "--status", "finished", "--operation-key", "end", "--memory-store", memory)
-    assert capture["memory"]["status"] == "retained", capture
+    assert native("report", "--close-receipt", audit_receipt) == json.loads((second / "findings.json").read_text(encoding="utf-8"))
+    effective = native("project", "resolve", "--project-run", audit["project_run"])
     saved = native("memory", "assessments", "--store", memory, "--source-root", source,
-                   "--inventory", inventory, "--stream", "package-smoke")
+                   "--inventory", effective["inventory"], "--stream", effective["stream"])
     retained = saved["batches"][0]["assessments"]
     assert retained and all(row["verdict"] == "needs_review" for row in retained), saved
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,

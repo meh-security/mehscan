@@ -184,7 +184,7 @@ fn bind(mut args: ParsedArguments) -> Result<(), String> {
     let source_root =
         fs::canonicalize(args.required("--source-root")?).map_err(|e| e.to_string())?;
     let inventory = fs::canonicalize(args.required("--inventory")?).map_err(|e| e.to_string())?;
-    let state_store = std::path::absolute(args.required("--store")?).map_err(|e| e.to_string())?;
+    let state_store = args.optional("--store").map(PathBuf::from);
     let stream = args.required("--stream")?;
     let memory_store = args.optional("--memory-store").map(PathBuf::from);
     let temporary = temporary_mode(
@@ -194,12 +194,20 @@ fn bind(mut args: ParsedArguments) -> Result<(), String> {
     args.finish()?;
     validate_label(&stream, "review stream")?;
     outside_source(&inventory, &source_root)?;
-    outside_source(&state_store, &source_root)?;
     let (_, binding) = crate::review_state::inventory(&inventory, &source_root)?;
-    let memory_store = match memory_store {
-        Some(path) => std::path::absolute(path).map_err(|e| e.to_string())?,
-        None => repository_locations(&source_root, &binding.repository)?.memory_store,
+    let (journal, memory) = match (state_store, memory_store) {
+        (Some(journal), Some(memory)) => (journal, memory),
+        (journal, memory) => {
+            let defaults = repository_locations(&source_root, &binding.repository)?;
+            (
+                journal.unwrap_or(defaults.state_store),
+                memory.unwrap_or(defaults.memory_store),
+            )
+        }
     };
+    let state_store = std::path::absolute(journal).map_err(|e| e.to_string())?;
+    let memory_store = std::path::absolute(memory).map_err(|e| e.to_string())?;
+    outside_source(&state_store, &source_root)?;
     outside_source(&memory_store, &source_root)?;
     let reference = PreparedProject {
         schema_version: 1,
@@ -233,7 +241,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let mut arguments = ParsedArguments::parse(arguments)?;
     if arguments.help || matches!(operation.as_deref(), None | Some("help" | "--help" | "-h")) {
         println!(
-            "USAGE:\n  mehscan project resolve --project-run FILE\n  mehscan project bind --source-root ROOT --inventory DIR --store DIR --stream NAME [--memory-store FILE | --memory-mode temporary]\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT [--base-inventory FINGERPRINT]] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context. With --base-inventory, --pull true also reads context for the specified baseline."
+            "USAGE:\n  mehscan project resolve --project-run FILE\n  mehscan project bind --source-root ROOT --inventory DIR --stream NAME [--store DIR] [--memory-store FILE | --memory-mode temporary]\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT [--base-inventory FINGERPRINT]] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context. With --base-inventory, --pull true also reads context for the specified baseline."
         );
         return Ok(());
     }

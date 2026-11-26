@@ -24,7 +24,7 @@ mehscan project prepare "$SOURCE" --config /review-config/payments.json \
 The command creates a standard full review inventory and a `project.json`
 receipt in the new output directory. The receipt lists the repository key,
 stream, native snapshot, inventory fingerprint, journal path, and local
-memory database. Pass `--project-run /path/to/inventory/project-run.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, work package, reviewer and output for the attempt. Manual clients can use the receipt’s `inventory`, `state_store`, and `stream` in the
+memory database. Pass `--project-run /path/to/inventory/project-run.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, work package, reviewer and output for the attempt. Manual clients pass the project run and private claim through the
 [ordinary review workflow](review-worker.md#prepare-review-work). Use
 `--stream NAME` for a different review track. When both the configuration and
 command omit a stream, the command uses `imported`. The optional artifact
@@ -40,7 +40,7 @@ to recover the store or continue in temporary mode.
 
 The compact `project-run.json` contains the local project bindings. The full `project.json` keeps the intake and upstream history and also works as a reference for older preparations. Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project-run.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation.
 
-For an existing native inventory, `mehscan project bind --source-root "$SOURCE" --inventory "$INVENTORY" --store "$JOURNAL" --stream "$STREAM" --memory-mode temporary` creates the same `project-run.json` alongside it. This preserves the inventory’s Full, Changed or Impact scope. For retained memory, supply `--memory-store FILE` or use the repository default. Bind requires a directory with no existing project reference.
+For an existing native inventory, `mehscan project bind --source-root "$SOURCE" --inventory "$INVENTORY" --stream "$STREAM"` creates the same `project-run.json` alongside it. This preserves the inventory’s Full, Changed or Impact scope. The repository supplies the default journal and retained-memory locations. Use `--store DIR` for a separate journal and `--memory-store FILE` for a specific database. For a one-shot run, choose a temporary journal and `--memory-mode temporary`. Bind requires a directory with no existing project reference.
 
 ## Close and report a project review
 
@@ -54,6 +54,8 @@ mehscan state end --project-run "$(jq -r .project_run worker-result.json)" \
   --status finished --operation-key close-delivery > close.json
 mehscan report --close-receipt close.json --format markdown --output findings.md
 ```
+
+Use `finished` for a completed review execution, including one that records pending questions. For an interrupted worker with an admitted report, use `incomplete`. A planning checkpoint has no admitted report. When recording responses directly with `state record`, close with the prepared project and its private claim, then render the validated bundle directory with `report --run`.
 
 Choose an operation key unique to this close and reuse it on retry. The journal verifies ownership and generation. The close receipt names the selected attempt and binds its findings by SHA-256. Keep its attempt directory at the recorded location. Reporting reads the admitted findings, including their original reviewer and any unresolved or missing answers. JSON, SARIF, combined JSON/SARIF and Markdown use the same saved report. The private claim file stays with the operator.
 

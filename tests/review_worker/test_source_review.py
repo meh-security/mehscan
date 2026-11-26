@@ -738,57 +738,19 @@ windows=packet['primary']['windows']""")
             (self.root / "context.reviewdata").write_text(
                 "configuration reference\n", encoding="utf8"
             )
-        store = Path(project["state_store"]) if project else self.base / "state"
-        claim = self.native(
-            "state",
-            "claim",
-            "--store",
-            store,
-            "--stream",
-            "source",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--expected-generation",
-            "0",
-            "--attempt-id",
-            "initial",
-            "--operation-key",
-            "claim",
-        )
-        common = [
-            "--store",
-            store,
-            "--stream",
-            "source",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--generation",
-            "1",
-            "--owner",
-            claim["result"]["owner"],
-            "--skill-root",
-            SKILL,
-        ]
-        plan = self.native(
-            "state",
-            "plan-template",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--policy",
-            policy,
-            "--selection",
-            "policy",
-            "--skill-root",
-            SKILL,
-        )
-        for name, data in (("claim", claim), ("plan", plan)):
-            (self.base / (name + ".json")).write_text(json.dumps(data))
+        store = self.base / "state"
+        source = ["--inventory", self.inventory, "--source-root", self.root]
+        project_args = ["--project-run", project["project_run"]] if project else None
+        lane = project_args or [*source, "--store", store, "--stream", "source"]
+        claim = self.native("state", "claim", *lane, "--expected-generation", "0",
+                            "--attempt-id", "initial", "--operation-key", "claim")
+        claim_path = self.base / "claim.json"
+        claim_path.write_text(json.dumps(claim))
+        ownership = ["--claim", claim_path] if project else ["--generation", "1", "--owner", claim["result"]["owner"]]
+        common = [*lane, *ownership, "--skill-root", SKILL]
+        plan = self.native("state", "plan-template", *(project_args or source), "--policy", policy,
+                           "--selection", "policy", "--skill-root", SKILL)
+        (self.base / "plan.json").write_text(json.dumps(plan))
         self.native(
             "state",
             "plan",
