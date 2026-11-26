@@ -163,20 +163,21 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return Ok(());
     }
     let mut root = None;
-    let mut manifest = if operation.starts_with("review-") {
+    let default_manifest = if operation.starts_with("review-") {
         PathBuf::from("benchmarks/cross-language-review-verdicts.yml")
     } else {
         PathBuf::from("benchmarks/v2-ai-eval.yml")
     };
+    let mut manifest = None;
     let mut responses = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--manifest" => {
-                manifest = PathBuf::from(
+                manifest = Some(PathBuf::from(
                     arguments
                         .next()
                         .ok_or_else(|| "--manifest requires a path".to_string())?,
-                );
+                ));
             }
             "--responses" => {
                 responses = Some(PathBuf::from(
@@ -195,13 +196,15 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
     }
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    let manifest = || maintainer_manifest(&root, manifest, &default_manifest);
     match operation.as_str() {
         "prepare" => {
             if responses.is_some() {
                 return Err("--responses is only valid for evaluation scoring".to_string());
             }
             let pack = engine(mehscan_engine::evaluation::prepare_evaluation(
-                &root, &manifest,
+                &root,
+                &manifest()?,
             ))?;
             print_json(&pack)
         }
@@ -225,7 +228,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             })?;
             let report = engine(mehscan_engine::evaluation::score_evaluation(
                 &root,
-                &manifest,
+                &manifest()?,
                 &response_set,
             ))?;
             print_json(&report)
@@ -235,7 +238,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 return Err("--responses is only valid for evaluation scoring".to_string());
             }
             let pack = engine(
-                mehscan_engine::evaluation::prepare_review_verdict_evaluation(&root, &manifest),
+                mehscan_engine::evaluation::prepare_review_verdict_evaluation(&root, &manifest()?),
             )?;
             print_json(&pack)
         }
@@ -259,7 +262,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 })?;
             let report = engine(mehscan_engine::evaluation::score_review_verdict_evaluation(
                 &root,
-                &manifest,
+                &manifest()?,
                 &response_set,
             ))?;
             print_json(&report)
@@ -566,20 +569,37 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     output
 }
 
+fn maintainer_manifest(
+    root: &Path,
+    supplied: Option<PathBuf>,
+    default: &Path,
+) -> Result<PathBuf, String> {
+    if let Some(path) = supplied {
+        return Ok(path);
+    }
+    if root.join(default).is_file() {
+        return Ok(default.to_owned());
+    }
+    Err(format!(
+        "supply --manifest PATH for this workspace (default {} is absent)",
+        default.display()
+    ))
+}
+
 fn run_benchmark(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut root = None;
-    let mut manifest = PathBuf::from("benchmarks/v2-sast.yml");
+    let mut manifest = None;
     let mut include_optional = false;
     let mut format = OutputFormat::Text;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--manifest" => {
-                manifest = PathBuf::from(
+                manifest = Some(PathBuf::from(
                     arguments
                         .next()
                         .ok_or_else(|| "--manifest requires a path".to_string())?,
-                );
+                ));
             }
             "--include-optional" => include_optional = true,
             "--format" => {
@@ -603,6 +623,7 @@ fn run_benchmark(arguments: impl Iterator<Item = String>) -> Result<(), String> 
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    let manifest = maintainer_manifest(&root, manifest, Path::new("benchmarks/v2-sast.yml"))?;
     let report = engine(mehscan_engine::benchmark::run_manifest(
         &root,
         &manifest,
@@ -952,7 +973,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     output.display()
                 )
             })?;
-            write_review_inventory(&output, &inventory)?;
+            let input_fingerprint = engine(inventory.input_fingerprint())?;
+            write_review_inventory(&output, &inventory, &input_fingerprint)?;
             if timings {
                 eprintln!(
                     "{}",
@@ -1035,9 +1057,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     return Err("source admission output must be outside the target source".into());
                 }
                 fs::create_dir(&output).map_err(|e| e.to_string())?;
-                write_review_inventory(&output, &inventory)?;
+                let input_fingerprint = engine(inventory.input_fingerprint())?;
+                write_review_inventory(&output, &inventory, &input_fingerprint)?;
                 print_json(
-                    &serde_json::json!({"mapping":mapping,"input_fingerprint":engine(inventory.input_fingerprint())?,"review_count":inventory.entries.len()}),
+                    &serde_json::json!({"mapping":mapping,"input_fingerprint":input_fingerprint,"review_count":inventory.entries.len()}),
                 )
             }
         }
@@ -1261,7 +1284,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "output": output,
             }))
         }
-        "review-jobs" => {
+        "review-jobs" | "review-tasks" => {
             let repository_key = parsed.optional("--repository-key");
             let source_repository_key = parsed.optional("--source-repository-key");
             let limit = parsed.optional_usize("--limit")?;
@@ -1283,31 +1306,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 repository_key,
                 source_repository_key,
             ))?;
-            print_json(&job)
-        }
-        "review-tasks" => {
-            let repository_key = parsed.optional("--repository-key");
-            let source_repository_key = parsed.optional("--source-repository-key");
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
-                &root,
-                context_lines,
-                limit,
-                offset,
-                include_review_material,
-            ))?;
-            engine(mehscan_engine::investigation::bind_review_job_repository(
-                &mut job,
-                repository_key,
-                source_repository_key,
-            ))?;
-            print_json(&mehscan_engine::investigation::path_review_tasks(&job))
+            if operation == "review-tasks" {
+                print_json(&mehscan_engine::investigation::path_review_tasks(&job))
+            } else {
+                print_json(&job)
+            }
         }
         "review-bundles" => {
             let repository_key = parsed.optional("--repository-key");
@@ -3110,11 +3113,12 @@ fn read_source_admission(
 fn write_review_inventory(
     output: &Path,
     inventory: &mehscan_engine::investigation::ReviewInventory,
+    input_fingerprint: &str,
 ) -> Result<(), String> {
     let summary = serde_json::json!({
         "schema_version": inventory.schema_version,
         "source_fingerprint": inventory.source_fingerprint,
-        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "input_fingerprint": input_fingerprint,
         "include_review_material": inventory.include_review_material,
         "review_count": inventory.entries.len(),
         "coverage": inventory.scan.coverage.totals,
@@ -3172,7 +3176,7 @@ fn write_review_inventory(
         })),
         "schema_version": inventory.schema_version,
         "source_fingerprint": inventory.source_fingerprint,
-        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "input_fingerprint": input_fingerprint,
         "review_count": inventory.entries.len(),
         "coverage": inventory.scan.coverage.totals,
         "impact_scope": inventory.scan.impact_scope,
@@ -4642,13 +4646,13 @@ Diff mode 'full' remains the scan default: analyze the complete repository, then
 
 fn print_benchmark_help() {
     println!(
-        "SAST BENCHMARK\n\nUSAGE:\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n\nThe default manifest is benchmarks/v2-sast.yml beneath ROOT. Fixture cases always run twice to verify deterministic evidence, paths, and coverage. Optional corpora are skipped unless --include-optional is supplied. No external scanner is downloaded or executed."
+        "SAST BENCHMARK\n\nUSAGE:\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n\nSupply a benchmark manifest beneath ROOT. Workspaces containing benchmarks/v2-sast.yml can omit --manifest. Fixture cases always run twice to verify deterministic evidence, paths, and coverage. Optional corpora are skipped unless --include-optional is supplied. No external scanner is downloaded or executed."
     );
 }
 
 fn print_evaluation_help() {
     println!(
-        "PROVIDER-NEUTRAL MATCHED EVALUATION\n\nUSAGE:\n  mehscan evaluate prepare [ROOT] [--manifest PATH]\n  mehscan evaluate score [ROOT] [--manifest PATH] --responses PATH\n  mehscan evaluate review-prepare [ROOT] [--manifest PATH]\n  mehscan evaluate review-score [ROOT] [--manifest PATH] --responses PATH\n\n'prepare' emits matched AI-only, evidence-assisted, and candidate-assisted trials. 'review-prepare' emits a small cross-language issue/not_issue/needs_review pack without oracle decisions; 'review-score' validates exactly one compact result per selected case against the hidden manifest truth and exact pack fingerprint. Known secret ranges are masked. No model or external service is called by these commands."
+        "PROVIDER-NEUTRAL MATCHED EVALUATION\n\nUSAGE:\n  mehscan evaluate prepare [ROOT] [--manifest PATH]\n  mehscan evaluate score [ROOT] [--manifest PATH] --responses PATH\n  mehscan evaluate review-prepare [ROOT] [--manifest PATH]\n  mehscan evaluate review-score [ROOT] [--manifest PATH] --responses PATH\n\nSupply a workspace evaluation manifest with --manifest, or use an existing benchmarks/v2-ai-eval.yml or benchmarks/cross-language-review-verdicts.yml beneath ROOT. 'prepare' emits matched AI-only, evidence-assisted, and candidate-assisted trials. 'review-prepare' emits a small cross-language issue/not_issue/needs_review pack without oracle decisions; 'review-score' validates exactly one compact result per selected case against the hidden manifest truth and exact pack fingerprint. Known secret ranges are masked. No model or external service is called by these commands."
     );
 }
 

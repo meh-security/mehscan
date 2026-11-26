@@ -170,7 +170,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         .prefix(".mehscan-project-")
         .tempdir_in(parent)
         .map_err(|error| error.to_string())?;
-    write_review_inventory(stage.path(), &inventory)?;
+    write_review_inventory(stage.path(), &inventory, &inventory_fingerprint)?;
     fs::write(
         stage.path().join("project.json"),
         serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
