@@ -123,7 +123,9 @@ class WorkReview(unittest.TestCase):
             if argv[1:2] == ["report"]:
                 report_settings.append((argv[argv.index("--reviewer") + 1],
                                         argv[argv.index("--allow-partial") + 1] if "--allow-partial" in argv else None))
-            if len(argv) >= 3 and list(argv[1:3]) == ["state", "record"] and not interrupted:
+            if len(argv) >= 3 and list(argv[1:3]) == ["state", "record"] and len(interrupted) < 2:
+                if interrupted:
+                    original(argv, cwd, env, timeout, payload, **kwargs)  # Commit, then lose the receipt.
                 interrupted.append(True)
                 raise worker.CommandFailure(argv, 2, "Synthetic native publication interruption")
             if len(argv) == 2 and str(argv[1]).endswith("reviewer.py"):
@@ -135,18 +137,33 @@ class WorkReview(unittest.TestCase):
             self.assertEqual(len(provider_calls), 2)
             previous = f.base / "worker"
             before = json.loads((previous/"source-review/budget.json").read_text())["reserved_calls"]
-            resumed = list(command)
-            resumed[resumed.index("--output")+1] = str(f.base/"recovered")
-            resumed += ["--resume-from", str(previous)]
-            with patch.object(sys, "argv", [worker.__file__, *resumed[3:]]):
-                self.assertEqual(worker.main(), 0)
+            resumed = self.source_resume(f, command)
+            self.assertEqual(self.invoke(resumed), 2)
+            latest = f.base / "recovered"
+            final = f.base / "final"
+            resumed[resumed.index("--resume-from") + 1] = str(latest)
+            resumed[resumed.index("--output") + 1] = str(final)
+            summary = previous / "source-review/summary.json"
+            saved = summary.read_bytes()
+            try:
+                summary.write_bytes(saved + b"\n")
+                with self.assertRaisesRegex(ValueError, "source summary changed"):
+                    self.invoke(resumed)
+                self.assertFalse((latest / "continued-to.json").exists())
+            finally:
+                summary.write_bytes(saved)
+            self.assertEqual(self.invoke(resumed), 0)
         self.assertEqual(len(provider_calls), 2)
         self.assertEqual(json.loads((previous/"source-review/budget.json").read_text())["reserved_calls"], before)
-        result = json.loads((f.base/"recovered/worker.json").read_text())
-        self.assertEqual(report_settings, [(result["reviewer"], "true")] * 2)
+        result = json.loads((final / "worker.json").read_text())
+        self.assertEqual(report_settings, [(result["reviewer"], "true")] * 3)
         self.assertTrue(result["recovered_admission"])
+        self.assertEqual(Path(result["recovered_from"]), latest)
+        receipt = json.loads((final / "native-writes/admission.json").read_text())["receipts"][0]
+        self.assertTrue(receipt["replayed"])
+        self.assertEqual(result["admission_sequence"], receipt["sequence"])
         self.assertEqual(json.loads((previous / "findings.json").read_text()),
-                         json.loads((f.base / "recovered/findings.json").read_text()))
+                         json.loads((final / "findings.json").read_text()))
         self.assertEqual(result["work_goal"]["completed_items"], 2)
         self.assertEqual(Path(result["work_goal"]["continuation_of"]), previous)
 

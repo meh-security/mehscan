@@ -367,10 +367,25 @@ def run_admitted_work(args, summary_path, summary, run_native):
     return run_native(native_args, source_prepared=summary_path)
 
 
+def recovery_summary(attempt, root, worker):
+    checkpoint = attempt / "recovery.json"
+    if checkpoint.is_file():
+        binding = worker.read(checkpoint)["binding"]
+        if "source_handoff" in binding:
+            source = binding["source_handoff"]
+            origin = worker.outside(source["attempt"], root)
+            summary = origin / "source-review/summary.json"
+            if worker.outside(summary, root) != summary or worker.digest_file(summary) != source["summary_sha256"]:
+                raise ValueError("source summary changed since native handoff")
+            return summary
+    return attempt / "source-review/summary.json"
+
+
 def resume_native_handoff(args, root, output, previous, run_native, worker):
+    origin = previous.parent.parent
     data = worker.read(previous)
     if data.get("work_review"):
-        handoff, data, _ = review_work.read_handoff(Path(args.resume_from), root, worker)
+        handoff, data, _ = review_work.read_handoff(origin, root, worker)
         if getattr(args, "work_plan", None) and worker.digest_file(args.work_plan) != handoff["manifest_sha256"]:
             raise ValueError("work-plan continuation requires the original unchanged manifest")
     if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
@@ -378,14 +393,15 @@ def resume_native_handoff(args, root, output, previous, run_native, worker):
         raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
     result = run_admitted_work(args, previous, data, run_native)
     prior = None
-    if data.get("work_review") and (Path(args.resume_from) / "source-review/work-ledger.json").is_file():
-        prior = worker.read(Path(args.resume_from) / "source-review/work-ledger.json")
+    ledger = previous.with_name("work-ledger.json")
+    if data.get("work_review") and ledger.is_file():
+        prior = worker.read(ledger)
         if prior:
             result["work_goal"] = {"goal":prior["goal"], "status":prior["target_status"],
                 "target_complete":prior["target_complete"], "completed_items":prior["summary"]["closed"],
-                "remaining_items":prior["summary"]["remaining"], "ledger":str(Path(args.resume_from) / "source-review/work-ledger.json"),
+                "remaining_items":prior["summary"]["remaining"], "ledger":str(ledger),
                 "authority":"Historical first-pass checks retained during native handoff continuation."}
-            result["work_goal"]["continuation_of"] = str(Path(args.resume_from).resolve())
+            result["work_goal"]["continuation_of"] = str(origin)
             if prior.get("goal") == "coverage" and not prior.get("target_complete"):
                 result["status"] = "incomplete"
     if data.get("comprehensive"):
@@ -424,17 +440,16 @@ def run(args, run_native, worker):
         source_resume = Path(args.resume_from)
         args.resume_from = None
     if getattr(args, "resume_from", None):
-        previous = Path(args.resume_from) / "source-review/summary.json"
-        if not previous.is_file():
-            if (Path(args.resume_from) / "source-review").is_dir():
-                if not getattr(args, "work_plan", None) or not (previous.parent / "source-recovery.json").is_file():
-                    raise ValueError("source recovery requires the original work plan and a bound checkpoint")
-                source_resume = Path(args.resume_from)
-                args.resume_from = None
-            else:
-                return run_native(args)
-    if getattr(args, "resume_from", None):
-        return resume_native_handoff(args, root, output, previous, run_native, worker)
+        attempt = worker.outside(args.resume_from, root)
+        previous = recovery_summary(attempt, root, worker)
+        if previous.is_file():
+            return resume_native_handoff(args, root, output, previous, run_native, worker)
+        if not (attempt / "source-review").is_dir():
+            return run_native(args)
+        if not getattr(args, "work_plan", None) or not (previous.parent / "source-recovery.json").is_file():
+            raise ValueError("source recovery requires the original work plan and a bound checkpoint")
+        source_resume = attempt
+        args.resume_from = None
     started_run = time.monotonic()
     started_epoch = time.time()
     output.mkdir(parents=True, exist_ok=False)

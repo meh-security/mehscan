@@ -1226,6 +1226,14 @@ A recovery chain cannot fork from an already continued attempt; follow its
 `continued-to.json` to the latest attempt. One OS lock fences controllers for the
 same local state stream and releases when the controller exits.
 
+If a source review reaches native admission and its retry is also interrupted,
+use the same invocation with a new output directory and pass the **latest** attempt
+to `--resume-from`. Keep the earlier attempt directories in place. The latest
+checkpoint records where the source stage finished and the SHA-256 digest of its
+summary. The worker verifies that summary, uses its effective claim and work
+package, and replays native writes from the latest attempt. The original source
+budget and work ledger still account for completed checks.
+
 Recovery also covers native plan, decision and pending-question writes. Before
 writing, the controller saves a typed batch under `native-writes/`, with the
 original operation keys and input hashes. A retry checks native source/runtime

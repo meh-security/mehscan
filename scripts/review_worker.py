@@ -2103,6 +2103,11 @@ def run_locked(args, *, source_prepared=None):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if source_prepared:
+            recovery_binding["source_handoff"] = {
+                "attempt": str(source_prepared.parent.parent),
+                "summary_sha256": digest_file(source_prepared),
+            }
         if assignment:
             recovery_binding["assignment"] = assignment
         if group_operations:
