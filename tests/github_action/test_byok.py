@@ -391,7 +391,7 @@ else:
     def test_export_failure_is_incomplete_without_a_ready_manifest(self):
         directory,plan,record=self.ready()
         def execute(argv,**kwargs):
-            if "--format" in argv and argv[argv.index("--format")+1]=="sarif":
+            if "--format" in argv and argv[argv.index("--format")+1] in ("json-sarif", "sarif"):
                 raise RuntimeError("synthetic renderer failure")
             return self.execute(argv,**kwargs)
         result=adapter.run_model(directory / "plan.json",self.delivery.get,execute)

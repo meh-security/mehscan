@@ -2037,6 +2037,38 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    if let Some(path) = args.optional("--project-run") {
+        let project = super::review_memory::PreparedProject::read(Path::new(&path))?;
+        let mut supply = |name: &str, value: String| -> Result<(), String> {
+            if args.options.insert(name.into(), value).is_some() {
+                return Err(format!("--project-run already supplies {name}"));
+            }
+            Ok(())
+        };
+        let temporary = project.temporary();
+        if operation != "plan-template" {
+            supply("--store", project.state_store.display().to_string())?;
+            supply("--stream", project.stream)?;
+        }
+        if operation == "release" {
+            supply("--repository-key", project.repository_key)?;
+        } else {
+            supply("--inventory", project.inventory.display().to_string())?;
+            if !matches!(operation.as_str(), "status" | "history") {
+                supply("--source-root", project.source_root.display().to_string())?;
+            }
+        }
+        if matches!(
+            operation.as_str(),
+            "work" | "allocate" | "plan" | "record" | "end"
+        ) {
+            if temporary {
+                supply("--memory-mode", "temporary".into())?;
+            } else {
+                supply("--memory-store", project.memory_store.display().to_string())?;
+            }
+        }
+    }
     if operation == "runtime-template" {
         let policy = match args.optional("--policy").as_deref().unwrap_or("value") {
             "value" => mehscan_core::ReviewCompletionPolicy::Value,
@@ -3013,7 +3045,7 @@ fn help() {
         "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
-        "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

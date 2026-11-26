@@ -203,9 +203,12 @@ print(json.dumps(result))
     assert checked["outcomes"]["unresolved"] == checked["checked"]
     assert not labels["auto_approved"] and labels["labels"]
     assert all(row["label_authority"] == "model_reviewed" for row in labels["labels"])
-    sarif = native("report", "--run", attempt / "run", "--source-root", source,
-                   "--reviewer", "package-smoke/deterministic", "--format", "sarif")
-    assert sarif["version"] == "2.1.0" and sarif["runs"][0]["results"] == []
+    report_args = ("report", "--run", attempt / "run", "--source-root", source,
+                   "--reviewer", "package-smoke/deterministic")
+    exports = native(*report_args, "--format", "json-sarif")
+    assert exports["sarif"] == native(*report_args, "--format", "sarif")
+    assert exports["report"] == native(*report_args, "--format", "json")
+    assert exports["sarif"]["version"] == "2.1.0" and exports["sarif"]["runs"][0]["results"] == []
     # This checks imports from the archive, without credentials or a client launch.
     call(sys.executable, "-B", skill / "scripts/codex_reviewer.py", "--help")
     memory = base / "memory.turso"

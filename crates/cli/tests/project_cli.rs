@@ -119,17 +119,8 @@ fn linked_source_folders_keep_project_memory_and_compare_an_explicit_baseline() 
     assert!(Path::new(original["memory_store"].as_str().unwrap()).is_file());
     let claimed = ok(fixture
         .command()
-        .args(["state", "claim"])
-        .args([
-            "--store",
-            original["state_store"].as_str().unwrap(),
-            "--stream",
-            "main",
-        ])
-        .arg("--inventory")
-        .arg(&output)
-        .arg("--source-root")
-        .arg(&source)
+        .args(["state", "claim", "--project-run"])
+        .arg(original["project_run"].as_str().unwrap())
         .args([
             "--attempt-id",
             "first",

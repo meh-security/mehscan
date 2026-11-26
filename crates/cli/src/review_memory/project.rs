@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use mehscan_engine::investigation::{bind_inventory_repository, build_review_inventory};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
@@ -24,14 +24,108 @@ struct ProjectConfig {
     remote: Option<String>,
 }
 
+/// The prepared reference carries the project bindings shared by journal and worker commands.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PreparedProject {
+    schema_version: u32,
+    pub(crate) source_root: PathBuf,
+    pub(crate) inventory: PathBuf,
+    inventory_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    report_manifest_sha256: Option<String>,
+    pub(crate) repository_key: String,
+    pub(crate) state_store: PathBuf,
+    pub(crate) memory_store: PathBuf,
+    pub(crate) stream: String,
+    memory: ProjectMemory,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProjectMemory {
+    reason: Option<String>,
+}
+
+impl PreparedProject {
+    pub(crate) fn temporary(&self) -> bool {
+        self.memory.reason.as_deref() == Some("temporary_mode")
+    }
+
+    pub(crate) fn report_run(&self, receipt: &Path) -> Result<PathBuf, String> {
+        use sha2::{Digest, Sha256};
+        let expected = self
+            .report_manifest_sha256
+            .as_deref()
+            .ok_or("report requires the admitted attempt’s project-run.json")?;
+        let run = receipt
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .with_file_name("run");
+        outside_source(&run, &self.source_root)?;
+        let manifest = fs::read(run.join("manifest.json")).map_err(|error| error.to_string())?;
+        if format!("{:x}", Sha256::digest(manifest)) != expected {
+            return Err("report manifest differs from the admitted project run".into());
+        }
+        Ok(run)
+    }
+
+    pub(crate) fn read(path: &Path) -> Result<Self, String> {
+        fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
+            let file = fs::File::open(path)
+                .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+            serde_json::from_reader(std::io::BufReader::new(file))
+                .map_err(|error| format!("invalid {}: {error}", path.display()))
+        }
+        let path = path.canonicalize().map_err(|error| error.to_string())?;
+        let receipt: Self = read_json(&path)?;
+        if receipt.schema_version != 1
+            || !receipt.source_root.is_absolute()
+            || !receipt.source_root.is_dir()
+        {
+            return Err("unsupported or invalid project receipt".into());
+        }
+        for external in [
+            &receipt.inventory,
+            &receipt.state_store,
+            &receipt.memory_store,
+        ] {
+            if !external.is_absolute() {
+                return Err("project receipt requires absolute paths".into());
+            }
+            outside_source(external, &receipt.source_root)?;
+        }
+        let directory = receipt
+            .inventory
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        outside_source(&path, &receipt.source_root)?;
+        if receipt.report_manifest_sha256.is_none() && path.parent() != Some(directory.as_path()) {
+            return Err("project receipt must accompany its prepared inventory".into());
+        }
+        let summary: serde_json::Value = read_json(&directory.join("overview.json"))?;
+        if summary["input_fingerprint"].as_str() != Some(receipt.inventory_fingerprint.as_str())
+            || summary["native_identity"]["repository"]["repository_key"].as_str()
+                != Some(receipt.repository_key.as_str())
+        {
+            return Err("prepared project inventory differs from its receipt".into());
+        }
+        validate_label(&receipt.stream, "review stream")?;
+        Ok(receipt)
+    }
+}
+
 pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let operation = arguments.next();
     let mut arguments = ParsedArguments::parse(arguments)?;
     if arguments.help || matches!(operation.as_deref(), None | Some("help" | "--help" | "-h")) {
         println!(
-            "USAGE:\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT [--base-inventory FINGERPRINT]] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context. With --base-inventory, --pull true also reads context for the specified baseline."
+            "USAGE:\n  mehscan project resolve --project-run FILE\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT [--base-inventory FINGERPRINT]] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context. With --base-inventory, --pull true also reads context for the specified baseline."
         );
         return Ok(());
+    }
+    if operation.as_deref() == Some("resolve") {
+        let path = PathBuf::from(arguments.required("--project-run")?);
+        arguments.finish()?;
+        return print_json(&PreparedProject::read(&path)?);
     }
     if operation.as_deref() != Some("prepare") {
         return Err("unknown project operation; use 'mehscan project --help'".into());
@@ -148,6 +242,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
 
     let receipt = json!({
         "schema_version": 1,
+        "project_run": output.join("project.json"),
         "repository_key": config.repository_key,
         "stream": stream,
         "source_root": root,

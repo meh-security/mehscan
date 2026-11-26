@@ -2749,6 +2749,14 @@ def run_locked(args):
         record.update(status="source_validated" if validate_only else "admitted",
                       completion=state["completion"], work_package_id=package["package_id"],
                       native_admission=not validate_only)
+        manifest = output / "run/manifest.json"
+        if getattr(args, "_project_bindings", None) and not validate_only and manifest.is_file():
+            receipt = {**args._project_bindings, "inventory": str(inventory),
+                       "inventory_fingerprint": payload["inventory_input_fingerprint"],
+                       "report_manifest_sha256": digest_file(manifest)}
+            receipt_path = output / "project-run.json"
+            write(receipt_path, receipt)
+            record["project_run"] = str(receipt_path)
     except Exception as error:
         record.update(status="cancelled" if _cancelled else "incomplete", reason=type(error).__name__, detail=str(error))
     finally:
@@ -2852,10 +2860,37 @@ def run_locked(args):
     return record
 
 
+def bind_project_run(args):
+    """Resolve the native project receipt before claiming or dispatching any work."""
+    if not args.project_run:
+        missing = [name for name in ("source_root", "inventory", "store", "stream") if not getattr(args, name)]
+        if missing:
+            raise ValueError("supply --project-run or " + ", ".join("--" + name.replace("_", "-") for name in missing))
+        return
+    if any(getattr(args, name) for name in ("source_root", "inventory", "store", "stream", "memory_store", "memory_mode")):
+        raise ValueError("--project-run already supplies source, inventory, store, stream and memory settings")
+    receipt_path = Path(args.project_run).resolve(strict=True)
+    root = Path(read(receipt_path)["source_root"]).resolve(strict=True)
+    outside(receipt_path, root)
+    scanner = outside(args.scanner, root)
+    receipt = json.loads(subprocess.check_output(
+        [str(scanner), "project", "resolve", "--project-run", str(receipt_path)], encoding="utf-8"))
+    args._project_bindings = receipt
+    args.source_root, args.inventory = receipt["source_root"], receipt["inventory"]
+    args.store, args.stream = receipt["state_store"], receipt["stream"]
+    if receipt["memory"].get("reason") == "temporary_mode":
+        args.memory_mode = "temporary"
+    else:
+        args.memory_store = receipt["memory_store"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for option in ("scanner", "source-root", "inventory", "store", "stream", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
+    for option in ("scanner", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
         parser.add_argument("--" + option, required=True)
+    for option in ("source-root", "inventory", "store", "stream"):
+        parser.add_argument("--" + option)
+    parser.add_argument("--project-run", help="project.json from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")
@@ -2911,6 +2946,10 @@ def main():
     parser.add_argument("--source-collector-profile", choices=("routine", "expert"),
                         help="experimental raw-source collection using a bound profile; otherwise use scoped expert research")
     args = parser.parse_args()
+    try:
+        bind_project_run(args)
+    except (OSError, KeyError, TypeError, ValueError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))
     if not (0 <= args.native_share <= 100 and args.max_calls > 0 and args.input_token_budget > 0 and args.admission_seconds > 0):
         parser.error("native share must be 0..100 and whole-review budgets must be positive")
     if args.call_only_budget and (not args.work_plan or args.phase != "all" or args.first_pass
@@ -2923,6 +2962,8 @@ def main():
         parser.error("review and research budgets must be positive and within bounded limits")
     result = run(args)
     summary = {"status": result["status"], "generation": result["generation"], "directory": args.output}
+    if "project_run" in result:
+        summary["project_run"] = result["project_run"]
     if "second_pass" in result:
         summary["second_pass"] = result["second_pass"]
     if "review_options" in result:
