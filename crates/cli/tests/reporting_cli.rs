@@ -336,6 +336,9 @@ fn candidate_format_excludes_raw_observation_inventory() {
     assert_eq!(report["schema_version"], "1.0");
     assert_eq!(report["root"], ".");
     assert_eq!(report["scan_schema_version"], "2.1");
+    let coverage = report["coverage"]["cwe"].as_array().unwrap();
+    assert!(!coverage.is_empty());
+    assert!(coverage.iter().all(|row| row.get("level").is_none()));
     let mut ids = report["candidates"]
         .as_array()
         .expect("candidates")
@@ -356,6 +359,11 @@ fn sarif_format_emits_candidates_instead_of_raw_observations() {
     assert_eq!(sarif["version"], "2.1.0");
     assert_eq!(sarif["runs"][0]["properties"]["scanRoot"], ".");
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
+    let coverage = sarif["runs"][0]["properties"]["coverage"]["cwe"]
+        .as_array()
+        .unwrap();
+    assert!(!coverage.is_empty());
+    assert!(coverage.iter().all(|row| row.get("level").is_none()));
     let mut ids = sarif["runs"][0]["results"]
         .as_array()
         .expect("results")
@@ -397,6 +405,9 @@ fn timings_are_machine_readable_and_do_not_change_stdout() {
         serde_json::from_slice(&output.stderr).expect("stderr should contain one profile object");
     assert_eq!(scan["schema_version"], "2.1");
     assert_eq!(scan["root"], ".");
+    let coverage = scan["coverage"]["cwe"].as_array().unwrap();
+    assert!(!coverage.is_empty());
+    assert!(coverage.iter().all(|row| row.get("level").is_none()));
     assert!(profile["total_microseconds"].as_u64().is_some());
     assert!(
         profile["file_analysis"]["declarative_patterns_considered"]

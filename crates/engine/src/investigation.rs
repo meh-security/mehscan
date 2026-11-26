@@ -440,6 +440,18 @@ impl ReviewInventory {
         let bytes = if self.portable_input_fingerprint {
             let mut input = serde_json::to_value(self).map_err(|e| EngineError(e.to_string()))?;
             input["scan"]["root"] = serde_json::Value::String(".".into());
+            // Old inventories included this constant label in their fingerprint.
+            // Keep their binding to review work even when new scan JSON omits it.
+            if let Some(rows) = input["scan"]["coverage"]["cwe"].as_array_mut() {
+                for (row, coverage) in rows.iter_mut().zip(&self.scan.coverage.cwe) {
+                    if coverage.level.is_none() {
+                        let mut legacy = coverage.clone();
+                        legacy.level = Some(mehscan_core::CweSupportLevel::Partial);
+                        *row =
+                            serde_json::to_value(legacy).map_err(|e| EngineError(e.to_string()))?;
+                    }
+                }
+            }
             serde_json::to_vec(&input)
         } else {
             serde_json::to_vec(self)
