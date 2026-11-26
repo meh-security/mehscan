@@ -12,12 +12,12 @@ runtime analysis.
 | C and C++ | Memory extents, arithmetic, allocation, release and selected ownership relationships. Macros, build conditions, custom allocators/deleters and virtual dispatch may need source review. The standard scanner does not resolve a complete compiler type or lifetime model. |
 | C# | Recognized data, interpreter, resource and server-operation APIs, with HTTP attributes associated with their owning methods. Explicit HTML file responses include MIME and download context. Razor/Blazor are included by default: native raw-HTML checks and AI review of original source require no SDK backend. The optional SDK backend adds mapped C# analysis. Dependency injection, effective permission handlers and component execution can require further source; an attribute or binding is not proof of enforcement. |
 | Java | Recognized JVM APIs, database calls, resource access and server operations. Overloads, injected providers, reflection and effective framework policies remain bounded by the available source and API recognition. |
-| JavaScript and TypeScript/TSX | Recognized interpreters, database operations, resources, credentials and server actions. Static import/export navigation helps find implementations; it does not prove active dependency injection or runtime dispatch. Vue, JSX/TSX and embedded templates can have partial syntax or output-context coverage. |
+| JavaScript and TypeScript/TSX | Recognized interpreters, database operations, resources, credentials and server actions. Static import/export navigation helps find implementations; it does not prove active dependency injection or runtime dispatch. Syntax and output-context recognition vary across Vue, JSX/TSX and embedded templates. |
 | Python | Recognized database APIs, interpreter/resource operations and selected credential effects, including supported async cursors and ORM-backed password writes. Dynamic dispatch, arbitrary context managers and application-specific account APIs may need manual investigation. |
 | Go | Recognized SQL/NoSQL, formatted HTML, HTTP and credential relationships, with bounded package/receiver binding. A matching function name or callback argument does not establish an executed operation. Framework wiring and relationships beyond these bindings remain review questions. |
 | Rust | Selected unsafe memory, parser and transport sizes, archive extraction, filesystem operations, typed HTTP clients, credentials and SQL. General macro expansion, trait dispatch and cross-object state remain outside the bounded source analysis. |
-| PHP | A partial profile for recognized native and framework APIs. Arbitrary includes, indirect calls and injected or untyped receivers can prevent a relationship from being recognized. See [PHP coverage](php-coverage.md). |
-| Kotlin | A partial JVM profile for recognized typed APIs. Compiler overload/extension resolution, inferred factories, ORM models and reactive execution remain limited. See [Kotlin coverage](kotlin-coverage.md). |
+| PHP | Recognized native and framework APIs. Arbitrary includes, indirect calls and injected or untyped receivers can prevent a relationship from being recognized. See [PHP coverage](php-coverage.md). |
+| Kotlin | Recognized typed JVM APIs. Compiler overload/extension resolution, inferred factories, ORM models and reactive execution remain limited. See [Kotlin coverage](kotlin-coverage.md). |
 | Ruby | Source review for `.rb`, `.rbw`, `.gemspec`, `.rake`, `.ru`, Gemfile and Rakefile. Native evidence covers selected Rails, process, file, HTTP and object-loading contracts. Framework and library coverage is bounded. |
 
 Ruby process evidence recognizes `Open3.capture2`, `capture2e` and `capture3`
@@ -188,6 +188,9 @@ results then describe that directory, not the entire product.
 ## Read coverage alongside the findings
 
 Scan JSON, candidate output and review manifests retain coverage and scope.
+The `coverage.cwe` entries list CWE categories represented by loaded rules or
+observed procedural evidence, along with their languages. New scan and
+candidate output omit the legacy per-CWE `level` field.
 Unsupported, ignored and parse-failed counts identify limits to inspect. A
 parse-failed file can contain recoverable source: evidence outside invalid syntax
 may still be retained. Neither the diagnostic nor a surviving candidate proves

@@ -183,7 +183,9 @@ pub enum CweSupportLevel {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CweCoverage {
     pub cwe: String,
-    pub level: CweSupportLevel,
+    /// Preserved when reading older reports. New scanner output omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<CweSupportLevel>,
     /// Languages backed by loaded declarative rules for this scan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declarative_languages: Vec<Language>,

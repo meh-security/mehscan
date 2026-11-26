@@ -1,9 +1,8 @@
 # Extended database rules: SQL and NoSQL coverage
 
-This gap analysis covers all 12 supported language profiles. It compares query
-mechanics with the embedded rule catalog **and** procedural analyzers; a method
-missing from YAML is not necessarily missing from a scan. All coverage remains
-partial. An observed boundary is a review lead, not a confirmed injection.
+This gap analysis covers all 12 supported language profiles. The matrix lists
+query boundaries recognized by the embedded rule catalog and procedural
+analyzers. Each observed boundary is a lead for reviewing injection risk.
 
 SQL text and raw clauses use CWE-89. Operator-capable NoSQL filters, pipelines,
 raw document queries and executable predicates use CWE-943. Query preparation
@@ -94,7 +93,7 @@ Neither BSON parsing nor a collection call alone establishes an issue.
 SQL argument roles across every language, property identity and lookalikes.
 `extended_database.rs` covers NoSQL operands across every language, additional
 SQL drivers, DynamoDB binding roles, imported-name shadows and PHP builders.
-Catalog checks require provenance and retain partial coverage declarations.
+Catalog checks require provenance and verify each loaded rule's CWE and language mapping.
 
 Implementations and guidance are independently authored. Each embedded extended
 rule links to driver documentation and its applicable CWE. Examples:

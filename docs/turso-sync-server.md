@@ -34,7 +34,7 @@ for the selected hostname. Separate endpoints enforce the audience boundary
 even where two audiences use the same repository key. `--publisher-label` is
 supplied by the client. When the same client reviews a repository for multiple
 audiences, use separate `MEHSCAN_STATE_HOME` directories to keep their local
-review history apart. [Mehscan replica and repository checks](https://github.com/meh-security/mehscan/blob/v0.16.0/crates/cli/src/review_memory/upstream.rs)
+review history apart. [Mehscan replica and repository checks](https://github.com/meh-security/mehscan/blob/v0.17.0/crates/cli/src/review_memory/upstream.rs)
 
 Duplicate the Caddy site block with the hostname and port for each instance.
 Use a different secret and environment variable in each block. Give authorized
@@ -55,11 +55,11 @@ Cloud. [Server implementation](https://github.com/tursodatabase/turso/blob/v0.8.
 
 ## Install and start Turso
 
-The version pair verified for this guide is **Mehscan 0.16.0** (Rust Turso SDK
+The version pair verified for this guide is **Mehscan 0.17.0** (Rust Turso SDK
 0.8.3) and **`tursodb` 0.8.4** on Linux x86-64. Install Mehscan on the clients
 and the Turso Database CLI on the server. Choose the matching archive and SHA-256
 file for the server architecture from the Turso release. [Mehscan installation](installation.md),
-[Pinned SDK](https://github.com/meh-security/mehscan/blob/v0.16.0/crates/cli/Cargo.toml),
+[Pinned SDK](https://github.com/meh-security/mehscan/blob/v0.17.0/crates/cli/Cargo.toml),
 [Turso Database 0.8.4 release](https://github.com/tursodatabase/turso/releases/tag/v0.8.4)
 
 ```sh
@@ -189,7 +189,7 @@ On each client, use the same explicit repository key supplied when creating
 the inventory. Use a new replica path outside the source directory for each
 installation, separate from any existing local review-memory database. Each
 replica binds to the exact remote URL and repository key. Set the HTTPS URL and
-use the following shell function to pull and publish. [Mehscan URL and replica validation](https://github.com/meh-security/mehscan/blob/v0.16.0/crates/cli/src/review_memory/upstream.rs)
+use the following shell function to pull and publish. [Mehscan URL and replica validation](https://github.com/meh-security/mehscan/blob/v0.17.0/crates/cli/src/review_memory/upstream.rs)
 
 ```sh
 ROOT=/path/to/source

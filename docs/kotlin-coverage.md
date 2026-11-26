@@ -1,8 +1,8 @@
 # Kotlin coverage and gaps
 
-Kotlin support is a partial JVM profile. Mehscan parses `.kt` and `.kts` without
-running Kotlin, Gradle or application code. Language filters accept `kotlin`,
-`kt` and `kts`; investigation provides Kotlin outlines.
+Mehscan parses `.kt` and `.kts` and recognizes the JVM APIs listed below. It
+reads source without running Kotlin, Gradle or application code. Language
+filters accept `kotlin`, `kt` and `kts`; investigation provides Kotlin outlines.
 
 The [extended database rules](extended-database-coverage.md) add bounded JVM ORM
 query receivers and MongoDB filter/document construction. Receiver inference
@@ -160,8 +160,7 @@ prove safety of other XML features, resolvers or configuration lifecycles.
 - Android intents/WebView/components/storage, Kotlin/JS and Kotlin/Native APIs.
   Parsing multiplatform Kotlin does not establish platform-specific coverage.
 
-These remaining items are outside the current partial JVM profile. A small
-passing native corpus does not establish parity with broader language profiles.
+The native test corpus covers the JVM APIs and receiver shapes listed above.
 
 Servlet multipart support owns javax/jakarta HttpServletRequest getPart/getParts
 and Part submitted filename/input-stream getters and Kotlin synthetic properties.
