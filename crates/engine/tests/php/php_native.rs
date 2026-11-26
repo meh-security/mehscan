@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use std::path::PathBuf;
 
 use mehscan_core::{Capability, Language, LiteralState, ScanResult, SecurityPathState};
