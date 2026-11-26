@@ -17,7 +17,7 @@ use turso::{
 
 use super::{
     Snapshot, assessments, check_store_file, db_error, fingerprint, load_snapshot, lock_store,
-    open_local, open_store_lock, resolve_store,
+    open_local, open_store_lock, query_batch, resolve_store,
 };
 
 const PROJECT_PULL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1138,10 +1138,10 @@ async fn read_publications(
 async fn read_dependencies(
     conn: &Connection,
     batch: &str,
-    query: &str,
+    query: &'static str,
 ) -> Result<Vec<FileDependency>, String> {
     let mut result = Vec::new();
-    let mut rows = conn.query(query, (batch,)).await.map_err(db_error)?;
+    let mut rows = query_batch(conn, query, batch).await?;
     while let Some(row) = rows.next().await.map_err(db_error)? {
         result.push(FileDependency {
             assessment_id: row.get(0).map_err(db_error)?,

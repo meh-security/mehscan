@@ -5,7 +5,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use turso::Connection;
 
-use super::{Snapshot, db_error, fingerprint, schema_version};
+use super::{Snapshot, db_error, fingerprint, query_batch, schema_version};
 use crate::review_state::{MemoryAdmission, RetainedBatch};
 
 pub(super) const SCHEMA: &str = "
@@ -476,13 +476,13 @@ pub(super) async fn read_assessments(
     conn: &Connection,
     batch: &str,
 ) -> Result<Vec<Assessment>, String> {
-    let mut rows = conn.query(
+    let mut rows = query_batch(conn,
         "SELECT a.id, a.decision_id, a.review_id, a.subject_key, a.basis_fingerprint, a.response_fingerprint,
                 a.verdict, a.confidence, a.summary
          FROM batch_assessments b JOIN assessments a ON a.id = b.assessment_id
          WHERE b.batch_id = ?1 ORDER BY a.review_id",
-        (batch,),
-    ).await.map_err(db_error)?;
+        batch,
+    ).await?;
     let mut output = Vec::new();
     let mut positions = HashMap::new();
     while let Some(row) = rows.next().await.map_err(db_error)? {
@@ -508,15 +508,14 @@ pub(super) async fn read_assessments(
 
     // Read each child collection independently. Joining both would repeat each
     // evidence range once for every question on the same assessment.
-    let mut questions = conn
-        .query(
-            "SELECT q.assessment_id, q.kind, q.question
+    let mut questions = query_batch(
+        conn,
+        "SELECT q.assessment_id, q.kind, q.question
          FROM batch_assessments b JOIN assessment_questions q ON q.assessment_id = b.assessment_id
          WHERE b.batch_id = ?1 ORDER BY b.assessment_id, q.kind, q.ordinal",
-            (batch,),
-        )
-        .await
-        .map_err(db_error)?;
+        batch,
+    )
+    .await?;
     while let Some(row) = questions.next().await.map_err(db_error)? {
         let id: String = row.get(0).map_err(db_error)?;
         let index = positions
@@ -527,16 +526,15 @@ pub(super) async fn read_assessments(
             text: row.get(2).map_err(db_error)?,
         });
     }
-    let mut evidence = conn
-        .query(
-            "SELECT e.assessment_id, e.kind, e.reference, e.path, e.start_line, e.end_line,
+    let mut evidence = query_batch(
+        conn,
+        "SELECT e.assessment_id, e.kind, e.reference, e.path, e.start_line, e.end_line,
                 e.start_byte, e.end_byte, e.excerpt_sha256
          FROM batch_assessments b JOIN assessment_evidence e ON e.assessment_id = b.assessment_id
          WHERE b.batch_id = ?1 ORDER BY b.assessment_id, e.kind, e.reference",
-            (batch,),
-        )
-        .await
-        .map_err(db_error)?;
+        batch,
+    )
+    .await?;
     while let Some(row) = evidence.next().await.map_err(db_error)? {
         let id: String = row.get(0).map_err(db_error)?;
         let index = positions
@@ -647,6 +645,12 @@ mod tests {
                 .collect();
             assert_eq!(evidence, [("a", Some("hash")), ("b", None)]);
             assert!(second.questions.is_empty() && second.evidence.is_empty());
+
+            let other = read_assessments(&conn, "other").await.unwrap();
+            let reviews: Vec<_> = other.iter().map(|a| a.review_id.as_str()).collect();
+            assert_eq!(reviews, ["first", "outside"]);
+            assert_eq!(other[1].questions[0].text, "outside");
+            assert_eq!(other[1].evidence[0].reference, "x");
         });
     }
 }

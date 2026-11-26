@@ -56,4 +56,21 @@ Reading a nonempty batch now takes three assessment-content queries regardless o
 
 These end-to-end medians include process startup, inventory validation and JSON output. Each release binary ran once to warm up, then five times in alternating order. The local fixtures included 2,048 additional assessments outside the selected batch and varied the number of questions and evidence records per assessment. The replica measurement used the same 1,024-assessment batch after staging, pushing to a local Turso sync server and pulling into a separate reader. Sync transport time is excluded.
 
-The complete JSON output matched byte for byte in every comparison, including the published context and its resolution projection. The larger local batch took 45% less time and the published context took 36% less time. Empty and single-assessment reads were about 1 ms slower in this sample. The replica benchmark covers one large publication. A history with many small publications would measure the remaining per-publication query cost.
+The complete JSON output matched byte for byte in every comparison, including the published context and its resolution projection. The larger local batch took 45% less time and the published context took 36% less time. Empty and single-assessment reads were about 1 ms slower in this sample.
+
+### Histories with many small publications
+
+For each nonempty publication, `memory sync context` executes four queries to load assessments, questions, evidence and file dependencies. Turso now reuses the compiled statements on the same connection. Each execution binds the selected batch ID and reads the current rows.
+
+| Selected publications | Assessments per publication | Before (`6e68d7d`) | With statement reuse |
+| ---: | ---: | ---: | ---: |
+| 0 | — | 21.61 ms | 20.18 ms |
+| 1 | 1 | 20.95 ms | 20.22 ms |
+| 32 | 1 | 28.90 ms | 23.12 ms |
+| 256 | 1 | 98.19 ms | 40.56 ms |
+| 1,024 | 1 | 310.69 ms | 105.03 ms |
+| 1 | 1,024 | 83.80 ms | 80.09 ms |
+
+The small-publication fixtures used disposable copies of the pulled replica described above. Each selected publication had one assessment and one file dependency. Sixty-four additional publications belonged to a different stream. The final row used the original large publication as a control.
+
+Both release binaries ran `memory sync context` offline against the same replica and inventory for each fixture. Times are end-to-end medians from five alternating pairs after one warm-up per binary. Complete JSON matched byte for byte across all six fixtures. For 1,024 small publications, elapsed time fell by 66% while returning the same 3.35 MB of context.

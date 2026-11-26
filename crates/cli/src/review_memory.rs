@@ -667,6 +667,20 @@ fn fingerprint(value: &impl Serialize) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
+// A history read executes the same content queries for each selected batch.
+async fn query_batch(
+    conn: &Connection,
+    sql: &'static str,
+    batch: &str,
+) -> Result<turso::Rows, String> {
+    conn.prepare_cached(sql)
+        .await
+        .map_err(db_error)?
+        .query((batch,))
+        .await
+        .map_err(db_error)
+}
+
 fn db_error(error: turso::Error) -> String {
     format!("local review memory: {error}")
 }
