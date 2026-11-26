@@ -2,9 +2,10 @@
 
 Use with the [shared checks](deserialization-checks.md). Bind PHP version,
 platform integer width, serializer/session handler, decoder flags, class loader
-and application wrappers. The native scanner's PHP coverage is partial; source
-review still follows the actual implementation. Reason through comparison cases
-from source; these checks require no target execution or harness.
+and application wrappers. Follow the actual implementation through the
+supported native operations and any application-specific wrapper code. Reason
+through comparison cases from source; these checks require no target execution
+or harness.
 
 1. **Check object restoration and magic-method effects.** Follow unserialize,
    session decoding and serialization extensions to accepted class names,

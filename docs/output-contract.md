@@ -35,6 +35,12 @@ that still require review and their exact checks, then summarizes confirmed
 issues and dismissed candidates. Pass `--include-dismissed true` to include the
 not-issue decision summaries rather than only their count.
 
+In newly generated scan JSON and candidate output, `coverage.cwe` lists the CWE
+categories represented by the scan and their supported languages. The legacy
+`level` field is optional and may still appear in saved artifacts. File-level
+coverage continues to record what was scanned, ignored, unsupported, or failed
+to parse.
+
 ## Review request
 
 ### Changed scope

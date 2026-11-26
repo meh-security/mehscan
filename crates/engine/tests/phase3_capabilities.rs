@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use mehscan_core::{Capability, CweSupportLevel};
+use mehscan_core::Capability;
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -80,7 +80,7 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
             let coverage = cwe
                 .get(id.as_str())
                 .expect("every loaded rule CWE should have a coverage claim");
-            assert_eq!(coverage.level, CweSupportLevel::Partial);
+            assert_eq!(coverage.level, None);
             assert!(coverage.declarative_languages.contains(&rule.language));
         }
     }
@@ -110,6 +110,22 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
     assert!(
         !cwe.contains_key("CWE-798"),
         "disabled secret scanning must not claim language-independent coverage"
+    );
+}
+
+#[test]
+fn omitting_cwe_levels_preserves_review_inventory_fingerprints() {
+    let inventory = mehscan_engine::investigation::build_review_inventory(&fixture_root(), false)
+        .expect("fixture should produce an inventory");
+    let mut legacy = inventory.clone();
+    assert!(!legacy.scan.coverage.cwe.is_empty());
+    for coverage in &mut legacy.scan.coverage.cwe {
+        assert_eq!(coverage.level, None);
+        coverage.level = Some(mehscan_core::CweSupportLevel::Partial);
+    }
+    assert_eq!(
+        inventory.input_fingerprint().unwrap(),
+        legacy.input_fingerprint().unwrap()
     );
 }
 

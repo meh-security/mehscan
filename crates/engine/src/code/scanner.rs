@@ -6,9 +6,8 @@ use std::thread;
 use std::time::Instant;
 
 use mehscan_core::{
-    Capability, Coverage, CweCoverage, CweSupportLevel, Diagnostic, DiagnosticLevel, Evidence,
-    FileCoverage, FileStatus, Language, ProducerCoverage, RelationContract, Rule, SCHEMA_VERSION,
-    ScanResult,
+    Capability, Coverage, CweCoverage, Diagnostic, DiagnosticLevel, Evidence, FileCoverage,
+    FileStatus, Language, ProducerCoverage, RelationContract, Rule, SCHEMA_VERSION, ScanResult,
 };
 
 use crate::code::comments::CommentRanges;
@@ -1879,7 +1878,7 @@ fn cwe_coverage(
             }
             CweCoverage {
                 cwe,
-                level: CweSupportLevel::Partial,
+                level: None,
                 declarative_languages,
                 observed_procedural_languages,
                 supported_languages: supported_languages.into_iter().collect(),
