@@ -33,6 +33,7 @@
   "docs/turso-sync-server.md",
   "scripts/github_action.py",
   "scripts/review_context.py",
+  "scripts/skill-runtime-v2.json",
   "scripts/review_source.py",
   "scripts/review_source_recovery.py",
   "scripts/review_domains.py",

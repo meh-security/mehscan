@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -458,21 +459,7 @@ def prepare(get=None, execute=run_command):
         if runtime["engine_sha256"] != plan["scanner_sha256"] or runtime["policy"] != mode:
             raise ValueError("native runtime differs from requested scanner/profile")
         plan["review"] = {"policy": mode, "skill_root": str(skill), "runtime": runtime,
-                          "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
-                          "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
-                          "source_controller_sha256": file_digest(Path(__file__).with_name("review_source.py")),
-                          "source_recovery_sha256": file_digest(Path(__file__).with_name("review_source_recovery.py")),
-                          "review_budget_sha256": file_digest(Path(__file__).with_name("review_budget.py")),
-                          "review_scheduler_sha256": file_digest(Path(__file__).with_name("review_scheduler.py")),
-                          "review_domains_sha256": file_digest(Path(__file__).with_name("review_domains.py")),
-                          "review_work_sha256": file_digest(Path(__file__).with_name("review_work.py")),
-                          "review_questions_sha256": file_digest(Path(__file__).with_name("review_questions.py")),
-                          "fact_audit_sha256": file_digest(Path(__file__).with_name("review_fact_audit.py")),
-                          "review_evidence_sha256": file_digest(Path(__file__).with_name("review_evidence.py")),
-                          "review_case_state_sha256": file_digest(Path(__file__).with_name("review_case_state.py")),
-                          "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
-                          "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
-                          "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
+                          **controller_hashes()}
         if selection_input and skip is None:
             selection = Path(selection_input)
             if not selection.is_absolute():
@@ -481,7 +468,7 @@ def prepare(get=None, execute=run_command):
             if selection.is_relative_to(checkout) or not selection.is_file():
                 raise ValueError("source-selection must be a regular file outside target source")
             saved = control / "requested-selection.json"
-            saved.write_bytes(selection.read_bytes())
+            shutil.copyfile(selection, saved)
             plan["review"]["source_selection_sha256"] = file_digest(saved)
         if provider_path:
             plan["review"]["provider_contract"] = provider_path
@@ -864,26 +851,37 @@ def provider_arguments(plan):
     return ["--provider-contract", path] if path else []
 
 
+CONTROLLER_FILES = {
+    "controller_sha256": "review_worker.py",
+    "context_sha256": "review_context.py",
+    "skill_policy_sha256": "skill-runtime-v2.json",
+    "source_controller_sha256": "review_source.py",
+    "source_recovery_sha256": "review_source_recovery.py",
+    "review_budget_sha256": "review_budget.py",
+    "review_scheduler_sha256": "review_scheduler.py",
+    "review_domains_sha256": "review_domains.py",
+    "review_work_sha256": "review_work.py",
+    "review_questions_sha256": "review_questions.py",
+    "fact_audit_sha256": "review_fact_audit.py",
+    "review_evidence_sha256": "review_evidence.py",
+    "review_case_state_sha256": "review_case_state.py",
+    "source_profile_sha256": "review_source_profile.py",
+    "exporter_sha256": "review_export.py",
+    "orchestrator_sha256": "review_orchestration.py",
+}
+
+
+def controller_hashes():
+    return {key: file_digest(Path(__file__).with_name(name)) for key, name in CONTROLLER_FILES.items()}
+
+
 def review_tools(plan, execute):
     if model := plan.get("model"):
         if file_digest(model["command"]) != model["command_sha256"] or file_digest(model["config"]) != model["config_sha256"]:
             raise ValueError("configured BYOK reviewer changed after preparation")
     config = plan["review"]
-    for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"),
-                      ("review_source.py", "source_controller_sha256"),
-                      ("review_source_recovery.py", "source_recovery_sha256"),
-                      ("review_budget.py", "review_budget_sha256"),
-                      ("review_scheduler.py", "review_scheduler_sha256"),
-                      ("review_domains.py", "review_domains_sha256"),
-                      ("review_work.py", "review_work_sha256"),
-                      ("review_questions.py", "review_questions_sha256"),
-                      ("review_fact_audit.py", "fact_audit_sha256"),
-                      ("review_evidence.py", "review_evidence_sha256"),
-                      ("review_case_state.py", "review_case_state_sha256"),
-                      ("review_source_profile.py", "source_profile_sha256"),
-                      ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
-        if file_digest(Path(__file__).with_name(name)) != config[key]:
-            raise ValueError("trusted review controller changed")
+    if any(config[key] != digest for key, digest in controller_hashes().items()):
+        raise ValueError("trusted review controller changed")
     runtime = state_json(plan, execute, "runtime-template", ["--skill-root", config["skill_root"], "--policy", config["policy"], *provider_arguments(plan)])
     if runtime != config["runtime"]:
         raise ValueError("review runtime changed before handoff")

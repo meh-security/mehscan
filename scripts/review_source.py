@@ -24,7 +24,7 @@ def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
     """Resume only the same source, target, policy and trusted controller."""
     modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py", "review_fact_audit.py",
         "review_questions.py", "review_case_state.py", "review_evidence.py", "review_budget.py",
-        "review_orchestration.py", "review_context.py", "review_domains.py", "review_scheduler.py")
+        "review_orchestration.py", "review_context.py", "skill-runtime-v2.json", "review_domains.py", "review_scheduler.py")
     return {"package_id":package["package_id"], "package_digest":context.digest(package), "plan_id":plan["plan_id"],
         "store":str(Path(args.store).resolve()), "stream":args.stream,
         "manifest_sha256":worker.digest_file(args.work_plan), "commands":commands, "scanner_sha256":scanner_sha,
@@ -503,7 +503,7 @@ def run(args, legacy, worker):
             "AI source review requires a native runtime-bound plan; use plan-template --skill-root"
         )
     if (
-        runtime["skill_bundle_id"] != context.skill_bundle_id(skill)
+        runtime["skill_bundle_id"] != context.skill_bundle_id(skill, runtime["skill_bundle_id"])
         or runtime["engine_sha256"] != scanner_sha
     ):
         raise ValueError("source review runtime changed")
@@ -1259,7 +1259,7 @@ def run(args, legacy, worker):
             for turn in (() if offline else range(local_rounds + 1)):
                 if (worker.read(args.work_package) if resolution else native(["state", "work", *common, *runtime_options])) != package:
                     raise ValueError("source work was superseded")
-                if context.skill_bundle_id(skill) != runtime["skill_bundle_id"]:
+                if context.skill_bundle_id(skill, runtime["skill_bundle_id"]) != runtime["skill_bundle_id"]:
                     raise ValueError("source skill changed")
                 if (
                     context.digest(

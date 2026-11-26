@@ -51,7 +51,7 @@ def implementation():
     directory = Path(__file__).resolve().parent
     return {name:worker.digest_file(directory / name) for name in (
         "review_workspace_bridge.py", "review_workspace.py", "review_evidence.py", "review_workspace_actions.py",
-        "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py",
+        "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py", "skill-runtime-v2.json",
         "review_source_profile.py")}
 
 
@@ -126,7 +126,7 @@ class NativeWorkspace:
                 handle.write(json.dumps({"event":event,"time_ms":round(time.time()*1000),**values}) + "\n")
 
     def check(self):
-        if worker.digest_file(self.scanner) != self.runtime["engine_sha256"] or context.skill_bundle_id(self.skill) != self.runtime["skill_bundle_id"]:
+        if worker.digest_file(self.scanner) != self.runtime["engine_sha256"] or context.skill_bundle_id(self.skill, self.runtime["skill_bundle_id"]) != self.runtime["skill_bundle_id"]:
             raise ValueError("native runtime or trusted skill changed")
         if (read(self.provider_path) if self.provider_path else None) != self.runtime.get("provider"):
             raise ValueError("native provider binding differs")

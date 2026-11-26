@@ -245,7 +245,8 @@ impl ReviewRuntimeContract {
             || !digest(&self.engine_sha256)
             || !self
                 .skill_bundle_id
-                .strip_prefix("mehscanSkillBundle/v1:")
+                .strip_prefix("mehscanSkillBundle/v2:")
+                .or_else(|| self.skill_bundle_id.strip_prefix("mehscanSkillBundle/v1:"))
                 .is_some_and(digest)
         {
             return Err("unsupported or inconsistent review runtime contract".into());

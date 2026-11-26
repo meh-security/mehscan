@@ -1122,7 +1122,7 @@ def run_locked(args):
             raise ValueError("explicit source profile changed during review")
         if bound_runtime is not None and (
                 bound_runtime["engine_sha256"] != scanner_hash
-                or bound_runtime["skill_bundle_id"] != context.skill_bundle_id(skill_root)):
+                or bound_runtime["skill_bundle_id"] != context.skill_bundle_id(skill_root, bound_runtime["skill_bundle_id"])):
             raise ValueError("review runtime changed; prepare a new native contract and plan")
         if bound_runtime is not None and bound_runtime.get("provider") != (read(provider_path) if provider_path else None):
             raise ValueError("review provider changed; prepare a new native contract and plan")

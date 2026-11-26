@@ -286,9 +286,8 @@ Contract changes produce a new plan/work ID. Exact old handoffs are rejected;
 new engine bytes require a newly bound plan. Runtime-bound `state record` requires
 `--work-package`. Manual plans without runtime remain valid for direct CLI use,
 while the AI worker requires a bound plan. History retains old contracts and
-provenance without turning them into current reusable verdicts. Skill-package
-hashes exclude `.git` and `__pycache__`, reject symlinks and bind all other package
-files. Compatibility checks do not establish that a package is trustworthy.
+provenance without turning them into current reusable verdicts. The v2 skill digest covers review code, guidance, schemas and other runtime files.
+The shared file policy in `scripts/skill-runtime-v2.json` lists the distribution-only installer and download files. Both digest versions skip `.git` and `__pycache__` and reject symlinks. Existing v1 contracts retain their full-package digest. Compatibility checks do not establish that a package is trustworthy.
 
 Runtime-bound `state plan`, `work` and `record` require `--skill-root DIR`.
 The native CLI checks the actual trusted package outside source against the

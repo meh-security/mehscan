@@ -1936,9 +1936,10 @@ pub(super) fn validate_runtime_skill(
     validate_runtime_engine(runtime)?;
     let skill = Path::new(skill.ok_or("runtime-bound review requires --skill-root")?);
     outside_source(skill, root)?;
-    if super::engine(mehscan_engine::review_runtime::skill_bundle_id(skill))?
-        != runtime.skill_bundle_id
-    {
+    if !super::engine(mehscan_engine::review_runtime::matches_skill_bundle(
+        skill,
+        &runtime.skill_bundle_id,
+    ))? {
         return Err("review runtime skill changed; prepare a new contract and plan".into());
     }
     if let Some(expected) = &runtime.provider {
