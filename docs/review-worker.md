@@ -590,7 +590,7 @@ scope/budget; they do not create authorization for another full scan.
 
 Reuse the completed first pass instead of paying for it again. Keep its source,
 inventory, runtime, provider binding and original attempt directory unchanged.
-For a closed project review, use its receipt to [start a Fast audit in a fresh generation](standalone-source.md#start-a-fast-audit-after-close). For an active generation you still own, refresh `state work` and save its
+For a closed project review, use its receipt to [start a Fast or Full audit in a fresh generation](standalone-source.md#audit-a-closed-project-review). For an active generation you still own, refresh `state work` and save its
 JSON output as `RUN/work-second-pass.json`:
 
 ```text
@@ -1105,6 +1105,7 @@ outside ROOT. Adapters apply this contract without resending operator guides.
 
 Tasks identify `kind`, `source_root`, `scanner`, `inventory`, `work_package` and
 `journal_dir`; a native task additionally includes `bundle` and `review_ids`.
+During Full verification from a close receipt, the adapter gets scoped work in the evidence packet. The controller withholds the raw `work_package` path because it contains the earlier decisions.
 A change-pass task returns only `{ "change_pass": [...] }`. A native task returns
 a brief or full response draft supported by `review-bundle-finalize`.
 

@@ -768,14 +768,24 @@ task=json.load(sys.stdin)
 with Path(task['provider_metrics']).open('a',encoding='utf8') as receipt:
     receipt.write(json.dumps({'conversation_id':task['conversation_id'],'round':task['research']['round'],
         'provider':None,'elapsed_ms':1,'usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':10}})+'\\n')
-if task.get('review_role')=='second_pass_fast':
+role=task.get('review_role')
+if role in ('verification', 'second_pass_compare', 'second_pass_fast'):
     packet=json.loads(Path(task['evidence_packet']).read_text())
-    assert packet['source_handoff']['fact_count']>0, 'Original source facts must reach Fast'
+    if role=='verification':
+        assert 'stage_context' not in packet and not packet['work']['parent_decisions']
+    elif role=='second_pass_compare':
+        assert packet['stage_context']['baseline'] and packet['stage_context']['assessment']
+        assert task['research']['queries_remaining']==0
+    else:
+        assert packet['source_handoff']['fact_count']>0, 'Original source facts must reach Fast'
     rows=[{'review_id':i,'decision':'needs_review','confidence':'medium','summary':'Interpreter behavior needs source inspection.',
         'reason':'The custom callee behavior remains unavailable.','evidence':[{'path':'Widget.razor','start_line':1,'end_line':1}],
         'checks':['Read CustomInterpreter.Run to establish whether input is interpreted.'],'blockers':[]} for i in task['review_ids']]
-    print(json.dumps({'draft':{'results':rows},'review_checks':[{'review_id':i,'action':'keep','claim':'The deciding callee remains unavailable.',
-        'proof_status':'supported','investigation_status':'sufficient','error_codes':[]} for i in task['review_ids']], 'working_chain':'','progress':[]}))
+    answer={'draft':{'results':rows}, 'working_chain':'','progress':[]}
+    if role!='verification':
+        answer['review_checks']=[{'review_id':i,'action':'keep','claim':'The deciding callee remains unavailable.',
+            'proof_status':'supported','investigation_status':'sufficient','error_codes':[]} for i in task['review_ids']]
+    print(json.dumps(answer))
     sys.exit()
 assert task['kind']=='source_review', 'Must reuse source assessment without another native model call'
 packet=json.loads(Path(task['evidence_packet']).read_text())
@@ -903,6 +913,29 @@ print(json.dumps({'draft':{'results':rows,
         self.assertTrue(all(json.loads(p.read_text())["review_role"] == "second_pass_fast"
                             for p in (audit / "training-turns").glob("*/*-input.json")))
         self.assertEqual(json.loads(findings.read_text()), exports["report"])
+        # Close the Fast audit and independently recheck the pending result in generation four.
+        fast_result = json.loads(reviewed.stdout)
+        full_receipt = self.base / "fast-close.json"
+        full_receipt.write_text(json.dumps(self.native(
+            "state", "end", "--project-run", fast_result["project_run"], "--claim", fast_result["private_claim"],
+            "--status", "finished", "--operation-key", "close-fast")))
+        full_claim = self.base / "full-claim.json"
+        full_claim.write_text(json.dumps(self.native("state", "claim", "--close-receipt", full_receipt,
+                                                     "--attempt-id", "full", "--operation-key", "claim-full")))
+        full = self.base / "full"
+        for flag, value in (("--close-receipt", full_receipt), ("--claim", full_claim),
+                            ("--second-pass", "full"), ("--output", full)):
+            invocation[invocation.index(flag) + 1] = str(value)
+        audited = subprocess.run(invocation, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(audited.stdout)["generation"], 4)
+        summary = json.loads((full / "second-pass.json").read_text())
+        self.assertEqual((summary["checked"], summary["accounting"]["second_pass"]["calls"]), (1, 2))
+        first_turns = (json.loads(p.read_text()) for p in (full / "training-turns").glob("*/0-input.json"))
+        turns = {turn["review_role"]: turn for turn in first_turns}
+        self.assertEqual(set(turns), {"verification", "second_pass_compare"})
+        self.assertNotIn("work_package", turns["verification"])
+        self.assertNotEqual(turns["verification"]["conversation_id"], turns["second_pass_compare"]["conversation_id"])
+        self.assertEqual(self.native("report", "--close-receipt", receipt), exports["report"])
         findings.write_bytes(findings.read_bytes() + b"\n")
         self.assertIn("findings differ", self.native("report", "--close-receipt", receipt, okay=False))
         replacement = json.loads(Path(attempt["project_run"]).read_text())

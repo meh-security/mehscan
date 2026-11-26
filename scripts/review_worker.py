@@ -1587,6 +1587,9 @@ def run_locked(args, *, source_prepared=None):
                      "dependency_catalog":dependency_catalog,
                      "evidence_agenda":orchestration.evidence_agenda(task, display_facts),
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
+            if closed_report is not None and role == "verification":
+                # A closed generation's raw work package contains the first-pass verdicts.
+                del frame["work_package"]
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
             if role in second_pass.FINAL_ONLY_ROLES:
@@ -2911,10 +2914,10 @@ def run_locked(args, *, source_prepared=None):
 def bind_project_run(args):
     """Resolve the native project receipt before claiming or dispatching any work."""
     if args.close_receipt:
-        if (args.second_pass != "fast" or args.phase == "change-pass" or args.project_run
+        if (args.second_pass not in ("fast", "full") or args.phase == "change-pass" or args.project_run
                 or args.first_pass or args.run or args.work_package or args.assignment
                 or args.group_operations or args.source_selection or args.reuse_source_results):
-            raise ValueError("--close-receipt supplies the project, first pass, bundles and work for a Fast audit")
+            raise ValueError("--close-receipt supplies the project, first pass, bundles and work for an explicit Fast or Full audit")
         close = read(args.close_receipt)
         args.project_run = close["project_run"]
         args.first_pass = str(Path(args.project_run).parent)
@@ -2939,15 +2942,15 @@ def bind_project_run(args):
         outside(args.close_receipt, root)
         manifest = outside(Path(args.run) / "manifest.json", root)
         if digest_file(manifest) != receipt["report_manifest_sha256"]:
-            raise ValueError("Fast audit bundle manifest differs from the admitted run")
+            raise ValueError("Audit bundle manifest differs from the admitted run")
         admitted = close["admitted_report"]
         claim = read(outside(args.claim, root))["result"]
         if (receipt.get("admitted_report") != admitted or claim["generation"] != admitted["generation"] + 1
                 or claim.get("audit_parent") != {"sequence": close["sequence"], "findings_sha256": admitted["findings_sha256"]}):
-            raise ValueError("Fast audit requires a fresh claim for this close receipt")
+            raise ValueError("Audit requires a fresh claim for this close receipt")
         if (close["result"]["generation"] != admitted["generation"]
                 or close["result"]["status"] not in ("finished", "incomplete", "cancelled")):
-            raise ValueError("Fast audit requires a terminal receipt for the admitted generation")
+            raise ValueError("Audit requires a terminal receipt for the admitted generation")
         findings = outside(Path(args.first_pass) / "findings.json", root).read_bytes()
         if hashlib.sha256(findings).hexdigest() != admitted["findings_sha256"]:
             raise ValueError("findings differ from the report authorized by the audit claim")

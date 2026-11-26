@@ -57,21 +57,29 @@ Choose an operation key unique to this close and reuse it on retry. The journal 
 
 Older attempt references can still render findings with `mehscan report --project-run FILE`. Earlier close receipts require the original run or attempt reference for reporting.
 
-## Start a Fast audit after close
+<a id="start-a-fast-audit-after-close"></a>
+
+## Audit a closed project review
 
 Use the close receipt and a new attempt ID to claim the next generation on the same source. Save the private claim outside the source directory. Repeating the claim with the same ID and operation key recovers its receipt.
 
+The following example runs a Full audit of pending decisions. Use `--second-pass fast` for nomination-based selection.
+
 ```sh
 (umask 077 && mehscan state claim --close-receipt close.json \
-  --attempt-id fast-1 --operation-key claim-fast-1 > fast-claim.json)
+  --attempt-id audit-1 --operation-key claim-audit-1 > audit-claim.json)
 
 python scripts/review_worker.py --scanner "$MEHSCAN" --close-receipt close.json \
-  --claim fast-claim.json --second-pass fast --second-pass-scope pending --supersede \
+  --claim audit-claim.json --second-pass full --second-pass-scope pending --supersede \
   --reviewer-command "$REVIEWER_COMMAND" --reviewer-label "$REVIEWER_LABEL" \
-  --output fast-1 > fast-result.json
+  --output audit-1 > audit-result.json
 ```
 
-Use the same bound skill and provider settings as the original plan. The journal checks the terminal transaction and source snapshot, then assigns the closed plan to the new generation. The worker loads current work, verifies the saved decisions are still the journal heads, and runs Fast selection on the admitted answers. A pending answer needs an actionable nomination for Fast to spend a call. Missing answers remain open. Named work plans use their original budget ledger.
+Use the same bound skill and provider settings as the original plan. The journal checks the terminal transaction and source snapshot. The worker verifies that the admitted decisions are still the journal heads.
+
+Fast spends calls on actionable nominations in the chosen scope. Full selects every admitted answer in scope. A verifier assesses the source independently, then a separate conversation compares that assessment with the saved first pass. Missing first-pass answers remain open in both modes.
+
+Named work plans draw both stages from the original allowance. If verification finishes and the comparison cannot be funded, the audit keeps the baseline decision and marks the claim `not_checked` in `second-pass.json`.
 
 The first-pass findings remain available through `close.json`. Use the new worker result to close the audit generation. If the audit is interrupted, repeat the worker invocation with the same claim, a new output directory and `--resume-from` pointing to its latest attempt.
 
