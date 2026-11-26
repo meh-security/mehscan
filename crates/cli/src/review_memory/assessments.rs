@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use mehscan_core::{Location, ReviewAttemptStatus, ReviewConfidence, ReviewDecision};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -474,7 +476,6 @@ pub(super) async fn read_assessments(
     conn: &Connection,
     batch: &str,
 ) -> Result<Vec<Assessment>, String> {
-    let mut output = Vec::new();
     let mut rows = conn.query(
         "SELECT a.id, a.decision_id, a.review_id, a.subject_key, a.basis_fingerprint, a.response_fingerprint,
                 a.verdict, a.confidence, a.summary
@@ -482,21 +483,13 @@ pub(super) async fn read_assessments(
          WHERE b.batch_id = ?1 ORDER BY a.review_id",
         (batch,),
     ).await.map_err(db_error)?;
+    let mut output = Vec::new();
+    let mut positions = HashMap::new();
     while let Some(row) = rows.next().await.map_err(db_error)? {
         let id: String = row.get(0).map_err(db_error)?;
-        let mut questions = Vec::new();
-        let mut question_rows = conn.query(
-            "SELECT kind, question FROM assessment_questions WHERE assessment_id = ?1 ORDER BY kind, ordinal",
-            (&*id,),
-        ).await.map_err(db_error)?;
-        while let Some(q) = question_rows.next().await.map_err(db_error)? {
-            questions.push(Question {
-                kind: q.get(0).map_err(db_error)?,
-                text: q.get(1).map_err(db_error)?,
-            });
-        }
+        positions.insert(id.clone(), output.len());
         output.push(Assessment {
-            id: id.clone(),
+            id,
             decision_id: row.get(1).map_err(db_error)?,
             review_id: row.get(2).map_err(db_error)?,
             subject_key: row.get(3).map_err(db_error)?,
@@ -505,8 +498,59 @@ pub(super) async fn read_assessments(
             verdict: row.get(6).map_err(db_error)?,
             confidence: row.get(7).map_err(db_error)?,
             summary: row.get(8).map_err(db_error)?,
-            questions,
-            evidence: read_evidence(conn, &id).await?,
+            questions: Vec::new(),
+            evidence: Vec::new(),
+        });
+    }
+    if output.is_empty() {
+        return Ok(output);
+    }
+
+    // Read each child collection independently. Joining both would repeat each
+    // evidence range once for every question on the same assessment.
+    let mut questions = conn
+        .query(
+            "SELECT q.assessment_id, q.kind, q.question
+         FROM batch_assessments b JOIN assessment_questions q ON q.assessment_id = b.assessment_id
+         WHERE b.batch_id = ?1 ORDER BY b.assessment_id, q.kind, q.ordinal",
+            (batch,),
+        )
+        .await
+        .map_err(db_error)?;
+    while let Some(row) = questions.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        let index = positions
+            .get(&id)
+            .ok_or("assessment question has no batch member")?;
+        output[*index].questions.push(Question {
+            kind: row.get(1).map_err(db_error)?,
+            text: row.get(2).map_err(db_error)?,
+        });
+    }
+    let mut evidence = conn
+        .query(
+            "SELECT e.assessment_id, e.kind, e.reference, e.path, e.start_line, e.end_line,
+                e.start_byte, e.end_byte, e.excerpt_sha256
+         FROM batch_assessments b JOIN assessment_evidence e ON e.assessment_id = b.assessment_id
+         WHERE b.batch_id = ?1 ORDER BY b.assessment_id, e.kind, e.reference",
+            (batch,),
+        )
+        .await
+        .map_err(db_error)?;
+    while let Some(row) = evidence.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        let index = positions
+            .get(&id)
+            .ok_or("assessment evidence has no batch member")?;
+        output[*index].evidence.push(Evidence {
+            kind: row.get(1).map_err(db_error)?,
+            reference: row.get(2).map_err(db_error)?,
+            path: row.get(3).map_err(db_error)?,
+            start_line: row.get(4).map_err(db_error)?,
+            end_line: row.get(5).map_err(db_error)?,
+            start_byte: row.get(6).map_err(db_error)?,
+            end_byte: row.get(7).map_err(db_error)?,
+            excerpt_sha256: row.get(8).map_err(db_error)?,
         });
     }
     Ok(output)
@@ -566,24 +610,43 @@ pub(super) async fn publish_assessment(
     Ok(())
 }
 
-async fn read_evidence(conn: &Connection, id: &str) -> Result<Vec<Evidence>, String> {
-    let mut rows = conn.query(
-        "SELECT kind, reference, path, start_line, end_line, start_byte, end_byte, excerpt_sha256
-         FROM assessment_evidence WHERE assessment_id = ?1 ORDER BY kind, reference",
-        (id,),
-    ).await.map_err(db_error)?;
-    let mut evidence = Vec::new();
-    while let Some(row) = rows.next().await.map_err(db_error)? {
-        evidence.push(Evidence {
-            kind: row.get(0).map_err(db_error)?,
-            reference: row.get(1).map_err(db_error)?,
-            path: row.get(2).map_err(db_error)?,
-            start_line: row.get(3).map_err(db_error)?,
-            end_line: row.get(4).map_err(db_error)?,
-            start_byte: row.get(5).map_err(db_error)?,
-            end_byte: row.get(6).map_err(db_error)?,
-            excerpt_sha256: row.get(7).map_err(db_error)?,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_read_preserves_membership_and_child_order() {
+        super::super::local_runtime().unwrap().block_on(async {
+            let db = turso::Builder::new_local(":memory:").build().await.unwrap();
+            let conn = db.connect().unwrap();
+            conn.execute_batch("CREATE TABLE assessment_batches (id TEXT PRIMARY KEY)").await.unwrap();
+            conn.execute_batch(CONTENT_SCHEMA).await.unwrap();
+            conn.execute_batch("
+                INSERT INTO assessment_batches VALUES ('selected'), ('other');
+                INSERT INTO assessments VALUES
+                    ('z','d1','first','s','b','r','issue','high','one'),
+                    ('a','d2','second','s','b','r','issue','high','two'),
+                    ('x','d3','outside','s','b','r','issue','high','three');
+                INSERT INTO batch_assessments VALUES ('selected','a'), ('selected','z'), ('other','x'), ('other','z');
+                INSERT INTO assessment_questions VALUES
+                    ('z','check',2,'later'), ('x','check',0,'outside'), ('z','check',1,'earlier');
+                INSERT INTO assessment_evidence VALUES
+                    ('z','primary','b','b.rs',1,1,0,2,NULL), ('x','primary','x','x.rs',1,1,0,2,NULL),
+                    ('z','primary','a','a.rs',1,1,0,2,'hash');
+            ").await.unwrap();
+
+            let batch = read_assessments(&conn, "selected").await.unwrap();
+            let [first, second] = batch.as_slice() else {
+                panic!("expected two batch members");
+            };
+            assert_eq!((first.review_id.as_str(), second.review_id.as_str()), ("first", "second"));
+            let questions: Vec<_> = first.questions.iter().map(|q| q.text.as_str()).collect();
+            assert_eq!(questions, ["earlier", "later"]);
+            let evidence: Vec<_> = first.evidence.iter()
+                .map(|e| (e.reference.as_str(), e.excerpt_sha256.as_deref()))
+                .collect();
+            assert_eq!(evidence, [("a", Some("hash")), ("b", None)]);
+            assert!(second.questions.is_empty() && second.evidence.is_empty());
         });
     }
-    Ok(evidence)
 }

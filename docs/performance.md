@@ -40,4 +40,20 @@ With one JavaScript input and a single journal stream, a native claim followed b
 | 100 | 170,237 | 3.71 ms |
 | 250 | 427,037 | 6.53 ms |
 
-This sample covers lightweight claims and closes. A production-sized journal with evidence-heavy decisions and concurrent writers would establish whether replay time or lock contention warrants a storage change. Likewise, a saved run with a large publication history would provide a basis for optimizing the per-publication assessment reads.
+This sample covers lightweight claims and closes. A production-sized journal with evidence-heavy decisions and concurrent writers would establish whether replay time or lock contention warrants a storage change.
+
+## Retained and published assessment reads
+
+Reading a nonempty batch now takes three assessment-content queries regardless of its size. One loads the assessments in review order, one loads their questions, and one loads their evidence. Previously, each assessment added two queries. A 1,024-assessment batch went from 2,049 queries to three. Empty batches still take one query.
+
+| CLI workflow | Assessments in batch | Before (`fa24326`) | Batched reads |
+| --- | ---: | ---: | ---: |
+| `memory assessments` | 0 | 18.03 ms | 18.96 ms |
+| `memory assessments` | 1 | 17.56 ms | 18.70 ms |
+| `memory assessments` | 128 | 26.80 ms | 23.68 ms |
+| `memory assessments` | 1,024 | 98.33 ms | 54.04 ms |
+| `memory sync context` on a pulled replica | 1,024 | 130.38 ms | 82.80 ms |
+
+These end-to-end medians include process startup, inventory validation and JSON output. Each release binary ran once to warm up, then five times in alternating order. The local fixtures included 2,048 additional assessments outside the selected batch and varied the number of questions and evidence records per assessment. The replica measurement used the same 1,024-assessment batch after staging, pushing to a local Turso sync server and pulling into a separate reader. Sync transport time is excluded.
+
+The complete JSON output matched byte for byte in every comparison, including the published context and its resolution projection. The larger local batch took 45% less time and the published context took 36% less time. Empty and single-assessment reads were about 1 ms slower in this sample. The replica benchmark covers one large publication. A history with many small publications would measure the remaining per-publication query cost.
