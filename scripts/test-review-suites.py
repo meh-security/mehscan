@@ -8,10 +8,12 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-# Standalone, unshipped experiment drivers. Everything else stays product
+RESEARCH_DIR = ROOT / "research"
+
+# Research modules still in the worker test directory. Everything else stays product
 # coverage, including evidence/accounting regressions inside pilot tests.
 RESEARCH_MODULES = {
-    "test_work_formation_experiment", "test_review_routing", "test_review_hybrid",
+    "test_review_routing", "test_review_hybrid",
     "test_workspace_batch", "test_workspace_planner",
 }
 
@@ -46,9 +48,14 @@ def flatten(suite):
             yield item
 
 
-def inventory():
+def inventory(include_research_dir):
     loader = unittest.TestLoader()
-    tests = list(flatten(loader.discover(str(ROOT / "tests/review_worker"))))
+    directories = [ROOT / "tests/review_worker"]
+    if include_research_dir:
+        directories.append(RESEARCH_DIR)
+    tests = []
+    for directory in directories:
+        tests.extend(flatten(loader.discover(str(directory), top_level_dir=str(directory))))
     counts = Counter(test.id() for test in tests)
     if any(count != 1 for count in counts.values()):
         raise ValueError("duplicate discovered test IDs")
@@ -63,7 +70,10 @@ def inventory():
 
 
 def tier(test):
-    return "research" if test.__class__.__module__ in RESEARCH_MODULES or test.id() in RESEARCH_CASES else "product"
+    module = test.__class__.__module__
+    if module in RESEARCH_MODULES or test.id() in RESEARCH_CASES:
+        return "research"
+    return "research" if Path(sys.modules[module].__file__).parent == RESEARCH_DIR else "product"
 
 
 def select(tests, selection):
@@ -125,7 +135,7 @@ def main():
     parser.add_argument("--list", action="store_true", help="collect/classify without executing")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    tests = inventory()
+    tests = inventory(include_research_dir=args.list or args.tier in {"all", "research"})
     selected = select(tests, args.tier)
     report = {"schema_version":1, "selection":args.tier,
               "inventory":[{"id":test.id(), "tier":tier(test), "selected":test in selected} for test in tests],

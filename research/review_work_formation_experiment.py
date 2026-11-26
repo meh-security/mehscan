@@ -8,11 +8,13 @@ import re
 import sys
 import time
 
+PRODUCT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT / "scripts"))
+
 import review_workspace_planner as planner
 import review_worker as worker
 from review_workspace import encoded, identity, shape, source
 
-PRODUCT = Path(__file__).resolve().parents[1]
 ADAPTER = PRODUCT / "skills/mehscan-security/scripts"
 sys.path.insert(0, str(ADAPTER))
 from codex_launcher import Launcher, load_config, provider_contract

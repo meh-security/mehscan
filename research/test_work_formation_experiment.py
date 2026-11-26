@@ -1,12 +1,10 @@
 """Planning diagnostics must retain claims/costs without admitting AI proposals."""
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"scripts"))
 import review_work_formation_experiment as experiment
 
 
