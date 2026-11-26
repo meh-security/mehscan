@@ -118,7 +118,11 @@ class WorkReview(unittest.TestCase):
         original = worker.execute
         provider_calls = []
         interrupted = []
+        report_settings = []
         def execute(argv, cwd, env, timeout, payload=None, **kwargs):
+            if argv[1:2] == ["report"]:
+                report_settings.append((argv[argv.index("--reviewer") + 1],
+                                        argv[argv.index("--allow-partial") + 1] if "--allow-partial" in argv else None))
             if len(argv) >= 3 and list(argv[1:3]) == ["state", "record"] and not interrupted:
                 interrupted.append(True)
                 raise worker.CommandFailure(argv, 2, "Synthetic native publication interruption")
@@ -139,6 +143,10 @@ class WorkReview(unittest.TestCase):
         self.assertEqual(len(provider_calls), 2)
         self.assertEqual(json.loads((previous/"source-review/budget.json").read_text())["reserved_calls"], before)
         result = json.loads((f.base/"recovered/worker.json").read_text())
+        self.assertEqual(report_settings, [(result["reviewer"], "true")] * 2)
+        self.assertTrue(result["recovered_admission"])
+        self.assertEqual(json.loads((previous / "findings.json").read_text()),
+                         json.loads((f.base / "recovered/findings.json").read_text()))
         self.assertEqual(result["work_goal"]["completed_items"], 2)
         self.assertEqual(Path(result["work_goal"]["continuation_of"]), previous)
 

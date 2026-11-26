@@ -545,6 +545,17 @@ def copy_bundle_run(source, destination, responses=None):
     copy_review_files(responses if responses is not None else source / "responses", destination / "responses")
 
 
+def write_admission_report(output, root, options, native):
+    """Report the attempt's frozen responses with the journal record's review settings."""
+    command = ["report", "--run", str(output / "run"), "--source-root", str(root),
+               "--reviewer", options["--reviewer"]]
+    if "--allow-partial" in options:
+        command += ["--allow-partial", options["--allow-partial"]]
+    report = native(command)
+    write(output / "findings.json", report)
+    return report
+
+
 def digest_file(path):
     with Path(path).open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -2176,6 +2187,7 @@ def run_locked(args):
             # A retry chain cannot fork from an older budget checkpoint. The
             # stream lock fences this append before any new model invocation.
             write(recovery / "continued-to.json", {"output": str(output)})
+        admission_entries = None
         recovered_admission = mutations.exists("admission")
         if recovered_admission:
             # Complete the original transaction batch before deriving any new
@@ -2201,11 +2213,7 @@ def run_locked(args):
                     raise ValueError("admitted second-pass recovery requires its original outcome record")
                 summary = read(output / "second-pass.json")
                 record["second_pass"] = {k:summary[k] for k in ("mode", "status", "scope", "selected", "targeted", "checked", "outside_scope", "outcomes")}
-            receipts = mutations.apply("admission")
-            record["admission_sequence"] = receipts[0]["sequence"]
-            record["recovered_admission"] = True
-            write(output / "findings.json", native(["report", "--run", str(output / "run"),
-                  "--source-root", str(root), "--reviewer", args.reviewer_label]))
+            report = write_admission_report(output, root, batch["entries"][0]["options"], native)
         def complete_change_writes(receipts=None):
             nonlocal package, payload, recovered_change_pass
             receipts = receipts if receipts is not None else mutations.apply("plan")
@@ -2685,10 +2693,16 @@ def run_locked(args):
                         "reopened_review_ids":[r["review_id"] for filename, _, _ in requests for r in read(response_dir / filename)["results"]
                             if r["decision"] == "needs_review" and next(x["decision"] for x in read(output / "decisions" / filename)["results"] if x["review_id"] == r["review_id"]) != "needs_review"],
                         "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
-                # Report validates the completed response set before a state write.
-                report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
-                                 "--reviewer", args.reviewer_label, *(["--allow-partial", "true"] if source_prepared else [])])
-                write(output / "findings.json", report)
+                # Validate exactly the run that state record will admit.
+                admitted_run = output / "run"
+                copy_bundle_run(run_dir, admitted_run, response_dir)
+                record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
+                                  "--reviewer": args.reviewer_label}
+                if assignment:
+                    record_options["--assignment"] = assignment
+                if source_prepared:
+                    record_options["--allow-partial"] = "true"
+                report = write_admission_report(output, root, record_options, native)
                 execution_path = output / "review-execution.json"
                 if tiered_policy:
                     write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
@@ -2705,16 +2719,6 @@ def run_locked(args):
                                       else "Fresh validated review of current work package ")
                             links.append({"decision_id": decision["decision_id"], "parents": parents,
                                           "reason": reason + package["package_id"]})
-                # Keep response override distinct from requests; copy the run binding
-                # into a new attempt run so normal state admission can validate it.
-                admitted_run = output / "run"
-                copy_bundle_run(run_dir, admitted_run, response_dir)
-                record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
-                                  "--reviewer": args.reviewer_label}
-                if assignment:
-                    record_options["--assignment"] = assignment
-                if source_prepared:
-                    record_options["--allow-partial"] = "true"
                 if links:
                     links_path = output / "supersessions.json"
                     write(links_path, links)
@@ -2736,8 +2740,14 @@ def run_locked(args):
                         entries.append({"operation": "pending", "options": {"--input": str(path)},
                             "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
                 if not validate_only:
-                    receipts = mutations.apply("admission", entries)
-                    record["admission_sequence"] = receipts[0]["sequence"]
+                    admission_entries = entries
+        if recovered_admission or admission_entries is not None:
+            if report["triage"]["work"]["missing_review_ids"]:
+                record["source_unanswered_results"] = True
+            receipts = mutations.apply("admission", admission_entries)
+            record["admission_sequence"] = receipts[0]["sequence"]
+            if recovered_admission:
+                record["recovered_admission"] = True
         final_work = fresh_work(read_completed=True)
         if any(final_work["payload"][key] != payload[key] for key in ("generation", "snapshot_id", "plan_id")):
             raise ValueError("worker ownership or plan changed before result emission")
@@ -2763,6 +2773,7 @@ def run_locked(args):
         query_pool.shutdown(wait=True, cancel_futures=True)
         if shared_budget:
             shared_budget.close()
+    source_incomplete = False
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
@@ -2770,14 +2781,14 @@ def run_locked(args):
         work_review = source.get("work_review")
         source_incomplete = (work_review["completed_items"] != work_review["funded_items"] if work_review else
             source["completed_assignments"] != source.get("selected_assignments", source["assignments"]))
-        if source_incomplete or record.get("source_unanswered_results"):
-            if record["status"] != "cancelled":
-                record["status"]="incomplete"
-            record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
         record["source_review"]["calls"]=source["calls"]
         record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] not in ("complete", "deferred")]
         record["source_review"]["deferred_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] == "deferred"]
         write(output/"source-review.json",record["source_review"])
+    if source_incomplete or record.get("source_unanswered_results"):
+        if record["status"] != "cancelled":
+            record["status"]="incomplete"
+        record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
     record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000) + (source["elapsed_ms"] if source_prepared else 0)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
     record["unknown_provider_calls"] = sum(job["unknown_provider_calls"] for job in checkpoints)+(source["unknown_provider_calls"] if source_prepared else 0)
