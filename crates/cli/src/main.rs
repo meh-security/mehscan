@@ -1018,22 +1018,46 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
         }
         "source-review-plan" | "source-review-check" | "source-review-admit" => {
-            let directory = PathBuf::from(parsed.required("--inventory")?);
-            let base: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
-                &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?;
+            let (root, base, receipt_scope) = if operation == "source-review-plan"
+                && let Some(path) = parsed.optional("--close-receipt")
+            {
+                if root != Path::new(".") {
+                    return Err("--close-receipt supplies the source root".into());
+                }
+                let close = review_memory::CloseReceipt::read(Path::new(&path))?;
+                let project = review_memory::PreparedProject::read(&close.project_run)?;
+                close.validate_project(&project)?;
+                let (base, binding) =
+                    review_state::inventory(&project.inventory, &project.source_root)?;
+                if binding.impact_scope.is_some() {
+                    return Err("Comprehensive continuation requires a full-repository plan".into());
+                }
+                let scope = review_completion::template(
+                    &binding,
+                    mehscan_core::ReviewCompletionPolicy::Comprehensive,
+                );
+                (project.source_root, base, Some(scope.selected_review_ids))
+            } else {
+                let directory = PathBuf::from(parsed.required("--inventory")?);
+                let base = serde_json::from_slice(
+                    &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                (root, base, None)
+            };
             if operation == "source-review-plan" {
                 let include_supporting_source = parsed
                     .optional_bool("--include-supporting-source")?
                     .unwrap_or(false);
-                let ids = parsed
-                    .optional("--review-ids")
-                    .unwrap_or_default()
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
+                let ids = receipt_scope.unwrap_or_else(|| {
+                    parsed
+                        .optional("--review-ids")
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                });
                 parsed.finish()?;
                 print_json(&engine(
                     mehscan_engine::investigation::source_review::plan_with_options(
@@ -4726,6 +4750,7 @@ USAGE:
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
   mehscan investigate review-sweep --bundle PATH
+  mehscan investigate source-review-plan --close-receipt FILE [--include-supporting-source true]
   mehscan investigate source-review-plan [ROOT] --inventory DIR [--review-ids ID,ID] [--include-supporting-source true]
   mehscan investigate source-review-check [ROOT] --inventory DIR --input FILE
   mehscan investigate source-review-admit [ROOT] --inventory DIR --input FILE --output NEW_DIR

@@ -25,7 +25,8 @@ def source_recovery_binding(args, package, plan, commands, scanner_sha, worker):
     modules = ("review_source.py", "review_source_recovery.py", "review_worker.py", "review_work.py", "review_fact_audit.py",
         "review_questions.py", "review_case_state.py", "review_evidence.py", "review_budget.py",
         "review_orchestration.py", "review_context.py", "skill-runtime-v2.json", "review_domains.py", "review_scheduler.py")
-    return {"package_id":package["package_id"], "package_digest":context.digest(package), "plan_id":plan["plan_id"],
+    return {**({"continuation_receipt":args._continuation_receipt} if getattr(args, "_continuation_receipt", None) else {}),
+        "package_id":package["package_id"], "package_digest":context.digest(package), "plan_id":plan["plan_id"],
         "store":str(Path(args.store).resolve()), "stream":args.stream,
         "manifest_sha256":worker.digest_file(args.work_plan), "commands":commands, "scanner_sha256":scanner_sha,
         "controller":{name:worker.digest_file(Path(__file__).with_name(name)) for name in modules},
@@ -442,6 +443,10 @@ def run(args, run_native, worker):
     if getattr(args, "resume_from", None):
         attempt = worker.outside(args.resume_from, root)
         previous = recovery_summary(attempt, root, worker)
+        if getattr(args, "_continuation_receipt", None):
+            recovery = worker.read(previous.with_name("source-recovery.json"))
+            if recovery["binding"].get("continuation_receipt") != args._continuation_receipt:
+                raise ValueError("recovery requires the continuation started from this receipt and claim")
         if previous.is_file():
             return resume_native_handoff(args, root, output, previous, run_native, worker)
         if not (attempt / "source-review").is_dir():
@@ -517,7 +522,12 @@ def run(args, run_native, worker):
         else []
     )
     package = worker.read(args.work_package) if resolution_path else native(["state", "work", *common, *runtime_options])
-    if package != worker.read(args.work_package):
+    if getattr(args, "_continuation_receipt", None):
+        heads = package["payload"]["expected_parents"]
+        if any(heads[rid] != expected for rid, expected in args._continuation_heads.items() if rid in heads):
+            raise ValueError("closed decisions differ from current journal heads")
+        args.work_package = str(stage / "input-work.json")
+    elif package != worker.read(args.work_package):
         raise ValueError("source assignment requires current unaltered native work")
     payload = package["payload"]
     comprehensive = payload["policy"] == "comprehensive" and payload.get("impact_scope") is None

@@ -83,6 +83,8 @@ Named work plans draw both stages from the original allowance. If verification f
 
 The first-pass findings remain available through `close.json`. Use the new worker result to close the audit generation. If the audit is interrupted, repeat the worker invocation with the same claim, a new output directory and `--resume-from` pointing to its latest attempt.
 
+A closed Value review with a named work plan can also continue into Comprehensive under its remaining allowance. [Continue Value into Comprehensive](review-worker.md#continue-value-into-comprehensive)
+
 ## Compare an explicit baseline
 
 To compare with a saved source version, add `--base SNAPSHOT` from a previous

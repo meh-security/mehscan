@@ -1,7 +1,7 @@
 //! One locked append-only transaction journal; derived views are never authority.
 use mehscan_core::{
-    ReviewAttemptStatus, ReviewDecisionRecord, ReviewStateBinding, ReviewStateSupersession,
-    ReviewSubjectState,
+    ReviewAttemptStatus, ReviewCompletionPolicy, ReviewDecisionRecord, ReviewStateBinding,
+    ReviewStateSupersession, ReviewSubjectState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -48,6 +48,8 @@ enum Command {
         retry: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audit_parent: Option<AuditParent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        continuation_policy: Option<ReviewCompletionPolicy>,
     },
     Record {
         key: String,
@@ -329,6 +331,7 @@ impl State {
                 expected_generation,
                 retry,
                 audit_parent,
+                continuation_policy,
             } => {
                 label(attempt_id)?;
                 if let Some(key) = &binding.coordination_key {
@@ -351,7 +354,7 @@ impl State {
                     ));
                 }
                 // Only the exact terminal transaction can carry its plan to the next generation.
-                let audit_plan = if let Some(parent) = audit_parent {
+                let mut inherited_plan = if let Some(parent) = audit_parent {
                     let current = item.attempts.last().ok_or("missing closed audit parent")?;
                     if current.closed_report.as_ref() != Some(parent)
                         || current.snapshot_id != snapshot_id
@@ -372,6 +375,27 @@ impl State {
                 } else {
                     None
                 };
+                if let Some(policy) = continuation_policy {
+                    let plan = inherited_plan
+                        .as_mut()
+                        .ok_or("continuation requires a close receipt")?;
+                    if *policy != ReviewCompletionPolicy::Comprehensive
+                        || plan.policy != ReviewCompletionPolicy::Value
+                        || binding.impact_scope.is_some()
+                    {
+                        return Err("Comprehensive continuation requires a closed full-repository Value plan".into());
+                    }
+                    let runtime = plan
+                        .runtime
+                        .as_mut()
+                        .ok_or("closed Value plan has no bound runtime")?;
+                    let scope = super::review_completion::template(binding, *policy);
+                    runtime.policy = *policy;
+                    plan.policy = *policy;
+                    plan.selected_review_ids = scope.selected_review_ids;
+                    plan.excluded_review_ids = scope.excluded_review_ids;
+                    plan.deferred_review_ids.clear();
+                }
                 if let Some(current) = item.attempts.last() {
                     if current.snapshot_id == snapshot_id
                         && !retry
@@ -420,7 +444,7 @@ impl State {
                     admissions: BTreeSet::new(),
                 });
                 let mut result = json!({"status":"claimed","stream_key":key,"generation":generation,"snapshot_id":snapshot_id,"owner":owner});
-                if let Some(plan) = audit_plan {
+                if let Some(plan) = inherited_plan {
                     self.apply(&Command::Plan {
                         key,
                         generation,
@@ -430,6 +454,9 @@ impl State {
                         work_package: None,
                     })?;
                     result["audit_parent"] = json!(audit_parent);
+                    if let Some(policy) = continuation_policy {
+                        result["continuation_policy"] = json!(policy);
+                    }
                 }
                 Ok(result)
             }
@@ -1939,7 +1966,7 @@ fn inventory_repository_key(path: &Path) -> Result<String, String> {
         .ok_or_else(|| "state requires a repository identity; regenerate a standalone inventory or supply --repository-key".into())
 }
 
-fn inventory(
+pub(super) fn inventory(
     path: &Path,
     root: &Path,
 ) -> Result<
@@ -2108,6 +2135,19 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     } else {
         None
     };
+    let continuation_policy = if close.is_some() {
+        match args.optional("--policy").as_deref() {
+            None => None,
+            Some("comprehensive") => Some(ReviewCompletionPolicy::Comprehensive),
+            Some(_) => {
+                return Err(
+                    "a receipt claim supports --policy comprehensive for scope extension".into(),
+                );
+            }
+        }
+    } else {
+        None
+    };
     let project_path = if let Some(close) = &close {
         Some(close.project_run.clone())
     } else {
@@ -2117,12 +2157,8 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         let project = super::review_memory::PreparedProject::read(&path)?;
         let temporary = project.temporary();
         if let Some(close) = &close {
-            if project.admitted_report.as_ref() != Some(&close.admitted_report) {
-                return Err("audit project run differs from the close receipt".into());
-            }
-            project.report_run(&path)?;
-            outside_source(&path.with_file_name("findings.json"), &project.source_root)?;
-            if close.findings()?.decision_records.is_empty() {
+            close.validate_project(&project)?;
+            if close.findings()?.decision_records.is_empty() && continuation_policy.is_none() {
                 return Err("closed report has no admitted decisions to audit".into());
             }
         }
@@ -2553,6 +2589,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 expected_generation,
                 retry,
                 audit_parent,
+                continuation_policy,
             }
         }
         "record" => {
@@ -3206,7 +3243,7 @@ fn help() {
         "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
-        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state claim --close-receipt FILE --attempt-id ID --operation-key ID\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state claim --close-receipt FILE [--policy comprehensive] --attempt-id ID --operation-key ID\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

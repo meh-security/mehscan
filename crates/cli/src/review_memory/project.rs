@@ -75,6 +75,17 @@ impl CloseReceipt {
         Ok(receipt)
     }
 
+    pub(crate) fn validate_project(&self, project: &PreparedProject) -> Result<(), String> {
+        if project.admitted_report.as_ref() != Some(&self.admitted_report) {
+            return Err("admitted project run differs from the close receipt".into());
+        }
+        project.report_run(&self.project_run)?;
+        outside_source(
+            &self.project_run.with_file_name("findings.json"),
+            &project.source_root,
+        )
+    }
+
     pub(crate) fn findings(&self) -> Result<mehscan_core::FindingReport, String> {
         let findings = self
             .admitted_report

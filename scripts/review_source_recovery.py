@@ -114,9 +114,21 @@ def copy_artifacts(old, stage, budget, worker):
 def extend_scope(parent, stage, root, package, plan, registry, binding, worker):
     """Authorize a wider target from an admitted Value checkpoint, before dispatch."""
     parent = worker.outside(parent, root)
-    audit = worker.read(parent / "worker.json").get("work_followup")
+    published = parent
+    result = worker.read(parent / "worker.json")
+    audit = result.get("work_followup")
     if audit:
-        parent = worker.outside(audit.get("correction_attempt") or audit["parent_attempt"], root)
+        parent = worker.outside(audit["parent_attempt"], root)
+        if worker.digest_file(parent / "source-review/work-handoff.json") != audit["handoff_sha256"]:
+            raise ValueError("audited Value work handoff changed")
+        if audit.get("correction_attempt"):
+            parent = worker.outside(audit["correction_attempt"], root)
+            if worker.digest_file(parent / "source-review/resolution-handoff.json") != audit["correction_handoff_sha256"]:
+                raise ValueError("audited Value correction changed")
+        published = parent
+    elif result.get("source_review", {}).get("work_review"):
+        import review_source
+        parent = review_source.recovery_summary(parent, root, worker).parent.parent
     old = parent / "source-review"
     if stage.resolve().is_relative_to(parent) or parent.is_relative_to(stage.resolve()):
         raise ValueError("Comprehensive continuation requires a separate attempt directory")
@@ -126,8 +138,9 @@ def extend_scope(parent, stage, root, package, plan, registry, binding, worker):
     native_parent = parent
     if (old / "resolution-handoff.json").is_file():
         correction, _, native_parent = review_work.read_resolution_handoff(parent, root, worker)
+        published = native_parent
     handoff, summary, budget_path = review_work.read_handoff(native_parent, root, worker)
-    finished = worker.read(native_parent / "worker.json")
+    finished = worker.read(published / "worker.json")
     if not finished.get("native_admission"):
         raise ValueError("Comprehensive continuation requires a published Value attempt")
     previous = worker.read(native_parent / "source-review/work.json")["payload"]
@@ -189,7 +202,7 @@ def extend_scope(parent, stage, root, package, plan, registry, binding, worker):
         raise ValueError("Comprehensive work plan must retain prior coverage limits")
     parents = {row["decision_id"]:row for row in current["parent_decisions"]}
     heads, changed = {}, []
-    for row in worker.read(native_parent / "findings.json").get("decision_records", []):
+    for row in worker.read(published / "findings.json").get("decision_records", []):
         rid = row["response"]["review_id"]
         if rid not in summary["assessments"]:
             raise ValueError("Value finding is outside its saved assessment scope")

@@ -2914,17 +2914,14 @@ def run_locked(args, *, source_prepared=None):
 def bind_project_run(args):
     """Resolve the native project receipt before claiming or dispatching any work."""
     if args.close_receipt:
-        if (args.second_pass not in ("fast", "full") or args.phase == "change-pass" or args.project_run
-                or args.first_pass or args.run or args.work_package or args.assignment
+        if (args.phase == "change-pass" or args.project_run or args.first_pass or args.run
+                or args.work_package or args.assignment or args.continue_comprehensive or args.resolve_checks
                 or args.group_operations or args.source_selection or args.reuse_source_results):
-            raise ValueError("--close-receipt supplies the project, first pass, bundles and work for an explicit Fast or Full audit")
+            raise ValueError("--close-receipt supplies the project, parent attempt, bundles and work")
         close = read(args.close_receipt)
         args.project_run = close["project_run"]
-        args.first_pass = str(Path(args.project_run).parent)
-        args.run = str(Path(args.first_pass) / "run")
-        args.phase = "native"
     elif not args.work_package:
-        raise ValueError("--work-package is required unless auditing from a close receipt")
+        raise ValueError("--work-package is required unless using a close receipt")
     if not args.project_run:
         missing = [name for name in ("source_root", "inventory", "store", "stream") if not getattr(args, name)]
         if missing:
@@ -2940,23 +2937,40 @@ def bind_project_run(args):
         [str(scanner), "project", "resolve", "--project-run", str(receipt_path)], encoding="utf-8"))
     if args.close_receipt:
         outside(args.close_receipt, root)
-        manifest = outside(Path(args.run) / "manifest.json", root)
+        parent = receipt_path.parent
+        manifest = outside(parent / "run/manifest.json", root)
         if digest_file(manifest) != receipt["report_manifest_sha256"]:
-            raise ValueError("Audit bundle manifest differs from the admitted run")
+            raise ValueError("Bundle manifest differs from the admitted run")
         admitted = close["admitted_report"]
         claim = read(outside(args.claim, root))["result"]
         if (receipt.get("admitted_report") != admitted or claim["generation"] != admitted["generation"] + 1
                 or claim.get("audit_parent") != {"sequence": close["sequence"], "findings_sha256": admitted["findings_sha256"]}):
-            raise ValueError("Audit requires a fresh claim for this close receipt")
+            raise ValueError("Follow-up requires a fresh claim for this close receipt")
         if (close["result"]["generation"] != admitted["generation"]
                 or close["result"]["status"] not in ("finished", "incomplete", "cancelled")):
-            raise ValueError("Audit requires a terminal receipt for the admitted generation")
-        findings = outside(Path(args.first_pass) / "findings.json", root).read_bytes()
+            raise ValueError("Follow-up requires a terminal receipt for the admitted generation")
+        findings = outside(parent / "findings.json", root).read_bytes()
         if hashlib.sha256(findings).hexdigest() != admitted["findings_sha256"]:
-            raise ValueError("findings differ from the report authorized by the audit claim")
-        args._closed_report = json.loads(findings)
-        if not args._closed_report.get("decision_records"):
-            raise ValueError("closed report has no admitted decisions to audit")
+            raise ValueError("findings differ from the report authorized by the receipt claim")
+        report = json.loads(findings)
+        if claim.get("continuation_policy") == "comprehensive":
+            if not args.work_plan or args.phase != "all":
+                raise ValueError("Comprehensive continuation requires an expanded --work-plan and all phases")
+            args._continuation_receipt = {"project_run": str(receipt_path), "parent": claim["audit_parent"],
+                                          "claim": context.digest(claim)}
+            args._continuation_heads = {row["response"]["review_id"]: [row["decision_id"]]
+                                        for row in report["decision_records"]}
+            if not args.resume_from:
+                args.continue_comprehensive = str(parent)
+        else:
+            if args.second_pass not in ("fast", "full") or args.work_plan:
+                raise ValueError("receipt audit requires an explicit Fast or Full audit; claim with --policy comprehensive to extend scope")
+            if not report.get("decision_records"):
+                raise ValueError("closed report has no admitted decisions to audit")
+            args._closed_report = report
+            args.first_pass = str(parent)
+            args.run = str(parent / "run")
+            args.phase = "native"
     args._project_bindings = receipt
     args.source_root, args.inventory = receipt["source_root"], receipt["inventory"]
     args.store, args.stream = receipt["state_store"], receipt["stream"]
@@ -2972,7 +2986,7 @@ def main():
         parser.add_argument("--" + option, required=True)
     for option in ("source-root", "inventory", "store", "stream"):
         parser.add_argument("--" + option)
-    parser.add_argument("--close-receipt", help="audit the admitted decisions from a closed project review with a fresh receipt-bound claim")
+    parser.add_argument("--close-receipt", help="audit or extend a closed project review using a fresh receipt-bound claim")
     parser.add_argument("--work-package", help="current native work package (resolved from the journal for --close-receipt)")
     parser.add_argument("--project-run", help="project_run file from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")

@@ -301,7 +301,7 @@ print(json.dumps(value))
         self.exercise_comprehensive_continuation(close_value=False, cap=3)
 
     def exercise_comprehensive_continuation(self, *, close_value, cap):
-        fixture, command, manifest_path, ids = self.prepare(unresolved=not close_value)
+        fixture, command, manifest_path, ids = self.prepare(unresolved=not close_value, project_run=close_value)
         if close_value:
             self.audit_provider(fixture)
         else:
@@ -329,33 +329,39 @@ print(json.dumps(value))
                 correction[correction.index("--output") + 1] = str(checkpoint)
                 checked = subprocess.run(correction, capture_output=True, text=True, timeout=300)
                 self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-            effective = summary["effective_args"]
-            claim = json.loads(Path(effective["claim"]).read_text())
-            old_claim = claim["result"]
-            source = ["--inventory", effective["inventory"], "--source-root", root]
-            stream = ["--store", fixture.base / "state", "--stream", "source", *source]
-            old_owner = ["--generation", old_claim["generation"], "--owner", old_claim["owner"]]
-            parent_plan = ["--expected-plan-id", json.loads(Path(effective["work_package"]).read_text())["payload"]["plan_id"]]
-            if close_value:
-                ended = fixture.native("state", "end", *stream, *old_owner,
-                                       "--status", "finished", "--operation-key", "close-value")
-                self.assertEqual(ended["memory"]["status"], "retained")
-                claim = fixture.native("state", "claim", *stream, "--expected-generation", old_claim["generation"],
-                                       "--attempt-id", "comprehensive", "--operation-key", "extend", "--retry", "true")
-                parent_plan = []
-            owner = ["--generation", claim["result"]["generation"], "--owner", claim["result"]["owner"]]
-            plan = fixture.native("state", "plan-template", *source, *skill, "--policy", "comprehensive", "--selection", "policy")
-            plan_path = fixture.base / "comprehensive-native.json"
-            plan_path.write_text(json.dumps(plan))
-            fixture.native("state", "plan", *stream, *owner, *skill, *parent_plan,
-                           "--input", plan_path, "--operation-key", "wider-plan")
-            work = fixture.native("state", "work", *stream, *owner, *skill)
-            work_path = fixture.base / "comprehensive-work.json"
-            work_path.write_text(json.dumps(work))
             claim_path = fixture.base / "comprehensive-claim.json"
+            if close_value:
+                value = json.loads((initial / "worker.json").read_text())
+                close = fixture.native("state", "end", "--project-run", value["project_run"],
+                    "--claim", value["private_claim"], "--status", "finished", "--operation-key", "close-value")
+                self.assertEqual(close["memory"]["status"], "retained")
+                receipt = fixture.base / "close.json"
+                receipt.write_text(json.dumps(close))
+                claim_args = ["state", "claim", "--close-receipt", receipt, "--policy", "comprehensive",
+                              "--attempt-id", "comprehensive", "--operation-key", "extend"]
+                claim = fixture.native(*claim_args)
+                self.assertEqual(fixture.native(*claim_args)["result"], claim["result"])
+                self.assertEqual(claim["result"]["generation"], close["result"]["generation"] + 1)
+                source_plan = fixture.native("investigate", "source-review-plan", "--close-receipt", receipt)
+            else:
+                effective = summary["effective_args"]
+                claim = json.loads(Path(effective["claim"]).read_text())
+                old = claim["result"]
+                source = ["--inventory", effective["inventory"], "--source-root", root]
+                stream = ["--store", fixture.base / "state", "--stream", "source", *source]
+                owner = ["--generation", old["generation"], "--owner", old["owner"]]
+                parent_plan = json.loads(Path(effective["work_package"]).read_text())["payload"]["plan_id"]
+                plan = fixture.native("state", "plan-template", *source, *skill, "--policy", "comprehensive", "--selection", "policy")
+                plan_path = fixture.base / "comprehensive-native.json"
+                plan_path.write_text(json.dumps(plan))
+                fixture.native("state", "plan", *stream, *owner, *skill, "--expected-plan-id", parent_plan,
+                               "--input", plan_path, "--operation-key", "wider-plan")
+                work = fixture.native("state", "work", *stream, *owner, *skill)
+                work_path = fixture.base / "comprehensive-work.json"
+                work_path.write_text(json.dumps(work))
+                source_plan = fixture.native("investigate", "source-review-plan", root, "--inventory", effective["inventory"],
+                                             "--review-ids", ",".join(work["payload"]["review_ids"]))
             claim_path.write_text(json.dumps(claim))
-            source_plan = fixture.native("investigate", "source-review-plan", root, "--inventory", effective["inventory"],
-                                         "--review-ids", ",".join(work["payload"]["review_ids"]))
             manifest = json.loads(manifest_path.read_text())
             manifest.update(source_plan_id=source_plan["plan_id"], source_fingerprint=source_plan["source_fingerprint"])
             for item in manifest["items"]:
@@ -371,10 +377,19 @@ print(json.dumps(value))
             manifest["items"].extend([added, named])
             expanded = fixture.base / "comprehensive-plan.json"
             output = fixture.base / "wider"
-            followup = list(command) + ["--continue-comprehensive", str(checkpoint), "--max-calls", "20"]
-            for flag, value in {"--inventory":effective["inventory"], "--claim":claim_path,
-                "--work-package":work_path, "--work-plan":expanded, "--output":output}.items():
+            followup = list(command)
+            replacements = {"--claim":claim_path, "--work-plan":expanded, "--output":output}
+            if close_value:
+                i = followup.index("--work-package")
+                del followup[i:i+2]
+                followup[followup.index("--project-run")] = "--close-receipt"
+                replacements["--close-receipt"] = receipt
+            else:
+                followup.extend(["--continue-comprehensive", str(checkpoint)])
+                replacements.update({"--inventory":effective["inventory"], "--work-package":work_path})
+            for flag, value in replacements.items():
                 followup[followup.index(flag) + 1] = str(value)
+            followup += ["--max-calls", "20"]
             if close_value:
                 expanded.write_text(json.dumps({**manifest, "items":manifest["items"][1:]}))
                 rejected = subprocess.run(followup, capture_output=True, text=True, timeout=180)
@@ -411,7 +426,12 @@ print(json.dumps(value))
                 with patch.object(worker, "write", side_effect=stop_after_case), self.assertRaises(KeyboardInterrupt):
                     self.invoke(followup)
                 self.assertTrue(interrupted)
-                resume = followup[:-4] + ["--max-calls", "20", "--resume-from", str(output), "--second-pass", "full"]
+                wrong = followup + ["--resume-from", str(initial)]
+                wrong_output = fixture.base / "unrelated-recovery"
+                wrong[wrong.index("--output") + 1] = str(wrong_output)
+                self.assertNotEqual(subprocess.run(wrong, capture_output=True, timeout=60).returncode, 0)
+                self.assertFalse(wrong_output.exists())
+                resume = followup + ["--resume-from", str(output), "--second-pass", "full"]
                 output = fixture.base / "recovered-extension"
                 resume[resume.index("--output") + 1] = str(output)
                 result = subprocess.run(resume, capture_output=True, text=True, timeout=300)
@@ -420,14 +440,16 @@ print(json.dumps(value))
             self.assertEqual(result.returncode, 0 if close_value else 2,
                              result.stdout + result.stderr + (output / "worker.json").read_text())
             if close_value:
-                expanded_summary = json.loads((output / "source-review/summary.json").read_text())
-                final_args = expanded_summary["effective_args"]
-                final_owner = json.loads(Path(final_args["claim"]).read_text())["result"]
-                retained = fixture.native("state", "end", "--store", fixture.base / "state", "--stream", "source",
-                    "--inventory", final_args["inventory"], "--source-root", root, "--generation", final_owner["generation"],
-                    "--owner", final_owner["owner"], "--status", "finished", "--operation-key", "retain-comprehensive")
+                completed = json.loads(result.stdout)
+                retained = fixture.native("state", "end", "--project-run", completed["project_run"],
+                    "--claim", completed["private_claim"], "--status", "finished", "--operation-key", "retain-comprehensive")
                 self.assertEqual(retained["memory"]["status"], "retained")
                 self.assertEqual(retained["memory"]["assessments"], 4)
+                final_receipt = fixture.base / "comprehensive-close.json"
+                final_receipt.write_text(json.dumps(retained))
+                refused = fixture.native("state", "claim", "--close-receipt", final_receipt,
+                    "--policy", "comprehensive", "--attempt-id", "again", "--operation-key", "again", okay=False)
+                self.assertIn("requires a closed full-repository Value plan", refused)
 
         stage = output / "source-review"
         continuation = json.loads((stage / "summary.json").read_text())["continuation"]
@@ -541,9 +563,9 @@ print(json.dumps(value))
         self.assertEqual((initial/"source-review/work-ledger.json").read_bytes(), original_ledger)
         frames=[json.loads(path.read_text()) for path in (f.base/"followup/training-turns").glob("*/*-input.json")]
         self.assertEqual([frame["review_role"] for frame in frames], ["second_pass_fast"])
-    def prepare(self, unresolved=False, malformed=False):
+    def prepare(self, unresolved=False, malformed=False, *, project_run=False):
         fixture = domain_fixtures.DomainReview()
-        f, command, ids = fixture.prepare()
+        f, command, ids = fixture.prepare(project_run=project_run)
         self.addCleanup(fixture.doCleanups)
         path = Path(command[command.index("--domain-plan") + 1])
         domain = json.loads(path.read_text())

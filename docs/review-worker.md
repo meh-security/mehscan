@@ -369,15 +369,38 @@ optional Fast/Full audits use their existing entry points.
 
 ### Continue Value into Comprehensive
 
-Use `--continue-comprehensive VALUE_ATTEMPT` on the ordinary all-phase worker
-invocation with a new `--output` and the expanded `--work-plan`. Use the
-published repository Value attempt as the checkpoint. Keep its effective
-inventory, source, review stream, memory store, reviewer and runtime. Bind the
-Comprehensive native plan on that inventory and export its current `state work`
-package. Replace an active native plan with its exact parent plan ID. If the
-Value generation is closed, claim a new generation on that same inventory.
-You can also select a saved named correction or a saved native audit linked to
-that Value attempt as the checkpoint.
+For a closed project Value review with a named work plan, use the close receipt
+to list the assignments in Comprehensive scope on the effective inventory.
+
+```sh
+mehscan investigate source-review-plan --close-receipt close.json > assignments.json
+```
+
+Use the returned plan ID, source fingerprint and assignment IDs to prepare
+`expanded.json`. When ready to authorize the broader scope, claim the next
+generation and run the same reviewer with the expanded manifest. Keep the
+original skill, provider settings and supporting-source option.
+
+```sh
+(umask 077 && mehscan state claim --close-receipt close.json --policy comprehensive \
+  --attempt-id broader-1 --operation-key claim-broader-1 > broader-claim.json)
+python scripts/review_worker.py --scanner "$MEHSCAN" --close-receipt close.json \
+  --claim broader-claim.json --work-plan expanded.json \
+  --reviewer-command "$REVIEWER_COMMAND" --reviewer-label "$REVIEWER_LABEL" \
+  --output broader-1 > broader-result.json
+```
+
+The journal checks the close against the current generation and pins the broader
+native plan in the same transaction. Retry the same claim with the same operation
+key. To recover an interrupted worker, repeat the invocation with a new output
+directory and `--resume-from` pointing to its latest attempt. Use the returned
+`project_run` and `private_claim` to close the Comprehensive review.
+
+For an active Value generation, use `--continue-comprehensive VALUE_ATTEMPT`
+with its effective inventory, stream, memory store and reviewer. Bind the
+Comprehensive native plan with the exact parent plan ID and supply its current
+`state work` package. The explicit attempt form also accepts a saved named
+correction or native audit linked to the published Value attempt.
 
 Bind the expanded manifest to the current Comprehensive source plan. Keep the
 original case IDs, questions, Verify membership, actors and conditions. Add the
