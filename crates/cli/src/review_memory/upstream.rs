@@ -1,4 +1,6 @@
 //! Advisory publications on a dedicated Turso native sync replica.
+mod resolution;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
@@ -76,6 +78,11 @@ struct Selection {
     stream: String,
 }
 
+pub(super) struct Baseline {
+    pub(super) snapshot: String,
+    pub(super) inventory: String,
+}
+
 #[derive(Serialize)]
 struct FileDependency {
     #[serde(skip)]
@@ -93,10 +100,21 @@ struct Publication {
     sharing: Option<mehscan_core::ReviewSharingBinding>,
 }
 
+#[derive(Serialize)]
+struct PublishedReview {
+    id: String,
+    publisher_label: String,
+    attempt_status: String,
+    assessments: Vec<assessments::Assessment>,
+    file_dependencies: Vec<FileDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<Value>,
+}
+
 enum Operation {
     Init,
     Pull,
-    PullContext(Selection),
+    PullContext(Selection, Option<Baseline>),
     Push,
     Status,
     Checkpoint,
@@ -106,18 +124,19 @@ enum Operation {
         batch: String,
         label: String,
         content: Publication,
+        resolution: Option<resolution::Record>,
     },
 }
 
 impl Operation {
     fn bootstraps(&self) -> bool {
-        matches!(self, Self::Init | Self::Pull | Self::PullContext(_))
+        matches!(self, Self::Init | Self::Pull | Self::PullContext(..))
     }
 }
 
 pub(super) fn help() {
     println!(
-        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream. Writers pull the initialized schema before staging.\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
+        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream and again to enable shared resolutions on older upstreams. Writers pull the initialized schema before staging.\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE] [--resolution FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
     );
 }
 
@@ -152,20 +171,28 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                     return Err("publisher label must be nonempty and at most 256 bytes".into());
                 }
                 let store = args.optional("--store").map(PathBuf::from);
+                let resolution = args
+                    .optional("--resolution")
+                    .map(|path| resolution::Record::load(Path::new(&path), &root))
+                    .transpose()?;
                 let store = resolve_store(store.as_deref(), &root, &selection.snapshot.repository)?;
                 args.finish()?;
-                let content = load_local(&store, &selection, &batch)?;
+                let mut content = load_local(&store, &selection, &batch)?;
                 if content.sharing.is_some() {
                     return Err(
                         "publish audience-bound reviews through the enrolled sharing service"
                             .into(),
                     );
                 }
+                if let Some(record) = &resolution {
+                    record.select_assessment(&mut content, &selection.snapshot)?;
+                }
                 Operation::Stage {
                     selection,
                     batch,
                     label,
                     content,
+                    resolution,
                 }
             } else {
                 args.finish()?;
@@ -217,6 +244,7 @@ pub(super) fn pull_project(
     repository_key: &str,
     snapshot: Snapshot,
     stream: String,
+    baseline: Option<Baseline>,
 ) -> Result<Value, String> {
     let local_endpoint = validate_remote(remote)?;
     let selection = selection(snapshot, repository_key, stream)?;
@@ -225,7 +253,7 @@ pub(super) fn pull_project(
         remote,
         repository_key,
         local_endpoint,
-        Operation::PullContext(selection),
+        Operation::PullContext(selection, baseline),
     )
 }
 
@@ -237,7 +265,7 @@ fn run_bound(
     operation: Operation,
 ) -> Result<Value, String> {
     check_store_file(replica)?;
-    let project_pull = matches!(&operation, Operation::PullContext(_));
+    let project_pull = matches!(&operation, Operation::PullContext(..));
     let _lock = if project_pull {
         let lock = open_store_lock(replica)?;
         fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
@@ -468,7 +496,7 @@ async fn initialize_upstream(
     remote: &str,
     repository_key: &str,
     local_endpoint: bool,
-) -> Result<bool, String> {
+) -> Result<(bool, bool), String> {
     // Provision on a separate replica so init never publishes queued assessments.
     let scratch = upstream_scratch(replica)?;
     let (db, mut conn) = open_replica(
@@ -479,12 +507,18 @@ async fn initialize_upstream(
     )
     .await?;
     db.pull().await.map_err(db_error)?;
-    if check_repository(&conn, repository_key).await? {
-        return Ok(false);
+    let created = !check_repository(&conn, repository_key).await?;
+    if created {
+        seed_schema(&mut conn, repository_key).await?;
+    } else if resolution::available(&conn).await? {
+        return Ok((false, false));
+    } else {
+        conn.execute_batch(resolution::SCHEMA)
+            .await
+            .map_err(db_error)?;
     }
-    seed_schema(&mut conn, repository_key).await?;
     let push = db.push().await.map_err(db_error);
-    let check = async {
+    let check: Result<bool, String> = async {
         let (verifier, upstream) = open_replica(
             &scratch.path().join("verify.turso"),
             remote,
@@ -493,11 +527,12 @@ async fn initialize_upstream(
         )
         .await?;
         verifier.pull().await.map_err(db_error)?;
-        check_repository(&upstream, repository_key).await
+        Ok(check_repository(&upstream, repository_key).await?
+            && resolution::available(&upstream).await?)
     }
     .await;
     match (push, check) {
-        (_, Ok(true)) => Ok(true),
+        (_, Ok(true)) => Ok((created, !created)),
         (Ok(()), Ok(false)) => Err("upstream did not confirm the publication schema".into()),
         (Ok(()), Err(error)) => Err(format!("could not verify upstream initialization: {error}")),
         (Err(error), Ok(false)) => Err(error),
@@ -519,6 +554,9 @@ async fn seed_schema(conn: &mut Connection, repository_key: &str) -> Result<(), 
         .await
         .map_err(db_error)?;
     tx.execute_batch(DEPENDENCY_SCHEMA)
+        .await
+        .map_err(db_error)?;
+    tx.execute_batch(resolution::SCHEMA)
         .await
         .map_err(db_error)?;
     tx.execute(
@@ -543,24 +581,31 @@ async fn operate(
     let initialized = check_repository(&conn, repository_key).await?;
     match operation {
         Operation::Init => {
-            let created =
+            let (created, upgraded) =
                 initialize_upstream(replica, remote, repository_key, local_endpoint).await?;
             db.pull().await.map_err(db_error)?;
-            if !check_repository(&conn, repository_key).await? {
+            if !check_repository(&conn, repository_key).await?
+                || !resolution::available(&conn).await?
+            {
                 return Err("replica did not receive the upstream publication schema".into());
             }
-            Ok(json!({"status":"initialized","initialized":true,"created":created}))
+            Ok(
+                json!({"status":"initialized","initialized":true,"created":created,"upgraded":upgraded}),
+            )
         }
-        Operation::Pull | Operation::PullContext(_) => {
+        Operation::Pull | Operation::PullContext(..) => {
             let changed = db.pull().await.map_err(db_error)?;
             let initialized = check_repository(&conn, repository_key).await?;
             let stats = db.stats().await.map_err(db_error)?;
             let pull = json!({"status":"pulled","changed":changed,"initialized":initialized,"elapsed_ms":started.elapsed().as_millis(),"sync":stats});
-            if let Operation::PullContext(selection) = operation {
-                let context = context(&conn, &selection, initialized).await?;
-                Ok(
-                    json!({"status": if initialized { "pulled" } else { "uninitialized" }, "pull": pull, "context": context}),
-                )
+            if let Operation::PullContext(selection, baseline) = operation {
+                let current = context(&conn, &selection, initialized, None).await?;
+                let mut receipt = json!({"status": if initialized { "pulled" } else { "uninitialized" }, "pull": pull, "context": current});
+                if let Some(baseline) = baseline {
+                    receipt["baseline"] = json!({"snapshot":baseline.snapshot,"inventory_fingerprint":baseline.inventory,
+                        "context":context(&conn, &selection, initialized, Some(&baseline)).await?});
+                }
+                Ok(receipt)
             } else {
                 Ok(pull)
             }
@@ -596,18 +641,77 @@ async fn operate(
             let stats = db.stats().await.map_err(db_error)?;
             Ok(json!({"status":"ready","initialized":initialized,"sync":stats}))
         }
-        Operation::Context(selection) => context(&conn, &selection, initialized).await,
+        Operation::Context(selection) => context(&conn, &selection, initialized, None).await,
         Operation::Stage {
             selection,
             batch,
             label,
             content,
+            resolution,
         } => {
             if !initialized {
                 return Err("upstream publication schema is uninitialized; run memory sync init and pull before staging".into());
             }
-            let publication =
-                fingerprint(&("mehscan-publication/v1", repository_key, &batch, &label))?;
+            let (publication, body) = if let Some(record) = &resolution {
+                if !resolution::available(&conn).await? {
+                    return Err("shared resolutions require memory sync init on the upstream, followed by pull".into());
+                }
+                let digest = fingerprint(&(
+                    "mehscan-resolution/v1",
+                    repository_key,
+                    &batch,
+                    &label,
+                    record,
+                ))?;
+                let id = format!("{}{digest}", resolution::ID_PREFIX);
+                let body = serde_json::to_string(record).map_err(|error| error.to_string())?;
+                if let Some(existing) = resolution::body(&conn, &id).await? {
+                    if existing != body {
+                        return Err("staged resolution content differs".into());
+                    }
+                    return Ok(
+                        json!({"status":"staged","publication":id,"assessments":1,"reused":true}),
+                    );
+                }
+                let scratch = upstream_scratch(replica)?;
+                let (verifier, fresh) = open_replica(
+                    &scratch.path().join("parents.turso"),
+                    remote,
+                    local_endpoint,
+                    true,
+                )
+                .await?;
+                verifier.pull().await.map_err(db_error)?;
+                if !check_repository(&fresh, repository_key).await?
+                    || !resolution::available(&fresh).await?
+                {
+                    return Err("upstream shared resolution schema is unavailable".into());
+                }
+                let published = read_publications(&fresh, &selection, true, None).await?;
+                // A restored replica may restage a record that the upstream already has.
+                if let Some(existing) = resolution::body(&fresh, &id).await? {
+                    if existing != body {
+                        return Err("upstream resolution content differs".into());
+                    }
+                    if !published.iter().any(|item| item.id == id)
+                        || !resolution::project(&published).is_applied(&id)
+                    {
+                        return Err("upstream resolution is incomplete".into());
+                    }
+                    db.pull().await.map_err(db_error)?;
+                    return Ok(
+                        json!({"status":"staged","publication":id,"assessments":1,"reused":true}),
+                    );
+                }
+                record
+                    .validate_parents(&content.assessments[0], &resolution::project(&published))?;
+                (id, Some(body))
+            } else {
+                (
+                    fingerprint(&("mehscan-publication/v1", repository_key, &batch, &label))?,
+                    None,
+                )
+            };
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
@@ -635,6 +739,14 @@ async fn operate(
                     .map_err(db_error)?;
                     tx.execute("INSERT INTO published_file_dependencies VALUES (?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
                         (publication.as_str(), dependency.assessment_id.as_str(), snapshot, dependency.role.as_str(), dependency.path.as_str())).await.map_err(db_error)?;
+                }
+                if let Some(body) = body {
+                    tx.execute(
+                        "INSERT INTO review_resolutions VALUES (?1, ?2)",
+                        (publication.as_str(), body.as_str()),
+                    )
+                    .await
+                    .map_err(db_error)?;
                 }
             }
             tx.commit().await.map_err(db_error)?;
@@ -752,7 +864,15 @@ async fn publication_fingerprint(conn: &Connection, id: &str) -> Result<Option<S
         .collect::<Result<Vec<_>, _>>()?;
     drop(rows);
     let (assessments, dependencies) = published_contents(conn, id).await?;
-    fingerprint(&(metadata, assessments, dependencies)).map(Some)
+    let resolution = if resolution::available(conn).await? {
+        resolution::body(conn, id).await?
+    } else {
+        None
+    };
+    if id.starts_with(resolution::ID_PREFIX) && resolution.is_none() {
+        return Err(format!("publication {id} is missing its resolution record"));
+    }
+    fingerprint(&(metadata, assessments, dependencies, resolution)).map(Some)
 }
 
 async fn published_contents(
@@ -774,51 +894,85 @@ async fn context(
     conn: &Connection,
     selection: &Selection,
     initialized: bool,
+    baseline: Option<&Baseline>,
 ) -> Result<Value, String> {
-    let mut publications = Vec::new();
+    let resolution_enabled = initialized && resolution::available(conn).await?;
+    let publications = if initialized {
+        read_publications(conn, selection, resolution_enabled, baseline).await?
+    } else {
+        Vec::new()
+    };
     let mut verdicts = BTreeMap::<String, BTreeSet<String>>::new();
-    if initialized {
-        let repo_key = selection
-            .snapshot
-            .repository
-            .repository_key
-            .as_deref()
-            .ok_or("missing repository key")?;
-        let mut rows = conn
-            .query(
-                "SELECT id, publisher_label, attempt_status FROM assessment_batches
-             WHERE repository_key = ?1 AND repository_id = ?2 AND snapshot_id = ?3
-               AND inventory_fingerprint = ?4 AND stream = ?5 ORDER BY id",
-                (
-                    repo_key,
-                    selection.repository.as_str(),
-                    selection.source_snapshot.as_str(),
-                    selection.snapshot.inventory.as_str(),
-                    selection.stream.as_str(),
-                ),
-            )
-            .await
-            .map_err(db_error)?;
-        while let Some(row) = rows.next().await.map_err(db_error)? {
-            let id: String = row.get(0).map_err(db_error)?;
-            let (assessments, dependencies) = published_contents(conn, &id).await?;
-            for assessment in &assessments {
-                verdicts
-                    .entry(assessment.subject_key.clone())
-                    .or_default()
-                    .insert(assessment.verdict.clone());
-            }
-            publications.push(
-                json!({"id":id,"publisher_label":row.get::<String>(1).map_err(db_error)?,
-                "attempt_status":row.get::<String>(2).map_err(db_error)?,"assessments":assessments,
-                "file_dependencies":dependencies}),
-            );
+    for publication in &publications {
+        for assessment in &publication.assessments {
+            verdicts
+                .entry(assessment.subject_key.clone())
+                .or_default()
+                .insert(assessment.verdict.clone());
         }
     }
     verdicts.retain(|_, values| values.len() > 1);
     Ok(
-        json!({"authority":"upstream_context","publications":publications,"conflicting_verdicts":verdicts}),
+        json!({"authority":"upstream_context","publications":publications,"conflicting_verdicts":verdicts,
+        "resolution_enabled":resolution_enabled,"review_state":resolution::project(&publications)}),
     )
+}
+
+async fn read_publications(
+    conn: &Connection,
+    selection: &Selection,
+    resolution_enabled: bool,
+    baseline: Option<&Baseline>,
+) -> Result<Vec<PublishedReview>, String> {
+    let (snapshot, inventory) = baseline.map_or(
+        (
+            selection.source_snapshot.as_str(),
+            selection.snapshot.inventory.as_str(),
+        ),
+        |baseline| (baseline.snapshot.as_str(), baseline.inventory.as_str()),
+    );
+    let repo_key = selection
+        .snapshot
+        .repository
+        .repository_key
+        .as_deref()
+        .ok_or("missing repository key")?;
+    let mut rows = conn
+        .query(
+            "SELECT id, publisher_label, attempt_status FROM assessment_batches
+             WHERE repository_key = ?1 AND repository_id = ?2 AND snapshot_id = ?3
+               AND inventory_fingerprint = ?4 AND stream = ?5 ORDER BY id",
+            (
+                repo_key,
+                selection.repository.as_str(),
+                snapshot,
+                inventory,
+                selection.stream.as_str(),
+            ),
+        )
+        .await
+        .map_err(db_error)?;
+    let mut publications = Vec::new();
+    while let Some(row) = rows.next().await.map_err(db_error)? {
+        let id: String = row.get(0).map_err(db_error)?;
+        let (assessments, dependencies) = published_contents(conn, &id).await?;
+        let resolution = if resolution_enabled && id.starts_with(resolution::ID_PREFIX) {
+            resolution::body(conn, &id)
+                .await?
+                .map(|body| serde_json::from_str(&body).unwrap_or(Value::Null))
+        } else {
+            None
+        };
+        publications.push(PublishedReview {
+            id,
+            publisher_label: row.get(1).map_err(db_error)?,
+            attempt_status: row.get(2).map_err(db_error)?,
+            assessments,
+            file_dependencies: dependencies,
+            resolution,
+        });
+    }
+    Ok(publications)
 }
 
 async fn read_dependencies(
@@ -888,6 +1042,59 @@ mod tests {
             assert_eq!(confirm_publications(&writer, &reader).await.unwrap_err(), "publication batch content differs");
             reader.execute_batch(proof).await.unwrap();
             assert_eq!(confirm_publications(&writer, &reader).await.unwrap(), 1);
+
+            let id = format!("{}{}", resolution::ID_PREFIX, "0".repeat(64));
+            for conn in [&writer, &reader] {
+                conn.execute("INSERT INTO assessment_batches VALUES (?1,'repo:1','repo','snap','inv','main','writer','finished')", (id.as_str(),)).await.unwrap();
+            }
+            writer.execute("INSERT INTO review_resolutions VALUES (?1, 'original')", (id.as_str(),)).await.unwrap();
+            assert!(confirm_publications(&writer, &reader).await.unwrap_err().contains("missing its resolution record"));
+            reader.execute("INSERT INTO review_resolutions VALUES (?1, 'changed')", (id.as_str(),)).await.unwrap();
+            assert_eq!(confirm_publications(&writer, &reader).await.unwrap_err(), format!("publication {id} content differs"));
+            reader.execute("UPDATE review_resolutions SET body = 'original' WHERE publication_id = ?1", (id.as_str(),)).await.unwrap();
+            assert_eq!(confirm_publications(&writer, &reader).await.unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn resolution_projection_waits_for_complete_ancestors() {
+        super::super::local_runtime().unwrap().block_on(async {
+            let temp = tempfile::tempdir().unwrap();
+            let (_db, mut conn) = open_local(&temp.path().join("resolution.db"), false).await.unwrap();
+            seed_schema(&mut conn, "repo:1").await.unwrap();
+            let pending = format!("mehscanDecision/v1:{}", "1".repeat(64));
+            let final_decision = format!("mehscanDecision/v1:{}", "2".repeat(64));
+            let resolution_id = format!("{}{}", resolution::ID_PREFIX, "3".repeat(64));
+            for (publication, decision, verdict) in [
+                ("original", pending.as_str(), "needs_review"),
+                (resolution_id.as_str(), final_decision.as_str(), "not_issue"),
+            ] {
+                conn.execute("INSERT INTO assessment_batches VALUES (?1,'repo:1','repo','snap','inv','main','writer','finished')", (publication,)).await.unwrap();
+                conn.execute("INSERT INTO assessments VALUES (?1,?1,'review','subject','basis','response',?2,'medium','summary')", (decision, verdict)).await.unwrap();
+                conn.execute("INSERT INTO batch_assessments VALUES (?1,?2)", (publication, decision)).await.unwrap();
+                conn.execute("INSERT INTO assessment_evidence VALUES (?1,'primary','ref','a.js',1,1,0,5,NULL)", (decision,)).await.unwrap();
+            }
+            let source_hash = "a".repeat(64);
+            conn.execute("INSERT INTO published_inputs VALUES ('snap','a.js',?1)", (source_hash.as_str(),)).await.unwrap();
+            conn.execute("INSERT INTO published_file_dependencies VALUES (?1,?2,'snap','primary','a.js')", (resolution_id.as_str(), final_decision.as_str())).await.unwrap();
+            let (assessments, file_dependencies) = published_contents(&conn, &resolution_id).await.unwrap();
+            let candidate = PublishedReview { id: resolution_id.clone(), publisher_label: "writer".into(), attempt_status: "finished".into(), assessments, file_dependencies, resolution: None };
+            let (assessments, file_dependencies) = published_contents(&conn, "original").await.unwrap();
+            let original = PublishedReview { id: "original".into(), publisher_label: "writer".into(), attempt_status: "finished".into(), assessments, file_dependencies, resolution: None };
+            let mut publications = [candidate, original];
+            let view = |rows: &[PublishedReview]| json!(resolution::project(rows));
+            let missing = view(&publications);
+            assert_eq!(missing["findings"]["subject"]["status"], "needs_review");
+            assert_eq!(missing["unapplied_resolutions"], json!([resolution_id]));
+            publications[0].resolution = Some(json!({"decision_id":final_decision,"parents":[resolution_id],"reviewer_kind":"engineer","rationale":"source evidence"}));
+            assert_eq!(view(&publications), missing);
+            publications[0].resolution.as_mut().unwrap()["parents"] = json!([pending]);
+            let applied = view(&publications);
+            assert_eq!(applied["findings"]["subject"]["status"], "settled");
+            assert_eq!(applied["findings"]["subject"]["current"][0]["id"], resolution_id);
+            assert_eq!(applied["unapplied_resolutions"], json!([]));
+            publications.swap(0, 1);
+            assert_eq!(view(&publications), applied);
         });
     }
 }

@@ -971,7 +971,7 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     }
     let initializer = fixture.base.join("initializer.turso");
     let mut batches = Vec::new();
-    for (index, verdict) in ["not_issue", "needs_review"].into_iter().enumerate() {
+    let retain = |index, verdict| {
         let writer = Fixture {
             base: fixture.base.clone(),
             source: fixture.source.clone(),
@@ -981,19 +981,31 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         };
         let claim = writer.claim("first", "0", "writer-claim", false);
         let owner = claim["result"]["owner"].as_str().unwrap();
-        writer.answers(verdict, "Independent source-bound assessment.");
+        let records = writer.answers(
+            verdict,
+            &format!("Independent source-bound assessment {index}."),
+        );
         ok(&writer.record_args("1", owner, "writer-record"));
         let db = writer.base.join(format!("writer-{index}.turso"));
         let end = writer.end_with_memory(owner, &db, "writer-end");
-        let batch = end["memory"]["batch"].as_str().unwrap();
+        (
+            db,
+            end["memory"]["batch"].as_str().unwrap().to_owned(),
+            records[0]["decision_id"].as_str().unwrap().to_owned(),
+        )
+    };
+    let initial_verdicts = ["not_issue", "needs_review"];
+    let mut publication_ids = Vec::new();
+    for (index, verdict) in initial_verdicts.into_iter().enumerate() {
+        let (db, batch, _) = retain(index, verdict);
         let label = format!("writer-{index}");
         let args = [
             "--inventory",
-            writer.inventory.to_str().unwrap(),
+            fixture.inventory.to_str().unwrap(),
             "--stream",
             "pr:24",
             "--batch",
-            batch,
+            &batch,
             "--publisher-label",
             &label,
             "--store",
@@ -1016,7 +1028,8 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         let duplicate = sync("stage", &replicas[index], &args);
         assert_eq!(duplicate["reused"], true);
         assert_eq!(duplicate["publication"], staged["publication"]);
-        batches.push((db, batch.to_owned()));
+        publication_ids.push(staged["publication"].as_str().unwrap().to_owned());
+        batches.push((db, batch));
     }
     assert_eq!(sync("init", &replicas[0], &[])["created"], false);
     assert_eq!(
@@ -1048,7 +1061,28 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     ];
     let reader = sync("context", &replicas[2], &selection);
     assert_eq!(reader["authority"], "upstream_context");
-    for publication in reader["publications"].as_array().unwrap() {
+    let published = reader["publications"].as_array().unwrap();
+    assert_eq!(published.len(), 2, "{reader}");
+    let mut subject = None;
+    for (id, verdict) in publication_ids.iter().zip(initial_verdicts) {
+        let publication = published
+            .iter()
+            .find(|publication| publication["id"].as_str() == Some(id.as_str()))
+            .unwrap();
+        assert_eq!(publication["assessments"].as_array().unwrap().len(), 1);
+        let assessment = &publication["assessments"][0];
+        assert_eq!(assessment["verdict"], verdict);
+        let questions = if verdict == "needs_review" {
+            json!([
+                {"kind": "check", "text": "Confirm the exact input authority."},
+                {"kind": "check", "text": "Confirm whether a sanitizer covers this code operand."}
+            ])
+        } else {
+            json!([])
+        };
+        assert_eq!(assessment["questions"], questions);
+        let key = assessment["subject_key"].as_str().unwrap();
+        assert_eq!(*subject.get_or_insert(key), key);
         assert!(
             publication["file_dependencies"]
                 .as_array()
@@ -1061,19 +1095,14 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
                 })
         );
     }
+    let subject = subject.unwrap();
     assert_eq!(
-        reader["publications"].as_array().unwrap().len(),
-        2,
-        "{reader}"
+        reader["review_state"]["findings"][subject]["status"],
+        "needs_review"
     );
     assert_eq!(
-        reader["conflicting_verdicts"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap(),
-        &json!(["needs_review", "not_issue"])
+        reader["conflicting_verdicts"],
+        json!({subject: ["needs_review", "not_issue"]})
     );
     assert_eq!(sync("context", &replicas[0], &selection), reader);
     assert_eq!(sync("context", &replicas[1], &selection), reader);
@@ -1259,6 +1288,202 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         publications
             .iter()
             .any(|publication| publication["id"] == draft["publication"])
+    );
+
+    // A later independent conclusion is additional advice on this upstream.
+    let late_writer = fixture.base.join("late-writer.turso");
+    let (store, batch, _) = retain(2, "issue");
+    sync("pull", &late_writer, &[]);
+    let late = sync(
+        "stage",
+        &late_writer,
+        &[
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            &batch,
+            "--publisher-label",
+            "late-writer",
+            "--store",
+            store.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(sync("push", &late_writer, &[])["status"], "pushed");
+    let fresh = fixture.base.join("fresh-reader.turso");
+    sync("pull", &fresh, &[]);
+    let after_late = sync("context", &fresh, &selection);
+    let after_late_publications = after_late["publications"].as_array().unwrap();
+    assert_eq!(after_late_publications.len(), publications.len() + 1);
+    assert!(
+        publications
+            .iter()
+            .all(|entry| after_late_publications.contains(entry))
+    );
+    let late_publication = after_late_publications
+        .iter()
+        .find(|entry| entry["id"] == late["publication"])
+        .unwrap();
+    assert_eq!(late_publication["assessments"][0]["verdict"], "issue");
+    assert_eq!(
+        after_late["conflicting_verdicts"],
+        json!({subject: ["issue", "needs_review", "not_issue"]})
+    );
+    let finding = &after_late["review_state"]["findings"][subject];
+    assert_eq!(finding["status"], "disputed");
+    let parents = finding["current"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|head| head["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    // Re-publishing the same retained assessment under other labels did not add heads.
+    assert_eq!(parents.len(), 3);
+
+    let resolution_file = fixture.base.join("resolution.json");
+    let stage_resolution = |replica: &Path, store: &Path, batch: &str| {
+        sync_args(
+            "stage",
+            replica,
+            &[
+                "--inventory",
+                fixture.inventory.to_str().unwrap(),
+                "--stream",
+                "pr:24",
+                "--batch",
+                batch,
+                "--publisher-label",
+                "final-reviewer",
+                "--store",
+                store.to_str().unwrap(),
+                "--resolution",
+                resolution_file.to_str().unwrap(),
+            ],
+        )
+    };
+    let (human_store, human_batch, human_decision) = retain(3, "not_issue");
+    let (ai_store, ai_batch, ai_decision) = retain(4, "issue");
+    let human = fixture.base.join("engineer-resolution.turso");
+    let ai = fixture.base.join("ai-resolution.turso");
+    sync("pull", &human, &[]);
+    sync("pull", &ai, &[]);
+    let human_args = stage_resolution(&human, &human_store, &human_batch);
+    let human_args = human_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let rationale = "The current source answers the pending input-authority checks.";
+    let mut human_record = json!({"decision_id":human_decision,"parents":parents,"reviewer_kind":"engineer","rationale":rationale});
+    human_record["parents"].as_array_mut().unwrap().pop();
+    fs::write(&resolution_file, human_record.to_string()).unwrap();
+    reject(&human_args, "shared resolution parents changed");
+    human_record["parents"] = json!(parents);
+    fs::write(&resolution_file, human_record.to_string()).unwrap();
+    let human_publication = ok(&human_args)["publication"].as_str().unwrap().to_owned();
+    assert_eq!(ok(&human_args)["reused"], true);
+    let ai_args = stage_resolution(&ai, &ai_store, &ai_batch);
+    let ai_args = ai_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut ai_record = json!({"decision_id":ai_decision,"parents":parents,"reviewer_kind":"ai","rationale":"The source evidence supports keeping the issue open."});
+    fs::write(&resolution_file, ai_record.to_string()).unwrap();
+    reject(&ai_args, "AI resolution requires");
+    ai_record["reviewer_contract"] = json!("configured-reviewer/v1");
+    fs::write(&resolution_file, ai_record.to_string()).unwrap();
+    let ai_publication = ok(&ai_args)["publication"].as_str().unwrap().to_owned();
+    let before_push = prepare_project(
+        &fixture.source,
+        &project_config,
+        "before-resolution-push",
+        &[],
+    );
+    assert_eq!(before_push["upstream"]["sync"]["context"], after_late);
+
+    sync("push", &human, &[]);
+    let settled = prepare_project(&fixture.source, &project_config, "settled-resolution", &[]);
+    let settled_context = &settled["upstream"]["sync"]["context"];
+    let finding = &settled_context["review_state"]["findings"][subject];
+    assert_eq!(finding["status"], "settled");
+    assert_eq!(finding["verdict"], "not_issue");
+    assert_eq!(finding["current"][0]["id"], human_publication);
+    assert_eq!(
+        finding["current"][0]["assessment"]["decision_id"],
+        human_decision
+    );
+    let settled_publications = settled_context["publications"].as_array().unwrap();
+    assert!(
+        after_late_publications
+            .iter()
+            .all(|entry| settled_publications.contains(entry))
+    );
+    let saved = settled_publications
+        .iter()
+        .find(|entry| entry["id"] == human_publication)
+        .unwrap();
+    assert_eq!(saved["resolution"], human_record);
+    assert!(!saved["file_dependencies"].as_array().unwrap().is_empty());
+
+    let changed = prepare_project(
+        &exported,
+        &project_config,
+        "new-source-baseline-resolution",
+        &[
+            "--base",
+            project["snapshot"].as_str().unwrap(),
+            "--base-inventory",
+            project["inventory_fingerprint"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        changed["upstream"]["sync"]["context"]["review_state"]["findings"],
+        json!({})
+    );
+    assert_eq!(
+        changed["upstream"]["sync"]["baseline"]["context"],
+        *settled_context
+    );
+    sync("push", &ai, &[]);
+    let reopened_replica = fixture.base.join("reopened-reader.turso");
+    sync("pull", &reopened_replica, &[]);
+    let reopened = sync("context", &reopened_replica, &selection);
+    let finding = &reopened["review_state"]["findings"][subject];
+    assert_eq!(finding["status"], "disputed");
+    let head_ids = finding["current"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|head| head["id"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        head_ids,
+        std::collections::BTreeSet::from([human_publication.as_str(), ai_publication.as_str()])
+    );
+    let ai_saved = reopened["publications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == ai_publication)
+        .unwrap();
+    assert_eq!(ai_saved["resolution"], ai_record);
+
+    human_record["parents"] = json!(head_ids);
+    human_record["rationale"] =
+        json!("The final review also addresses the AI reviewer's evidence.");
+    fs::write(&resolution_file, human_record.to_string()).unwrap();
+    let final_resolution = ok(&human_args);
+    sync("push", &human, &[]);
+    sync("pull", &reopened_replica, &[]);
+    let final_context = sync("context", &reopened_replica, &selection);
+    let final_finding = &final_context["review_state"]["findings"][subject];
+    assert_eq!(final_finding["status"], "settled");
+    assert_eq!(final_finding["current"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        final_finding["current"][0]["id"],
+        final_resolution["publication"]
+    );
+    let final_publications = final_context["publications"].as_array().unwrap();
+    assert!(
+        reopened["publications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| final_publications.contains(entry))
     );
 
     let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
@@ -2595,6 +2820,23 @@ fn all_verdicts_conflict_until_exact_validated_supersession_preserves_old_proof(
     );
     ok(&fixture.record_args("1", owner, "duplicate-historical-issue"));
     assert_eq!(fixture.view(false)["subjects"], history["subjects"]);
+
+    let resolved = fixture.answers("not_issue", "Synthetic answer to the pending checks.");
+    let links = fixture.supersessions(&resolved, &history, "resolution-parents.json");
+    let mut args = fixture.record_args("1", owner, "resolve-pending");
+    args.extend(["--supersessions", links.to_str().unwrap()]);
+    ok(&args);
+    let after_resolution = fixture.view(true);
+    assert!(
+        after_resolution["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|subject| subject["state"] == "recorded" && subject["decision"] == "not_issue")
+    );
+    for (id, assessment) in saved {
+        assert_eq!(&after_resolution["decisions"][id], assessment);
+    }
 }
 
 #[test]

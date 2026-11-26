@@ -66,3 +66,25 @@ verify them against current source. For explicit publication, use the receipt's
 remote, replica, and repository key with the standard
 [native sync sequence](turso-sync-server.md#initialize-and-verify-a-publication),
 starting with `memory sync pull` on that writable replica.
+
+Before choosing work for a later scan, read
+`upstream.sync.context.review_state.findings` for the current shared outcomes.
+Each current decision names the publication containing its assessment and
+source evidence. A [shared resolution](turso-sync-server.md#publish-a-shared-resolution)
+also carries the reviewer type, rationale, and exact superseded heads. Use
+this context to inform the current review. Native local admission determines
+which decisions a scan can reuse and which work it has completed.
+
+To read the reasoning from a known earlier delivery, use its saved `snapshot`
+and `inventory_fingerprint` from `project.json`:
+
+```sh
+mehscan project prepare "$SOURCE" --config /review-config/payments.json \
+  --output "$RUN/inventory" --pull true --base "$BASE_SNAPSHOT" \
+  --base-inventory "$BASE_INVENTORY_FINGERPRINT"
+```
+
+The receipt puts the historical review under `upstream.sync.baseline.context`
+and keeps the current scope under `upstream.sync.context`. The baseline snapshot
+must already be available in local memory. Use the changed paths and cited
+dependencies to recheck whether the old reasoning still applies.

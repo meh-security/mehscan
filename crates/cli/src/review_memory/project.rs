@@ -29,7 +29,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let mut arguments = ParsedArguments::parse(arguments)?;
     if arguments.help || matches!(operation.as_deref(), None | Some("help" | "--help" | "-h")) {
         println!(
-            "USAGE:\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context."
+            "USAGE:\n  mehscan project prepare ROOT --config FILE --output DIR [--stream NAME] [--base SNAPSHOT [--base-inventory FINGERPRINT]] [--artifact LABEL] [--pull true|false] [--memory-mode persistent|temporary]\n\nPrepares a full review inventory and snapshot for a configured project. Keep the JSON project config and a new output directory outside ROOT. Config has repository_key, optional stream (default imported), and optional remote. Pull is opt-in and provides advisory context. With --base-inventory, --pull true also reads context for the specified baseline."
         );
         return Ok(());
     }
@@ -41,6 +41,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     let output = PathBuf::from(arguments.required("--output")?);
     let stream = arguments.optional("--stream");
     let base = arguments.optional("--base");
+    let base_inventory = arguments.optional("--base-inventory");
     let artifact = arguments.optional("--artifact");
     let pull = arguments.optional_bool("--pull")?.unwrap_or(false);
     let temporary = temporary_mode(arguments.optional("--memory-mode").as_deref(), false)?;
@@ -55,6 +56,21 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     if temporary && base.is_some() {
         return Err("--base requires persistent project memory".into());
     }
+    let baseline = if let Some(inventory) = base_inventory {
+        let snapshot = base
+            .clone()
+            .filter(|_| pull)
+            .ok_or("--base-inventory requires --base and --pull true")?;
+        if inventory.len() != 64 || !inventory.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("--base-inventory requires an inventory fingerprint".into());
+        }
+        Some(upstream::Baseline {
+            snapshot,
+            inventory,
+        })
+    } else {
+        None
+    };
 
     let config = read_config(&config_path, &root)?;
     let stream = stream
@@ -121,6 +137,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 &config.repository_key,
                 snapshot,
                 stream.clone(),
+                baseline,
             )
             .unwrap_or_else(|reason| json!({"status": "unavailable", "reason": reason}))
         } else {
