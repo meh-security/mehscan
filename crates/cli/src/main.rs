@@ -86,7 +86,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let scope = parse_report_scope(&mut parsed);
     let mut report = if let Some(path) = parsed.optional("--close-receipt") {
         parsed.finish()?;
-        review_memory::closed_findings(Path::new(&path))?
+        review_memory::CloseReceipt::read(Path::new(&path))?.findings()?
     } else {
         report_from_run(parsed)?
     };

@@ -874,6 +874,35 @@ print(json.dumps({'draft':{'results':rows,
         exports = self.native("report", "--close-receipt", receipt, "--format", "json-sarif")
         self.assertEqual(exports["report"], json.loads(findings.read_text()))
         self.assertEqual(exports["sarif"]["version"], "2.1.0")
+        claim_args = ["state", "claim", "--close-receipt", receipt, "--attempt-id", "fast",
+                      "--operation-key", "claim-fast"]
+        receipt.write_text(json.dumps({**close, "sequence": close["sequence"] - 1}))
+        self.assertIn("journal close", self.native(*claim_args, okay=False))
+        receipt.write_text(json.dumps(close))
+        fresh = self.native(*claim_args)
+        self.assertEqual(fresh["result"]["generation"], 3)
+        self.assertEqual(self.native(*claim_args)["result"], fresh["result"])
+        self.assertIn("generation changed", self.native(*claim_args[:-1], "different-claim", okay=False))
+        audit_claim = self.base / "audit-claim.json"
+        audit_claim.write_text(json.dumps(fresh))
+        audit = self.base / "audit"
+        invocation = [*command[:3], "--scanner", str(self.scanner), "--close-receipt", str(receipt),
+                      "--claim", attempt["private_claim"], "--second-pass", "fast", "--second-pass-scope", "pending",
+                      "--supersede", "--reviewer-command", str(self.base / "command.json"),
+                      "--reviewer-label", "fixture/source", "--output", str(audit)]
+        stale = subprocess.run(invocation, capture_output=True, text=True)
+        self.assertNotEqual(stale.returncode, 0)
+        self.assertIn("fresh claim", stale.stderr)
+        self.assertFalse(audit.exists())
+        invocation[invocation.index("--claim") + 1] = str(audit_claim)
+        reviewed = subprocess.run(invocation, capture_output=True, text=True)
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr + reviewed.stdout)
+        checked = json.loads((audit / "second-pass.json").read_text())
+        self.assertEqual(checked["checked"], 1)
+        self.assertEqual(checked["accounting"]["second_pass"]["calls"], 1)
+        self.assertTrue(all(json.loads(p.read_text())["review_role"] == "second_pass_fast"
+                            for p in (audit / "training-turns").glob("*/*-input.json")))
+        self.assertEqual(json.loads(findings.read_text()), exports["report"])
         findings.write_bytes(findings.read_bytes() + b"\n")
         self.assertIn("findings differ", self.native("report", "--close-receipt", receipt, okay=False))
         replacement = json.loads(Path(attempt["project_run"]).read_text())

@@ -1034,6 +1034,7 @@ def run_locked(args, *, source_prepared=None):
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
     first_directory = outside(first_path, root) if first_path else None
+    closed_report = getattr(args, "_closed_report", None)
     correction_handoff_digest = None
     correction_handoff = None
     correction_ledger = None
@@ -1051,25 +1052,40 @@ def run_locked(args, *, source_prepared=None):
         admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
             and partial_work.is_file() and read(partial_work).get("native_admission_status") == "admitted"
             and (first_directory / "source-review/work-handoff.json").is_file())
+        if closed_report is not None and first_record["status"] == "incomplete" and first_record.get("native_admission"):
+            # Only the frozen report's admitted decisions can be audited.
+            admitted_partial = True
         if first_record["status"] not in ("admitted", "source_validated") and not admitted_partial:
             raise ValueError("first pass must have source-validated native results")
     work_followup = None
     budget_path = None
-    if first_directory and (first_directory / "source-review/work-plan.json").is_file() and not (
-            first_directory / "source-review/work-handoff.json").is_file():
+    work_origin = first_directory
+    if closed_report is not None:
+        if inherited := first_record.get("work_followup"):
+            work_origin = outside(inherited["parent_attempt"], root)
+            if digest_file(work_origin / "source-review/work-handoff.json") != inherited["handoff_sha256"]:
+                raise ValueError("closed audit work handoff changed")
+        elif first_record.get("source_review", {}).get("work_review"):
+            import review_source
+            summary = review_source.recovery_summary(first_directory, root, sys.modules[__name__])
+            work_origin = summary.parent.parent
+            if not (work_origin / "source-review/work-handoff.json").is_file():
+                raise ValueError("closed work-plan audit requires its original budget handoff")
+    if work_origin and (work_origin / "source-review/work-plan.json").is_file() and not (
+            work_origin / "source-review/work-handoff.json").is_file():
         raise ValueError("work-plan first pass lacks a bound handoff; cannot start a fresh follow-up allowance")
-    if first_directory and (first_directory / "source-review/work-handoff.json").is_file():
+    if work_origin and (work_origin / "source-review/work-handoff.json").is_file():
         import review_work
-        _, _, budget_path = review_work.read_handoff(first_directory, root, sys.modules[__name__])
-        work_followup = {"parent_attempt":str(first_directory), "budget_path":budget_path,
+        _, _, budget_path = review_work.read_handoff(work_origin, root, sys.modules[__name__])
+        work_followup = {"parent_attempt":str(work_origin), "budget_path":budget_path,
             "case_coverage":"Historical first-pass checks; this follow-up audits native claims.",
-            "handoff_sha256":digest_file(first_directory / "source-review/work-handoff.json")}
+            "handoff_sha256":digest_file(work_origin / "source-review/work-handoff.json")}
     rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
     if rates_path:
         second_pass.validate_rates(read(rates_path))
     invocation = outside(args.reviewer_command, root)
     claim_path = outside(args.claim, root)
-    supplied_work_path = outside(args.work_package, root)
+    supplied_work_path = outside(args.work_package, root) if args.work_package else None
     command = read(invocation)
     if not isinstance(command, list) or not command or not all(isinstance(value, str) for value in command):
         raise ValueError("reviewer command must be a JSON argv array from trusted configuration")
@@ -1179,7 +1195,9 @@ def run_locked(args, *, source_prepared=None):
         return value
 
     package_path = output / "work.json"
-    requested = read(supplied_work_path)["payload"]["review_ids"]
+    closed_heads = {r["response"]["review_id"]: [r["decision_id"]]
+                    for r in closed_report["decision_records"]} if closed_report is not None else None
+    requested = sorted(closed_heads) if closed_heads is not None else read(supplied_work_path)["payload"]["review_ids"]
     shared_facts = []  # Raw source facts only, never old-verdict reuse.
     application_cache = {}
 
@@ -2010,7 +2028,9 @@ def run_locked(args, *, source_prepared=None):
         prior_work = read(recovery / "recovery.json").get("work_file", "work.json") if recovery else None
         recovery_work = read(recovery / prior_work) if recovery else None
         package = recovery_work if recovering_writes else current_work
-        supplied = read(supplied_work_path)
+        if closed_heads is not None and package["payload"]["expected_parents"] != closed_heads:
+            raise ValueError("closed decisions differ from current journal heads")
+        supplied = read(supplied_work_path) if supplied_work_path else package
         if not recovery and package != supplied:
             raise ValueError("supplied work package is stale or altered")
         if recovery and not recovering_writes and package != recovery_work:
@@ -2080,6 +2100,11 @@ def run_locked(args, *, source_prepared=None):
         direct_ids = set(filter(None, (getattr(args, "expert_review_ids", None) or "").split(",")))
         if not direct_ids <= set(requested):
             raise ValueError("direct expert IDs must belong to this exact work package")
+        if closed_report is not None and closed_report["triage"]["work"]["missing_review_ids"]:
+            args.run = output / "audit-bundles"
+            native(["investigate", "review-bundles", str(root), "--inventory", str(inventory),
+                    "--review-ids", ",".join(requested), "--output", str(args.run),
+                    "--max-reviews", str(read(first_directory / "run/manifest.json")["max_reviews_per_bundle"])])
         bundle_binding = None
         if args.phase in ("all", "native") and requested:
             if not args.run:
@@ -2489,11 +2514,14 @@ def run_locked(args, *, source_prepared=None):
                     original_metrics = []
                     if first_directory:
                         first_work = read(first_directory / "work.json")["payload"]
+                        if closed_report is not None and first_work["runtime"] != bound_runtime:
+                            raise ValueError("closed first-pass runtime differs from the current plan")
                         for key in ("snapshot_id", "inventory_input_fingerprint", "repository", "assessment_context"):
                             if first_work[key] != payload[key]:
                                 raise ValueError("first-pass source or assessment binding differs from current work")
                         source_run = first_directory / "run"
-                        prior_report = native(["report", "--run", str(source_run), "--source-root", str(root)])
+                        prior_report = closed_report if closed_report is not None else native(
+                            ["report", "--run", str(source_run), "--source-root", str(root)])
                         old = {r["response"]["review_id"]:r["response"] for r in prior_report["decision_records"]}
                         for filename, request, data in requests:
                             if not set(data["review_ids"]) <= set(old):
@@ -2837,7 +2865,7 @@ def run_locked(args, *, source_prepared=None):
         if (output / "second-pass.json").is_file():
             audit = read(output / "second-pass.json")
             work_followup["case_reconsideration"] = review_work.audit_case_gaps(
-                read(first_directory / "source-review/work-plan.json"), audit["results"])
+                read(work_origin / "source-review/work-plan.json"), audit["results"])
         if correction_handoff and (output / "second-pass.json").is_file() and (output / "findings.json").is_file():
             native_rows = [r["response"] for r in read(output / "findings.json").get("decision_records", [])]
             reconciled = review_work.reconciled_resolution(correction_directory, correction_handoff,
@@ -2882,6 +2910,18 @@ def run_locked(args, *, source_prepared=None):
 
 def bind_project_run(args):
     """Resolve the native project receipt before claiming or dispatching any work."""
+    if args.close_receipt:
+        if (args.second_pass != "fast" or args.phase == "change-pass" or args.project_run
+                or args.first_pass or args.run or args.work_package or args.assignment
+                or args.group_operations or args.source_selection or args.reuse_source_results):
+            raise ValueError("--close-receipt supplies the project, first pass, bundles and work for a Fast audit")
+        close = read(args.close_receipt)
+        args.project_run = close["project_run"]
+        args.first_pass = str(Path(args.project_run).parent)
+        args.run = str(Path(args.first_pass) / "run")
+        args.phase = "native"
+    elif not args.work_package:
+        raise ValueError("--work-package is required unless auditing from a close receipt")
     if not args.project_run:
         missing = [name for name in ("source_root", "inventory", "store", "stream") if not getattr(args, name)]
         if missing:
@@ -2895,6 +2935,25 @@ def bind_project_run(args):
     scanner = outside(args.scanner, root)
     receipt = json.loads(subprocess.check_output(
         [str(scanner), "project", "resolve", "--project-run", str(receipt_path)], encoding="utf-8"))
+    if args.close_receipt:
+        outside(args.close_receipt, root)
+        manifest = outside(Path(args.run) / "manifest.json", root)
+        if digest_file(manifest) != receipt["report_manifest_sha256"]:
+            raise ValueError("Fast audit bundle manifest differs from the admitted run")
+        admitted = close["admitted_report"]
+        claim = read(outside(args.claim, root))["result"]
+        if (receipt.get("admitted_report") != admitted or claim["generation"] != admitted["generation"] + 1
+                or claim.get("audit_parent") != {"sequence": close["sequence"], "findings_sha256": admitted["findings_sha256"]}):
+            raise ValueError("Fast audit requires a fresh claim for this close receipt")
+        if (close["result"]["generation"] != admitted["generation"]
+                or close["result"]["status"] not in ("finished", "incomplete", "cancelled")):
+            raise ValueError("Fast audit requires a terminal receipt for the admitted generation")
+        findings = outside(Path(args.first_pass) / "findings.json", root).read_bytes()
+        if hashlib.sha256(findings).hexdigest() != admitted["findings_sha256"]:
+            raise ValueError("findings differ from the report authorized by the audit claim")
+        args._closed_report = json.loads(findings)
+        if not args._closed_report.get("decision_records"):
+            raise ValueError("closed report has no admitted decisions to audit")
     args._project_bindings = receipt
     args.source_root, args.inventory = receipt["source_root"], receipt["inventory"]
     args.store, args.stream = receipt["state_store"], receipt["stream"]
@@ -2906,10 +2965,12 @@ def bind_project_run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for option in ("scanner", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
+    for option in ("scanner", "claim", "reviewer-command", "reviewer-label", "output"):
         parser.add_argument("--" + option, required=True)
     for option in ("source-root", "inventory", "store", "stream"):
         parser.add_argument("--" + option)
+    parser.add_argument("--close-receipt", help="audit the admitted decisions from a closed project review with a fresh receipt-bound claim")
+    parser.add_argument("--work-package", help="current native work package (resolved from the journal for --close-receipt)")
     parser.add_argument("--project-run", help="project_run file from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")

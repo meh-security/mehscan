@@ -590,7 +590,7 @@ scope/budget; they do not create authorization for another full scan.
 
 Reuse the completed first pass instead of paying for it again. Keep its source,
 inventory, runtime, provider binding and original attempt directory unchanged.
-The generation must still be owned and active. Refresh `state work` and save its
+For a closed project review, use its receipt to [start a Fast audit in a fresh generation](standalone-source.md#start-a-fast-audit-after-close). For an active generation you still own, refresh `state work` and save its
 JSON output as `RUN/work-second-pass.json`:
 
 ```text

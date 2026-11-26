@@ -42,37 +42,45 @@ pub(crate) struct PreparedProject {
     memory: ProjectMemory,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize)]
 pub(crate) struct AdmittedReport {
     pub(crate) generation: u64,
     pub(crate) findings_sha256: String,
 }
 
-pub(crate) fn closed_findings(path: &Path) -> Result<mehscan_core::FindingReport, String> {
-    use mehscan_core::ReviewAttemptStatus;
+#[derive(Deserialize)]
+pub(crate) struct CloseReceipt {
+    pub(crate) sequence: u64,
+    result: CloseResult,
+    pub(crate) project_run: PathBuf,
+    pub(crate) admitted_report: AdmittedReport,
+}
 
-    #[derive(Deserialize)]
-    struct CloseResult {
-        status: ReviewAttemptStatus,
-        generation: u64,
+#[derive(Deserialize)]
+struct CloseResult {
+    status: mehscan_core::ReviewAttemptStatus,
+    generation: u64,
+}
+
+impl CloseReceipt {
+    pub(crate) fn read(path: &Path) -> Result<Self, String> {
+        let receipt: Self = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("expected a project close receipt with admitted findings: {e}"))?;
+        if !receipt.project_run.is_absolute()
+            || receipt.result.status == mehscan_core::ReviewAttemptStatus::Running
+            || receipt.result.generation != receipt.admitted_report.generation
+        {
+            return Err("invalid attempt or generation in close receipt".into());
+        }
+        Ok(receipt)
     }
-    #[derive(Deserialize)]
-    struct CloseReceipt {
-        result: CloseResult,
-        project_run: PathBuf,
-        admitted_report: AdmittedReport,
+
+    pub(crate) fn findings(&self) -> Result<mehscan_core::FindingReport, String> {
+        let findings = self
+            .admitted_report
+            .read_findings(&self.project_run.with_file_name("findings.json"))?;
+        serde_json::from_slice(&findings).map_err(|e| e.to_string())
     }
-    let receipt: CloseReceipt = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("expected a project close receipt with admitted findings: {e}"))?;
-    if !receipt.project_run.is_absolute()
-        || receipt.result.status == ReviewAttemptStatus::Running
-        || receipt.result.generation != receipt.admitted_report.generation
-    {
-        return Err("invalid attempt or generation in close receipt".into());
-    }
-    let path = receipt.project_run.with_file_name("findings.json");
-    let findings = receipt.admitted_report.read_findings(&path)?;
-    serde_json::from_slice(&findings).map_err(|e| e.to_string())
 }
 
 impl AdmittedReport {

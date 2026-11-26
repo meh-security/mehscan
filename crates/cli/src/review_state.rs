@@ -31,6 +31,12 @@ fn label(value: &str) -> Result<(), String> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct AuditParent {
+    sequence: u64,
+    findings_sha256: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
     Claim {
@@ -40,6 +46,8 @@ enum Command {
         attempt_id: String,
         expected_generation: u64,
         retry: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audit_parent: Option<AuditParent>,
     },
     Record {
         key: String,
@@ -143,6 +151,8 @@ struct Attempt {
     status: ReviewAttemptStatus,
     #[serde(skip_serializing)]
     owner: String,
+    #[serde(skip_serializing)]
+    closed_report: Option<AuditParent>,
     admissions: BTreeSet<String>,
 }
 
@@ -318,6 +328,7 @@ impl State {
                 attempt_id,
                 expected_generation,
                 retry,
+                audit_parent,
             } => {
                 label(attempt_id)?;
                 if let Some(key) = &binding.coordination_key {
@@ -339,6 +350,28 @@ impl State {
                         "generation changed: expected {expected_generation}, current {generation}"
                     ));
                 }
+                // Only the exact terminal transaction can carry its plan to the next generation.
+                let audit_plan = if let Some(parent) = audit_parent {
+                    let current = item.attempts.last().ok_or("missing closed audit parent")?;
+                    if current.closed_report.as_ref() != Some(parent)
+                        || current.snapshot_id != snapshot_id
+                    {
+                        return Err(
+                            "audit receipt differs from the journal close or source snapshot"
+                                .into(),
+                        );
+                    }
+                    Some(
+                        item.completion_plans
+                            .get(&generation)
+                            .and_then(|plans| plans.last())
+                            .ok_or("closed audit parent has no completion plan")?
+                            .plan
+                            .clone(),
+                    )
+                } else {
+                    None
+                };
                 if let Some(current) = item.attempts.last() {
                     if current.snapshot_id == snapshot_id
                         && !retry
@@ -383,11 +416,22 @@ impl State {
                     binding: binding.clone(),
                     status: ReviewAttemptStatus::Running,
                     owner: owner.clone(),
+                    closed_report: None,
                     admissions: BTreeSet::new(),
                 });
-                Ok(
-                    json!({"status":"claimed","stream_key":key,"generation":generation,"snapshot_id":snapshot_id,"owner":owner}),
-                )
+                let mut result = json!({"status":"claimed","stream_key":key,"generation":generation,"snapshot_id":snapshot_id,"owner":owner});
+                if let Some(plan) = audit_plan {
+                    self.apply(&Command::Plan {
+                        key,
+                        generation,
+                        owner,
+                        expected_plan_id: None,
+                        plan,
+                        work_package: None,
+                    })?;
+                    result["audit_parent"] = json!(audit_parent);
+                }
+                Ok(result)
             }
             Command::Allocate {
                 key,
@@ -736,11 +780,12 @@ impl State {
                 owner,
                 status,
                 inventory_input_fingerprint,
-                ..
+                findings_sha256,
             } => {
                 if *status == ReviewAttemptStatus::Running {
                     return Err("end status must be finished, cancelled or incomplete".into());
                 }
+                let sequence = self.sequence + 1;
                 let stream = self.owned_stream(key, *generation, owner)?;
                 let attempt = stream.attempts.last_mut().unwrap();
                 if inventory_input_fingerprint
@@ -750,6 +795,10 @@ impl State {
                     return Err("project inventory differs from the claimed generation".into());
                 }
                 attempt.status = *status;
+                attempt.closed_report = findings_sha256.as_ref().map(|digest| AuditParent {
+                    sequence,
+                    findings_sha256: digest.clone(),
+                });
                 Ok(json!({"status":status,"generation":generation}))
             }
             Command::Plan {
@@ -2052,9 +2101,31 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let mut close_inventory = None;
     let mut admitted_close = None;
-    if let Some(path) = args.optional("--project-run") {
-        let project = super::review_memory::PreparedProject::read(Path::new(&path))?;
+    let close = if operation == "claim" {
+        args.optional("--close-receipt")
+            .map(|path| super::review_memory::CloseReceipt::read(Path::new(&path)))
+            .transpose()?
+    } else {
+        None
+    };
+    let project_path = if let Some(close) = &close {
+        Some(close.project_run.clone())
+    } else {
+        args.optional("--project-run").map(PathBuf::from)
+    };
+    if let Some(path) = project_path {
+        let project = super::review_memory::PreparedProject::read(&path)?;
         let temporary = project.temporary();
+        if let Some(close) = &close {
+            if project.admitted_report.as_ref() != Some(&close.admitted_report) {
+                return Err("audit project run differs from the close receipt".into());
+            }
+            project.report_run(&path)?;
+            outside_source(&path.with_file_name("findings.json"), &project.source_root)?;
+            if close.findings()?.decision_records.is_empty() {
+                return Err("closed report has no admitted decisions to audit".into());
+            }
+        }
         if operation == "end" {
             if args
                 .options
@@ -2451,8 +2522,22 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             let root = PathBuf::from(args.required("--source-root")?);
             outside_source(&store, &root)?;
             let attempt_id = args.required("--attempt-id")?;
-            let expected_generation = args.required_usize("--expected-generation")? as u64;
-            let retry = args.optional_bool("--retry")?.unwrap_or(false);
+            let (expected_generation, retry, audit_parent) = if let Some(close) = close {
+                (
+                    close.admitted_report.generation,
+                    true,
+                    Some(AuditParent {
+                        sequence: close.sequence,
+                        findings_sha256: close.admitted_report.findings_sha256,
+                    }),
+                )
+            } else {
+                (
+                    args.required_usize("--expected-generation")? as u64,
+                    args.optional_bool("--retry")?.unwrap_or(false),
+                    None,
+                )
+            };
             let coordination_key = args.optional("--coordination-key");
             if let Some(key) = &coordination_key {
                 label(key)?;
@@ -2467,6 +2552,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 attempt_id,
                 expected_generation,
                 retry,
+                audit_parent,
             }
         }
         "record" => {
@@ -3120,7 +3206,7 @@ fn help() {
         "\nEnd with --inventory DIR --source-root ROOT to retain finished or incomplete work in local review memory. Use --memory-store FILE to override its location, or --memory-mode temporary to skip retention. If memory.status=pending, retry with the same operation key after correcting its reason."
     );
     println!(
-        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nA prepared project.json can supply shared paths and stream to state commands with --project-run FILE.\n  mehscan state claim --close-receipt FILE --attempt-id ID --operation-key ID\n  mehscan state end --project-run FILE --claim PRIVATE_CLAIM --status finished|cancelled|incomplete --operation-key ID\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

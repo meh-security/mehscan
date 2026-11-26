@@ -18,7 +18,7 @@ mod project;
 mod shared;
 mod upstream;
 
-pub(super) use project::{PreparedProject, closed_findings, run as run_project};
+pub(super) use project::{CloseReceipt, PreparedProject, run as run_project};
 
 const LOCAL_FOLDER_KEY_PREFIX: &str = "mehscan-local-folder:v1:";
 
