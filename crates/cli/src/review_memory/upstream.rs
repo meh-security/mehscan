@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -15,8 +15,10 @@ use turso::{
 
 use super::{
     Snapshot, assessments, check_store_file, db_error, fingerprint, load_snapshot, lock_store,
-    open_local, resolve_store,
+    open_local, open_store_lock, resolve_store,
 };
+
+const PROJECT_PULL_TIMEOUT: Duration = Duration::from_secs(15);
 
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS upstream_repository (
@@ -94,6 +96,7 @@ struct Publication {
 enum Operation {
     Init,
     Pull,
+    PullContext(Selection),
     Push,
     Status,
     Checkpoint,
@@ -104,6 +107,12 @@ enum Operation {
         label: String,
         content: Publication,
     },
+}
+
+impl Operation {
+    fn bootstraps(&self) -> bool {
+        matches!(self, Self::Init | Self::Pull | Self::PullContext(_))
+    }
 }
 
 pub(super) fn help() {
@@ -135,17 +144,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             let inventory = PathBuf::from(args.required("--inventory")?);
             let stream = args.required("--stream")?;
             let snapshot = load_snapshot(&root, &inventory, false)?;
-            if snapshot.repository.repository_key.as_deref() != Some(&repository_key) {
-                return Err("memory sync inventory belongs to a different repository".into());
-            }
-            let repository = fingerprint(&snapshot.repository)?;
-            let source_snapshot = snapshot.id(&repository)?;
-            let selection = Selection {
-                snapshot,
-                repository,
-                source_snapshot,
-                stream,
-            };
+            let selection = selection(snapshot, &repository_key, stream)?;
             if operation.as_deref() == Some("stage") {
                 let batch = args.required("--batch")?;
                 let label = args.required("--publisher-label")?;
@@ -185,25 +184,96 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
         _ => return Err("unknown memory sync operation; use 'mehscan memory sync --help'".into()),
     };
-    check_store_file(&replica)?;
-    let _lock = lock_store(&replica)?;
-    let bootstrap = matches!(operation, Operation::Init | Operation::Pull);
-    bind_replica(&replica, &remote, &repository_key, bootstrap)?;
-    let result = tokio::runtime::Builder::new_current_thread()
+    crate::print_json(&run_bound(
+        &replica,
+        &remote,
+        &repository_key,
+        local_endpoint,
+        operation,
+    )?)
+}
+
+fn selection(
+    snapshot: Snapshot,
+    repository_key: &str,
+    stream: String,
+) -> Result<Selection, String> {
+    if snapshot.repository.repository_key.as_deref() != Some(repository_key) {
+        return Err("memory sync inventory belongs to a different repository".into());
+    }
+    let repository = fingerprint(&snapshot.repository)?;
+    let source_snapshot = snapshot.id(&repository)?;
+    Ok(Selection {
+        snapshot,
+        repository,
+        source_snapshot,
+        stream,
+    })
+}
+
+pub(super) fn pull_project(
+    replica: &Path,
+    remote: &str,
+    repository_key: &str,
+    snapshot: Snapshot,
+    stream: String,
+) -> Result<Value, String> {
+    let local_endpoint = validate_remote(remote)?;
+    let selection = selection(snapshot, repository_key, stream)?;
+    run_bound(
+        replica,
+        remote,
+        repository_key,
+        local_endpoint,
+        Operation::PullContext(selection),
+    )
+}
+
+fn run_bound(
+    replica: &Path,
+    remote: &str,
+    repository_key: &str,
+    local_endpoint: bool,
+    operation: Operation,
+) -> Result<Value, String> {
+    check_store_file(replica)?;
+    let project_pull = matches!(&operation, Operation::PullContext(_));
+    let _lock = if project_pull {
+        let lock = open_store_lock(replica)?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+            if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+                "project context replica is busy".into()
+            } else {
+                error.to_string()
+            }
+        })?;
+        lock
+    } else {
+        lock_store(replica)?
+    };
+    bind_replica(replica, remote, repository_key, operation.bootstraps())?;
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?
-        .block_on(operate(
-            &replica,
-            &remote,
-            &repository_key,
-            local_endpoint,
-            operation,
-        ))?;
-    crate::print_json(&result)
+        .block_on(async {
+            let operation = operate(replica, remote, repository_key, local_endpoint, operation);
+            if project_pull {
+                tokio::time::timeout(PROJECT_PULL_TIMEOUT, operation)
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "project context pull timed out after {} seconds",
+                            PROJECT_PULL_TIMEOUT.as_secs()
+                        )
+                    })?
+            } else {
+                operation.await
+            }
+        })
 }
 
-fn validate_remote(remote: &str) -> Result<bool, String> {
+pub(super) fn validate_remote(remote: &str) -> Result<bool, String> {
     let (scheme, address) = remote
         .split_once("://")
         .ok_or("memory sync requires a Turso or HTTP(S) URL")?;
@@ -468,7 +538,7 @@ async fn operate(
     operation: Operation,
 ) -> Result<Value, String> {
     let started = Instant::now();
-    let bootstrap = matches!(operation, Operation::Init | Operation::Pull);
+    let bootstrap = operation.bootstraps();
     let (db, mut conn) = open_replica(replica, remote, local_endpoint, bootstrap).await?;
     let initialized = check_repository(&conn, repository_key).await?;
     match operation {
@@ -481,13 +551,19 @@ async fn operate(
             }
             Ok(json!({"status":"initialized","initialized":true,"created":created}))
         }
-        Operation::Pull => {
+        Operation::Pull | Operation::PullContext(_) => {
             let changed = db.pull().await.map_err(db_error)?;
             let initialized = check_repository(&conn, repository_key).await?;
             let stats = db.stats().await.map_err(db_error)?;
-            Ok(
-                json!({"status":"pulled","changed":changed,"initialized":initialized,"elapsed_ms":started.elapsed().as_millis(),"sync":stats}),
-            )
+            let pull = json!({"status":"pulled","changed":changed,"initialized":initialized,"elapsed_ms":started.elapsed().as_millis(),"sync":stats});
+            if let Operation::PullContext(selection) = operation {
+                let context = context(&conn, &selection, initialized).await?;
+                Ok(
+                    json!({"status": if initialized { "pulled" } else { "uninitialized" }, "pull": pull, "context": context}),
+                )
+            } else {
+                Ok(pull)
+            }
         }
         Operation::Push => {
             if !initialized {

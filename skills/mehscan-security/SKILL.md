@@ -58,7 +58,10 @@ path; an origin allocation is not a severity rank.
 
 Use [local review memory](../../docs/review-worker.md#capture-local-review-memory)
 by default for persistent reviews. Full standalone inventories outside Git get
-a local folder key automatically. Supply a stable `--repository-key` for linked
+a local folder key automatically. For an extracted source folder with a trusted
+project configuration, use [staged source preparation](../../docs/standalone-source.md)
+and carry the returned inventory, journal, and stream into the review. Pull a
+configured upstream when shared context is requested. Supply a stable `--repository-key` for linked
 repositories. Use `mehscan memory location` to get the journal path and keep
 the same stream for successive reviews of the same branch and scope. For
 native-only work, use `mehscan memory prepare` after binding the plan

@@ -44,11 +44,12 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         "report" => run_report(arguments),
         "state" => review_state::run(arguments),
         "memory" => review_memory::run(arguments),
+        "project" => review_memory::run_project(arguments),
         "benchmark" => run_benchmark(arguments),
         "evaluate" => run_evaluation(arguments),
         "investigate" => run_investigation(arguments),
         _ => Err(format!(
-            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', 'state', or 'memory'"
+            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', 'state', 'memory', or 'project'"
         )),
     }
 }
@@ -4606,6 +4607,7 @@ fn print_help() {
         "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
     );
     println!("\nRepository memory: mehscan memory --help");
+    println!("Prepare linked source: mehscan project --help");
 }
 
 fn print_report_help() {

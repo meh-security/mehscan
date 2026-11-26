@@ -46,6 +46,8 @@ For scripted review, see the [local worker](docs/review-worker.md) and [reviewer
 
 Persistent reviews use local Turso memory in both profiles. Keep the same repository key, stream, and store. Fresh plans load applicable knowledge. Unchanged native reruns with a matching plan and runtime can reuse eligible decisions with zero model calls. Keep the original attempt directory to continue saved work. [Memory and reruns](docs/review-worker.md#reuse-on-reruns)
 
+Use a [saved project configuration](docs/standalone-source.md) to review staged exports and downloads with a stable project key. To share retained review context across installations, run a [self-hosted Turso sync server](docs/turso-sync-server.md).
+
 ## Pull-request review in GitHub Actions
 
 Use either profile on a pinned PR diff. The configured reviewer can examine changed source with zero scanner candidates. An optional coverage gate tracks remaining work. [GitHub Action setup](docs/github-action.md)

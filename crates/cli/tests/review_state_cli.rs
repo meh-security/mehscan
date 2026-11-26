@@ -1079,6 +1079,121 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     assert_eq!(sync("context", &replicas[1], &selection), reader);
     assert_eq!(sync("status", &replicas[2], &[])["initialized"], true);
 
+    let project_config = fixture.base.join("project-config.json");
+    fs::write(
+        &project_config,
+        json!({"repository_key":"repo:123","stream":"pr:24","remote":remote}).to_string(),
+    )
+    .unwrap();
+    let prepare_project = |source: &Path, config: &Path, name: &str, extra: &[&str]| {
+        successful_json(
+            Command::new(env!("CARGO_BIN_EXE_mehscan"))
+                .env("MEHSCAN_STATE_HOME", fixture.base.join("project-state"))
+                .args(["project", "prepare"])
+                .arg(source)
+                .arg("--config")
+                .arg(config)
+                .arg("--output")
+                .arg(fixture.base.join(name))
+                .args(["--pull", "true"])
+                .args(extra)
+                .output()
+                .unwrap(),
+            &["project", "prepare"],
+        )
+    };
+    let project = prepare_project(&fixture.source, &project_config, "prepared-project", &[]);
+    assert_eq!(project["upstream"]["sync"]["status"], "pulled");
+    assert_eq!(project["upstream"]["sync"]["context"], reader);
+
+    let writable = Path::new(project["upstream"]["replica"].as_str().unwrap());
+    sync("pull", writable, &[]);
+    let (store, batch) = &batches[0];
+    let draft = sync(
+        "stage",
+        writable,
+        &[
+            "--inventory",
+            fixture.inventory.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            batch,
+            "--publisher-label",
+            "local-draft",
+            "--store",
+            store.to_str().unwrap(),
+        ],
+    );
+    let local_publications = sync("context", writable, &selection);
+    assert!(
+        local_publications["publications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|publication| publication["id"] == draft["publication"])
+    );
+    let refreshed = prepare_project(
+        &fixture.source,
+        &project_config,
+        "prepared-after-draft",
+        &[],
+    );
+    assert_eq!(refreshed["upstream"]["sync"]["context"], reader);
+
+    let other_stream = prepare_project(
+        &fixture.source,
+        &project_config,
+        "prepared-other-stream",
+        &["--stream", "pr:25"],
+    );
+    assert_eq!(other_stream["upstream"]["sync"]["status"], "pulled");
+    assert_eq!(
+        other_stream["upstream"]["sync"]["context"]["publications"],
+        json!([])
+    );
+
+    let exported = fixture.base.join("exported-source");
+    fs::create_dir(&exported).unwrap();
+    fs::copy(fixture.source.join("app.js"), exported.join("app.js")).unwrap();
+    let relocated = prepare_project(&exported, &project_config, "prepared-export", &[]);
+    assert_eq!(relocated["upstream"]["sync"]["context"], reader);
+    fs::write(
+        exported.join("extra.js"),
+        "export const differentSnapshot = 1;\n",
+    )
+    .unwrap();
+    let other_snapshot =
+        prepare_project(&exported, &project_config, "prepared-other-snapshot", &[]);
+    assert_ne!(other_snapshot["snapshot"], project["snapshot"]);
+    assert_eq!(other_snapshot["upstream"]["sync"]["status"], "pulled");
+    assert_eq!(
+        other_snapshot["upstream"]["sync"]["context"]["publications"],
+        json!([])
+    );
+
+    let wrong_config = fixture.base.join("wrong-project-config.json");
+    fs::write(
+        &wrong_config,
+        json!({"repository_key":"repo:other","remote":remote}).to_string(),
+    )
+    .unwrap();
+    let wrong_project = prepare_project(
+        &fixture.source,
+        &wrong_config,
+        "prepared-wrong-project",
+        &[],
+    );
+    assert_eq!(wrong_project["memory"]["status"], "captured");
+    assert_eq!(wrong_project["upstream"]["sync"]["status"], "unavailable");
+    assert!(
+        wrong_project["upstream"]["sync"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("another repository")
+    );
+    assert!(wrong_project["upstream"]["sync"].get("context").is_none());
+
     for (index, (store, batch)) in batches.iter().enumerate() {
         sync(
             "stage",
@@ -1126,6 +1241,24 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     eprintln!(
         "Turso transport sample: {}",
         json!({"bootstrap":bootstrap,"incremental":incremental})
+    );
+
+    sync("pull", writable, &[]);
+    sync("push", writable, &[]);
+    let after_publish = prepare_project(
+        &fixture.source,
+        &project_config,
+        "prepared-after-publish",
+        &[],
+    );
+    let publications = after_publish["upstream"]["sync"]["context"]["publications"]
+        .as_array()
+        .unwrap();
+    assert_eq!(publications.len(), 5);
+    assert!(
+        publications
+            .iter()
+            .any(|publication| publication["id"] == draft["publication"])
     );
 
     let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
