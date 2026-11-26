@@ -1051,8 +1051,10 @@ def run_locked(args, *, source_prepared=None):
         correction_handoff, correction_ledger, first_directory = review_work.read_resolution_handoff(
             first_directory, root, sys.modules[__name__])
     if first_directory:
-        manual_parent = (closed_report is not None and first_directory.parent ==
-                         outside(args.store, root) / "manual-admissions" and first_directory.name.isdecimal())
+        manual_store = Path(args.store) / "manual-admissions"
+        # The native receipt may use an extended Windows path for the same directory.
+        manual_parent = (closed_report is not None and first_directory.name.isdecimal()
+                         and manual_store.is_dir() and first_directory.parent.samefile(manual_store))
         first_record = {"status": "admitted"} if manual_parent else read(first_directory / "worker.json")
         partial_work = first_directory / "source-review/work-ledger.json"
         admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
