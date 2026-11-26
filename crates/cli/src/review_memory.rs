@@ -102,6 +102,7 @@ struct Capture<'a> {
 }
 
 struct Snapshot {
+    prepared_inventory: Option<String>,
     repository: ReviewRepositoryIdentity,
     inventory: String,
     source: String,
@@ -427,6 +428,10 @@ fn snapshot_from_inventory(
         root, cache,
     ))?;
     Ok(Snapshot {
+        prepared_inventory: cache
+            .source_inputs
+            .as_ref()
+            .and_then(|binding| binding.prepared_inventory.clone()),
         files: sources.hashes(),
         subjects: catalog.subjects.clone(),
         sources: keep_sources.then_some(sources),

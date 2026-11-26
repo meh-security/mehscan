@@ -59,7 +59,7 @@ publications under `upstream.sync.context` in the receipt.
 
 The command uses a separate context cache for each configured remote so that
 local drafts staged for publication stay out of the pulled context. Check
-`upstream.sync.status` for `pulled`, `uninitialized`, or `unavailable`. A pull
+`upstream.sync.status` for `pulled`, `cached`, `uninitialized`, or `unavailable`. A cached view gives its age in seconds and the refresh failure. It is scoped to this remote, repository, stream, snapshot, inventory and requested baseline. A pull
 that fails, hits a busy cache, or exceeds its 15-second deadline still leaves a
 local inventory for the review. Treat publications as advisory context and
 verify them against current source. For explicit publication, use the receipt's
@@ -88,3 +88,5 @@ The receipt puts the historical review under `upstream.sync.baseline.context`
 and keeps the current scope under `upstream.sync.context`. The baseline snapshot
 must already be available in local memory. Use the changed paths and cited
 dependencies to recheck whether the old reasoning still applies.
+
+New source-admitted publications include their original prepared inventory when the upstream supports lineage. Prepare exposes those assessments in `upstream.sync.context.source_review_history`, grouped by effective inventory. Exact inventory decisions continue to use `context.publications`. Run `memory sync init` and pull to enable lineage on an existing upstream.

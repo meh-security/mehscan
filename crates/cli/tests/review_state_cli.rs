@@ -971,12 +971,12 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     }
     let initializer = fixture.base.join("initializer.turso");
     let mut batches = Vec::new();
-    let retain = |index, verdict| {
+    let retain_inventory = |index, verdict, inventory: &Path, run: &Path| {
         let writer = Fixture {
             base: fixture.base.clone(),
             source: fixture.source.clone(),
-            inventory: fixture.inventory.clone(),
-            run: fixture.run.clone(),
+            inventory: inventory.to_owned(),
+            run: run.to_owned(),
             store: fixture.base.join(format!("writer-{index}")),
         };
         let claim = writer.claim("first", "0", "writer-claim", false);
@@ -996,6 +996,8 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     };
     let initial_verdicts = ["not_issue", "needs_review"];
     let mut publication_ids = Vec::new();
+    let retain =
+        |index, verdict| retain_inventory(index, verdict, &fixture.inventory, &fixture.run);
     for (index, verdict) in initial_verdicts.into_iter().enumerate() {
         let (db, batch, _) = retain(index, verdict);
         let label = format!("writer-{index}");
@@ -1486,6 +1488,92 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
             .all(|entry| final_publications.contains(entry))
     );
 
+    let root = fixture.source.to_str().unwrap();
+    let prepared = fixture.inventory.to_str().unwrap();
+    let effective = fixture.base.join("source-admitted");
+    let bundles = fixture.base.join("source-admitted-bundles");
+    let admission = fixture.base.join("source-admission.json");
+    let plan = ok(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        prepared,
+    ]);
+    fs::write(
+        &admission,
+        json!({"plan":plan, "inspected":[], "proposals":[]}).to_string(),
+    )
+    .unwrap();
+    let admitted = ok(&[
+        "investigate",
+        "source-review-admit",
+        root,
+        "--inventory",
+        prepared,
+        "--input",
+        admission.to_str().unwrap(),
+        "--output",
+        effective.to_str().unwrap(),
+    ]);
+    assert_ne!(
+        admitted["input_fingerprint"],
+        project["inventory_fingerprint"]
+    );
+    let entries = read(&effective.join("inventory.json"));
+    let ids = entries["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["review_id"].as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(",");
+    ok(&[
+        "investigate",
+        "review-bundles",
+        root,
+        "--inventory",
+        effective.to_str().unwrap(),
+        "--review-ids",
+        &ids,
+        "--output",
+        bundles.to_str().unwrap(),
+    ]);
+    let (store, batch, _) = retain_inventory(5, "needs_review", &effective, &bundles);
+    let staged = sync(
+        "stage",
+        &human,
+        &[
+            "--inventory",
+            effective.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            &batch,
+            "--publisher-label",
+            "source-review",
+            "--store",
+            store.to_str().unwrap(),
+        ],
+    );
+    sync("push", &human, &[]);
+    let with_history = prepare_project(
+        &fixture.source,
+        &project_config,
+        "published-source-review",
+        &[],
+    );
+    let view = &with_history["upstream"]["sync"]["context"];
+    assert_eq!(view["publications"], final_context["publications"]);
+    assert_eq!(
+        view["source_review_history"][0]["effective_inventory"],
+        admitted["input_fingerprint"]
+    );
+    assert_eq!(
+        view["source_review_history"][0]["publications"][0]["id"],
+        staged["publication"]
+    );
+
     let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
     let key = wrong
         .iter()
@@ -1496,6 +1584,24 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         &wrong.iter().map(String::as_str).collect::<Vec<_>>(),
         "another repository",
     );
+    drop(server);
+    let offline = prepare_project(
+        &fixture.source,
+        &project_config,
+        "offline-source-review",
+        &[],
+    );
+    let cached = &offline["upstream"]["sync"];
+    assert_eq!(cached["status"], "cached", "{cached}");
+    assert_eq!(cached["context"], *view);
+    assert!(cached["age_seconds"].is_u64());
+    let unrelated = prepare_project(
+        &fixture.source,
+        &project_config,
+        "offline-other-stream",
+        &["--stream", "uncached"],
+    );
+    assert_eq!(unrelated["upstream"]["sync"]["status"], "unavailable");
 }
 
 #[test]
