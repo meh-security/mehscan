@@ -14,8 +14,11 @@ mod assessments;
 mod dependencies;
 pub(super) mod knowledge;
 mod legacy;
+mod project;
 mod shared;
 mod upstream;
+
+pub(super) use project::run as run_project;
 
 const LOCAL_FOLDER_KEY_PREFIX: &str = "mehscan-local-folder:v1:";
 
@@ -410,9 +413,18 @@ fn prepare_native(
 
 fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Snapshot, String> {
     let (cache, inventory) = super::review_state::load_inventory(inventory)?;
-    let catalog = inventory_catalog(&cache, root)?;
+    snapshot_from_inventory(root, &cache, inventory, keep_sources)
+}
+
+fn snapshot_from_inventory(
+    root: &Path,
+    cache: &mehscan_engine::investigation::ReviewInventory,
+    inventory: String,
+    keep_sources: bool,
+) -> Result<Snapshot, String> {
+    let catalog = inventory_catalog(cache, root)?;
     let sources = super::engine(mehscan_engine::investigation::review_memory_sources(
-        root, &cache,
+        root, cache,
     ))?;
     Ok(Snapshot {
         files: sources.hashes(),
@@ -420,8 +432,17 @@ fn load_snapshot(root: &Path, inventory: &Path, keep_sources: bool) -> Result<Sn
         sources: keep_sources.then_some(sources),
         repository: catalog.repository.clone(),
         source: catalog.source_fingerprint.clone(),
-        comparison: cache.scan.impact_scope.and_then(|scope| scope.comparison),
-        razor_render_bindings: cache.scan.razor_render_bindings.filter(|_| keep_sources),
+        comparison: cache
+            .scan
+            .impact_scope
+            .as_ref()
+            .and_then(|scope| scope.comparison.clone()),
+        razor_render_bindings: cache
+            .scan
+            .razor_render_bindings
+            .as_ref()
+            .filter(|_| keep_sources)
+            .cloned(),
         inventory,
     })
 }
@@ -460,6 +481,15 @@ fn default_locations(
     root: &Path,
     repository: &ReviewRepositoryIdentity,
 ) -> Result<Locations, String> {
+    let mut locations = repository_locations(root, repository)?;
+    locations.memory_store = checked_store(&locations.memory_store, root)?;
+    Ok(locations)
+}
+
+fn repository_locations(
+    root: &Path,
+    repository: &ReviewRepositoryIdentity,
+) -> Result<Locations, String> {
     let directory = state_home()?
         .join("repositories")
         .join(fingerprint(repository)?);
@@ -468,7 +498,7 @@ fn default_locations(
     super::review_state::outside_source(&state_store, root)?;
     Ok(Locations {
         state_store,
-        memory_store: checked_store(&directory.join("review-memory.turso"), root)?,
+        memory_store: directory.join("review-memory.turso"),
     })
 }
 
@@ -553,6 +583,13 @@ fn local_runtime() -> Result<tokio::runtime::Runtime, String> {
 }
 
 fn lock_store(store: &Path) -> Result<File, String> {
+    let lock = open_store_lock(store)?;
+    // The SDK can lock the database as early as open, outside SQL busy handling.
+    fs2::FileExt::lock_exclusive(&lock).map_err(|e| e.to_string())?;
+    Ok(lock)
+}
+
+fn open_store_lock(store: &Path) -> Result<File, String> {
     if let Some(parent) = store.parent() {
         create_private_directory(parent)?;
     }
@@ -563,16 +600,13 @@ fn lock_store(store: &Path) -> Result<File, String> {
     name.push(".lock");
     let lock_path = store.with_file_name(name);
     check_store_file(&lock_path)?;
-    let lock = OpenOptions::new()
+    OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
-        .map_err(|e| e.to_string())?;
-    // The SDK can lock the database as early as open, outside SQL busy handling.
-    fs2::FileExt::lock_exclusive(&lock).map_err(|e| e.to_string())?;
-    Ok(lock)
+        .map_err(|e| e.to_string())
 }
 
 fn create_private_directory(path: &Path) -> Result<(), String> {

@@ -668,10 +668,10 @@ mehscan memory location --source-root ROOT --inventory RUN/inventory
 
 Use the returned `state_store` for native `state` commands and `--state-store`
 for memory commands that read the journal. Use a stable stream for successive
-reviews of the same branch and scope. For Git worktrees, supply the same explicit
-`--repository-key` at inventory creation to share history when repository identity,
-source repository identity, and scan prefix match. Upstream sync uses a shared
-repository key configured explicitly.
+reviews of the same branch and scope. For worktrees, managed exports, and
+successive downloads of the same project, use an explicit
+[`--repository-key`](#repository-identity-across-source-deliveries) when
+creating each inventory.
 
 The default state home is `%LOCALAPPDATA%/mehscan` on Windows,
 `~/Library/Application Support/mehscan` on macOS, and `$XDG_STATE_HOME/mehscan`
@@ -730,6 +730,40 @@ generation explicitly:
 mehscan memory retain --source-root ROOT --inventory RUN/inventory --state-store STATE --stream STREAM --generation N
 mehscan memory assessments --source-root ROOT --inventory RUN/inventory --stream STREAM
 ```
+
+### Repository identity across source deliveries
+
+`--repository-key` identifies the project across reviews. Use a stable ID
+assigned by your organization, such as `onprem:payments`, or an opaque key
+namespaced to the hosting instance. If one project moves from GitLab to
+Bitbucket, keep its key. For distinct projects, assign distinct keys even
+when their names or numeric IDs coincide. The core CLI takes the key as input.
+The source folder can be a GitLab or Bitbucket worktree, a managed export, or
+an engineer’s extracted download. [Source-folder workflow](standalone-source.md)
+
+```text
+mehscan investigate review-inventory ROOT --repository-key onprem:payments --output RUN/inventory
+mehscan memory location --source-root ROOT --inventory RUN/inventory
+```
+
+Use the same persistent state directory, review stream, and scan scope on
+related runs. The default memory path also reflects the scan prefix and any
+explicit `--source-repository-key` used to preserve fork provenance. A changed
+file can produce a new source snapshot under the same repository key. An exact
+rerun also checks the source, inventory, plan and runtime before reusing a
+settled decision. To resume an interrupted run, keep its attempt directory
+and the artifacts it references.
+
+| Review flow | Source folder requirements |
+| --- | --- |
+| Full inventory, Value, Comprehensive, source-first review, reporting, and audits | A supported source directory. Use the ordinary review workflow and its saved artifacts. |
+| Local memory, snapshot comparison, and retained decision reuse | An inventory with stable identity and the matching persistent state and review scope. |
+| Changed scope for extracted source | Supply a relative path list with `--files-from`. A saved `memory snapshot --base` can provide the added, modified and removed paths among discovered inputs. |
+| Pinned Git comparison and old-source evidence | A Git worktree with the required local Git objects. `--changed-from`, `--target`, and `--merge-base` work with Git history regardless of host. |
+
+See [reruns and continuation](#reuse-on-reruns) and [changed-review inputs](../skills/mehscan-security/references/changed-review.md#select-the-comparison).
+For repeat imports with a saved project key and optional Turso upstream, see
+[staged source preparation](standalone-source.md).
 
 ### Reuse on reruns
 
@@ -887,6 +921,8 @@ Use a dedicated upstream database for one repository and one sharing boundary.
 Each installation uses a separate replica file outside the checkout. Supply
 `MEHSCAN_TURSO_AUTH_TOKEN` through the environment for authenticated HTTPS or
 Turso endpoints. The official local sync server also supports HTTP on localhost.
+See [Self-host a Turso sync server](turso-sync-server.md) for installation,
+private access, and backup instructions.
 
 Have one maintainer initialize a new upstream database before writers stage
 publications. Run init with a writer token and the intended repository key.

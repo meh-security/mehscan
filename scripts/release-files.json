@@ -29,6 +29,8 @@
   "docs/review-sharing.md",
   "docs/review-worker.md",
   "docs/rust-security-coverage.md",
+  "docs/standalone-source.md",
+  "docs/turso-sync-server.md",
   "scripts/github_action.py",
   "scripts/review_context.py",
   "scripts/review_source.py",

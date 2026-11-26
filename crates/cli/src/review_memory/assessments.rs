@@ -275,8 +275,8 @@ struct Batch {
 pub(super) struct Assessment {
     #[serde(skip)]
     id: String,
-    decision_id: String,
-    review_id: String,
+    pub(super) decision_id: String,
+    pub(super) review_id: String,
     pub(super) subject_key: String,
     basis_fingerprint: String,
     response_fingerprint: String,
@@ -285,6 +285,22 @@ pub(super) struct Assessment {
     summary: String,
     questions: Vec<Question>,
     evidence: Vec<Evidence>,
+}
+
+impl Assessment {
+    pub(super) fn has_open_checks(&self) -> bool {
+        self.verdict == "needs_review" || !self.questions.is_empty()
+    }
+
+    pub(super) fn has_source_evidence(&self, has_input: impl Fn(&str) -> bool) -> bool {
+        self.evidence.iter().any(|item| {
+            (item.kind == "primary"
+                || item.excerpt_sha256.as_deref().is_some_and(|hash| {
+                    hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }))
+                && has_input(&item.path)
+        })
+    }
 }
 
 #[derive(Serialize)]
