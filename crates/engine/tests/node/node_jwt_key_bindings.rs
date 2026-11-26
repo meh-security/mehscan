@@ -1,5 +1,5 @@
 use std::{collections::BTreeSet, fs};
-mod support;
+use crate::support;
 
 fn scan(extension: &str, source: &str) -> mehscan_core::ScanResult {
     let root = support::temp_dir("jwt-key");
