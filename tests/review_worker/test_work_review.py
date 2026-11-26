@@ -613,10 +613,23 @@ print(json.dumps(value))
         self.assertIn("medium", ledger["summary"]["remaining_by_potential_impact"])
 
     def test_coverage_target_closes_only_selected_checks_and_keeps_other_risk_visible(self):
-        f, command, _, _ = self.prepare()
-        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "lower"], 0)
+        f, command, path, _ = self.prepare()
+        manifest = json.loads(path.read_text())
+        # A target ID can contain characters that are invalid in Windows filenames.
+        target = "auth:lower"
+        manifest["items"][0]["id"] = target
+        for item in manifest["items"]:
+            item["signal"]["evidence"].append(dict(path="other/app.js", start_line=1, end_line=4))
+        path.write_text(json.dumps(manifest))
+        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", target], 0)
         self.assertTrue(ledger["target_complete"])
         self.assertEqual(ledger["summary"]["remaining_by_potential_impact"], {"critical":1})
+        frames = self.frames(f)
+        self.assertEqual(set(frames), {target})
+        frame = json.loads(frames[target].read_text())
+        facts = json.loads(Path(frame["shared_facts"]).read_text())["facts"]
+        self.assertEqual(facts[0]["result"]["results"]["path"], "other/app.js")
+        self.assertIn("f0", frame["research"]["citation_windows"])
 
     def test_shared_packet_items_retain_distinct_sessions_and_native_decisions(self):
         f, command, _, ids = self.prepare()
@@ -651,29 +664,6 @@ print(json.dumps(value))
         ledger = self.run_worker(f, command + ["--review-goal", "coverage"], 0)
         self.assertTrue(ledger["target_complete"])
         self.assertTrue(ledger["summary"]["unclassified_native_ids"])
-
-    def test_deciding_source_signal_is_delivered_only_for_started_target(self):
-        f, command, path, _ = self.prepare()
-        value = json.loads(path.read_text())
-        for item in value["items"]:
-            item["signal"]["evidence"].append(dict(path="other/app.js", start_line=1, end_line=4))
-        path.write_text(json.dumps(value))
-        self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "lower"], 0)
-        stage = f.base / "worker/source-review"
-        self.assertEqual(set(self.frames(f)), {"lower"})
-        frame = json.loads(self.frames(f)["lower"].read_text())
-        facts = json.loads(Path(frame["shared_facts"]).read_text())["facts"]
-        self.assertEqual(facts[0]["result"]["results"]["path"], "other/app.js")
-        self.assertIn("f0", frame["research"]["citation_windows"])
-
-    def test_item_identifiers_are_not_used_as_windows_file_paths(self):
-        f, command, path, _ = self.prepare()
-        value = json.loads(path.read_text())
-        value["items"][0]["id"] = "auth:lower"
-        path.write_text(json.dumps(value))
-        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "auth:lower"], 0)
-        self.assertTrue(ledger["target_complete"])
-        self.assertEqual(set(self.frames(f)), {"auth:lower"})
 
 
 if __name__ == "__main__":

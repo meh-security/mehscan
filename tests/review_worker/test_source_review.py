@@ -239,15 +239,8 @@ windows=packet['primary']['windows']""")
             (self.root/folder/'app.js').write_text('function run(request) { eval(request.query.code); }\n')
         self.inventory=self.base/'partial-inventory'
         self.native('investigate','review-inventory',self.root,'--repository-key','acceptance:partial','--output',self.inventory)
-        command=self.prepare_worker(proposal=False)
+        command=self.prepare_worker(proposal=False, policy='comprehensive')
         del command[command.index('--source-selection'):]
-        claim=json.loads((self.base/'claim.json').read_text())['result']
-        common=['--store',self.base/'state','--stream','source','--inventory',self.inventory,'--source-root',self.root,'--generation',claim['generation'],'--owner',claim['owner'],'--skill-root',SKILL]
-        old=json.loads((self.base/'work.json').read_text())['payload']['plan_id']
-        plan=self.native('state','plan-template','--inventory',self.inventory,'--source-root',self.root,'--policy','comprehensive','--skill-root',SKILL)
-        path=self.base/'comprehensive.json';path.write_text(json.dumps(plan))
-        self.native('state','plan',*common,'--input',path,'--expected-plan-id',old,'--operation-key','comprehensive')
-        (self.base/'work.json').write_text(json.dumps(self.native('state','work',*common)))
         reviewer=self.base/'reviewer.py'
         reviewer.write_text(reviewer.read_text().replace("if False: raise RuntimeError('fixture source failure')", "if packet['primary']['windows'][0]['path']=='feature/app.js': raise RuntimeError('fixture source failure')"))
         result=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=180)
@@ -282,11 +275,7 @@ windows=packet['primary']['windows']""")
         self.assertTrue((output / "review-options.md").is_file())
         self.assertTrue((output / "finding-groups.json").is_file())
 
-    def test_last_budget_call_is_offered_as_final_without_research(self):
-        command = self.prepare_worker(proposal=False) + ["--max-calls", "1"]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
-        frame = json.loads(next((self.base / "worker/source-review/jobs").glob("*/0-input.json")).read_text())
+        frame = json.loads(next((output / "source-review/jobs").glob("*/0-input.json")).read_text())
         self.assertEqual(frame["research"]["rounds_remaining"], 0)
         self.assertEqual(frame["research"]["queries_remaining"], 0)
 
@@ -523,6 +512,25 @@ windows=packet['primary']['windows']""")
                 )
 
     def setUp(self):
+        self.prepare_source_tree()
+        self.native(
+            "investigate",
+            "review-inventory",
+            self.root,
+            "--repository-key",
+            "acceptance:source",
+            "--output",
+            self.inventory,
+        )
+        self.plan = self.native(
+            "investigate",
+            "source-review-plan",
+            self.root,
+            "--inventory",
+            self.inventory,
+        )
+
+    def prepare_source_tree(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mehscan-source-review-")
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
@@ -544,22 +552,6 @@ windows=packet['primary']['windows']""")
         (self.root / "tests").mkdir()
         (self.root / "tests/control.js").write_text(
             "eval(request.query.code);\n", encoding="utf8"
-        )
-        self.native(
-            "investigate",
-            "review-inventory",
-            self.root,
-            "--repository-key",
-            "acceptance:source",
-            "--output",
-            self.inventory,
-        )
-        self.plan = self.native(
-            "investigate",
-            "source-review-plan",
-            self.root,
-            "--inventory",
-            self.inventory,
         )
 
     def native(self, *args, okay=True):

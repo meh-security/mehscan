@@ -8,7 +8,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests/review_worker"))
 import test_workspace_bridge as fixtures
 import test_workspace_actions as action_fixtures
 import review_workspace_pilot as pilot

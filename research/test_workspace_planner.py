@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-PRODUCT = Path(__file__).resolve().parents[2]
+PRODUCT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(PRODUCT / "scripts"))
 import review_workspace_planner as planner
 import review_worker as worker
@@ -319,7 +319,7 @@ class AtomicPlanningTests(unittest.TestCase):
 
 class NativePlanApplicationTests(unittest.TestCase):
     def test_native_bound_grouping_applies_once_without_model_or_verdicts(self):
-        sys.path.insert(0,str(Path(__file__).resolve().parent))
+        sys.path.insert(0, str(PRODUCT / "tests/review_worker"))
         import test_workspace_bridge as fixtures
         fixture = fixtures.NativeBridgeTests(methodName="test_rejected_completed_reply_still_records_usage")
         fixture.extra_source = {

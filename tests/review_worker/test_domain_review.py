@@ -11,9 +11,9 @@ import test_source_review as fixtures
 
 class DomainReview(unittest.TestCase):
     def prepare(self, *, project_run=False):
-        f = fixtures.SourceReview("test_value_without_selection_checkpoints_without_inference")
-        f.setUp()
+        f = fixtures.SourceReview()
         self.addCleanup(f.doCleanups)
+        f.prepare_source_tree()
         for directory, text in (("feature", "function run(request) {\n eval(request.query.code);\n eval(request.body.code);\n}\n"),
                 ("other", "function run(request) {\n eval(request.query.code);\n eval(request.body.code);\n}\n")):
             (f.root / directory).mkdir()

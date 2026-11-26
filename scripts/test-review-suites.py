@@ -10,19 +10,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 RESEARCH_DIR = ROOT / "research"
 
-# Research modules still in the worker test directory. Everything else stays product
-# coverage, including evidence/accounting regressions inside pilot tests.
-RESEARCH_MODULES = {
-    "test_workspace_batch", "test_workspace_planner",
-}
-
-# These individual checks compare frozen experimental arms. The rest of the
-# module covers source scope, usage and restart behavior and stays in product.
-RESEARCH_CASES = {
-    "test_workspace_pilot.PilotTests.test_native_freeze_has_matching_initial_source_and_no_model_call",
-    "test_workspace_pilot.PilotTests.test_source_parity_normalizes_reader_newline_and_deduplicates_only_identical_ranges",
-}
-
 # Run these product checks on Intel macOS PR runners. Linux and Windows run the
 # full product tier. Keep POSIX-specific behavior and the native CLI boundary.
 SMOKE_TESTS = {
@@ -60,18 +47,11 @@ def inventory(include_research_dir):
         raise ValueError("duplicate discovered test IDs")
     if loader.errors:
         raise ValueError("test discovery failed; run unittest discovery for the import diagnostic")
-    modules = {test.__class__.__module__ for test in tests}
-    if RESEARCH_CASES - counts.keys():
-        raise ValueError("research classification references missing cases")
-    if RESEARCH_MODULES - modules:
-        raise ValueError("research classification references missing modules")
     return tests
 
 
 def tier(test):
     module = test.__class__.__module__
-    if module in RESEARCH_MODULES or test.id() in RESEARCH_CASES:
-        return "research"
     return "research" if Path(sys.modules[module].__file__).parent == RESEARCH_DIR else "product"
 
 
