@@ -353,7 +353,49 @@ def retain_training_turns(summary, output):
                 shutil.copyfile(source, target)
 
 
-def run(args, legacy, worker):
+def run_admitted_work(args, summary_path, summary, run_native):
+    # The journal verifies these effective inputs again on the native path.
+    handoff = summary["effective_args"]
+    required = {"inventory", "claim", "work_package", "run"}
+    if not required <= handoff.keys() <= required | {"reviewer_command", "provider_contract", "_continued_heads"}:
+        raise ValueError("source handoff has unexpected effective arguments")
+    for name, value in handoff.items():
+        setattr(args, name, value)
+    args._source_prepared = str(summary_path)
+    return run_native(args)
+
+
+def resume_native_handoff(args, root, output, previous, run_native, worker):
+    data = worker.read(previous)
+    if data.get("work_review"):
+        handoff, data, inherited_budget = review_work.read_handoff(Path(args.resume_from), root, worker)
+        if getattr(args, "work_plan", None) and worker.digest_file(args.work_plan) != handoff["manifest_sha256"]:
+            raise ValueError("work-plan continuation requires the original unchanged manifest")
+        args._review_budget = inherited_budget
+    if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
+            and not data.get("budget_path")):
+        raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
+    result = run_admitted_work(args, previous, data, run_native)
+    prior = None
+    if data.get("work_review") and (Path(args.resume_from) / "source-review/work-ledger.json").is_file():
+        prior = worker.read(Path(args.resume_from) / "source-review/work-ledger.json")
+        if prior:
+            result["work_goal"] = {"goal":prior["goal"], "status":prior["target_status"],
+                "target_complete":prior["target_complete"], "completed_items":prior["summary"]["closed"],
+                "remaining_items":prior["summary"]["remaining"], "ledger":str(Path(args.resume_from) / "source-review/work-ledger.json"),
+                "authority":"Historical first-pass checks retained during native handoff continuation."}
+            result["work_goal"]["continuation_of"] = str(Path(args.resume_from).resolve())
+            if prior.get("goal") == "coverage" and not prior.get("target_complete"):
+                result["status"] = "incomplete"
+    if data.get("comprehensive"):
+        report_comprehensive(result, prior, data.get("unplanned_source_assignments", []))
+    if data.get("continuation"):
+        result["continuation"] = data["continuation"]
+    worker.write(output / "worker.json", result)
+    return result
+
+
+def run(args, run_native, worker):
     root = Path(args.source_root).resolve(strict=True)
     output = worker.outside(args.output, root, False)
     domain_path = getattr(args, "domain_plan", None)
@@ -365,7 +407,7 @@ def run(args, legacy, worker):
     if getattr(args, "reuse_source_results", None) and (getattr(args, "first_pass", None) or args.phase != "all" or getattr(args, "resume_from", None)):
         raise ValueError("source-result reuse requires a fresh all-phase source attempt")
     if getattr(args, "first_pass", None) or args.phase != "all":
-        return legacy(args)
+        return run_native(args)
     if getattr(args, "validate_only", False) or getattr(args, "source_profile", None):
         raise ValueError(
             "exact-bundle validation and bound source profiles require --phase native"
@@ -389,38 +431,9 @@ def run(args, legacy, worker):
                 source_resume = Path(args.resume_from)
                 args.resume_from = None
             else:
-                return legacy(args)
+                return run_native(args)
     if getattr(args, "resume_from", None):
-        data = worker.read(previous)
-        if data.get("work_review"):
-            handoff, data, inherited_budget = review_work.read_handoff(Path(args.resume_from), root, worker)
-            if getattr(args, "work_plan", None) and worker.digest_file(args.work_plan) != handoff["manifest_sha256"]:
-                raise ValueError("work-plan continuation requires the original unchanged manifest")
-            args._review_budget = inherited_budget
-        if (worker.read(data["effective_args"]["work_package"])["payload"]["policy"] == "value"
-                and not data.get("budget_path")):
-            raise ValueError("Value source continuation requires its original bounded selection and budget ledger")
-        for name, value in data["effective_args"].items():
-            setattr(args, name, value)
-        args._source_prepared = str(previous)
-        result = legacy(args)
-        prior = None
-        if data.get("work_review") and (Path(args.resume_from) / "source-review/work-ledger.json").is_file():
-            prior = worker.read(Path(args.resume_from) / "source-review/work-ledger.json")
-            if prior:
-                result["work_goal"] = {"goal":prior["goal"], "status":prior["target_status"],
-                    "target_complete":prior["target_complete"], "completed_items":prior["summary"]["closed"],
-                    "remaining_items":prior["summary"]["remaining"], "ledger":str(Path(args.resume_from) / "source-review/work-ledger.json"),
-                    "authority":"Historical first-pass checks retained during native handoff continuation."}
-                result["work_goal"]["continuation_of"] = str(Path(args.resume_from).resolve())
-                if prior.get("goal") == "coverage" and not prior.get("target_complete"):
-                    result["status"] = "incomplete"
-        if data.get("comprehensive"):
-            report_comprehensive(result, prior, data.get("unplanned_source_assignments", []))
-        if data.get("continuation"):
-            result["continuation"] = data["continuation"]
-        worker.write(output / "worker.json", result)
-        return result
+        return resume_native_handoff(args, root, output, previous, run_native, worker)
     started_run = time.monotonic()
     started_epoch = time.time()
     output.mkdir(parents=True, exist_ok=False)
@@ -2533,10 +2546,7 @@ def run(args, legacy, worker):
             handle.write(json.dumps(metric) + "\n")
     if work_registry:
         review_work.freeze_handoff(stage, worker.digest_file(work_path), case_store.binding, worker)
-    for name, value in summary["effective_args"].items():
-        setattr(args, name, value)
-    args._source_prepared = str(stage / "summary.json")
-    result = legacy(args)
+    result = run_admitted_work(args, stage / "summary.json", summary, run_native)
     if continuation:
         result["continuation"] = summary["continuation"]
     report = None
