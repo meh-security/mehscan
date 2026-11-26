@@ -2890,7 +2890,7 @@ def main():
         parser.add_argument("--" + option, required=True)
     for option in ("source-root", "inventory", "store", "stream"):
         parser.add_argument("--" + option)
-    parser.add_argument("--project-run", help="project.json from native project prepare, supplying source, inventory, store, stream and memory settings")
+    parser.add_argument("--project-run", help="project_run file from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")

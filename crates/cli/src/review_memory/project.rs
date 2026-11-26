@@ -242,7 +242,7 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
 
     let receipt = json!({
         "schema_version": 1,
-        "project_run": output.join("project.json"),
+        "project_run": output.join("project-run.json"),
         "repository_key": config.repository_key,
         "stream": stream,
         "source_root": root,
@@ -266,6 +266,12 @@ pub(crate) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         .tempdir_in(parent)
         .map_err(|error| error.to_string())?;
     write_review_inventory(stage.path(), &inventory, &inventory_fingerprint)?;
+    let bindings = PreparedProject::deserialize(&receipt).map_err(|error| error.to_string())?;
+    fs::write(
+        stage.path().join("project-run.json"),
+        serde_json::to_vec_pretty(&bindings).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("could not write project run reference: {error}"))?;
     fs::write(
         stage.path().join("project.json"),
         serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,

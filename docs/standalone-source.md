@@ -24,7 +24,7 @@ mehscan project prepare "$SOURCE" --config /review-config/payments.json \
 The command creates a standard full review inventory and a `project.json`
 receipt in the new output directory. The receipt lists the repository key,
 stream, native snapshot, inventory fingerprint, journal path, and local
-memory database. Pass `--project-run /path/to/inventory/project.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, work package, reviewer and output for the attempt. Manual clients can use the receipt’s `inventory`, `state_store`, and `stream` in the
+memory database. Pass `--project-run /path/to/inventory/project-run.json` to `review_worker.py` to load the prepared source, inventory, journal, stream and memory settings together. Supply the private claim, work package, reviewer and output for the attempt. Manual clients can use the receipt’s `inventory`, `state_store`, and `stream` in the
 [ordinary review workflow](review-worker.md#prepare-review-work). Use
 `--stream NAME` for a different review track. When both the configuration and
 command omit a stream, the command uses `imported`. The optional artifact
@@ -38,7 +38,7 @@ If persistent memory cannot be opened, preparation reports
 `memory.status=unavailable` and still writes the inventory. Use the reason
 to recover the store or continue in temporary mode.
 
-Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation. After native admission, the worker returns `project_run` in its JSON output when the attempt has a report manifest. Use that attempt reference with `state end` to retain the effective inventory, or with `mehscan report --project-run FILE` to render its validated findings. The reference excludes the private claim and provider conversations.
+The compact `project-run.json` contains the local project bindings. The full `project.json` keeps the intake and upstream history and also works as a reference for older preparations. Use the same prepared reference with the native journal. For example, `mehscan state plan-template --project-run /path/to/inventory/project-run.json --policy value` builds the manual plan. Claim, plan, work, record and end still verify generation, owner and the inputs required by each operation. After native admission, the worker returns `project_run` in its JSON output when the attempt has a report manifest. Use that attempt reference with `state end` to retain the effective inventory, or with `mehscan report --project-run FILE` to render its validated findings. The reference excludes the private claim and provider conversations.
 
 ## Compare an explicit baseline
 
