@@ -1052,7 +1052,7 @@ def run_locked(args, *, source_prepared=None):
             first_directory, root, sys.modules[__name__])
     if first_directory:
         manual_parent = (closed_report is not None and first_directory.parent ==
-                         Path(args.store) / "manual-admissions" and first_directory.name.isdecimal())
+                         outside(args.store, root) / "manual-admissions" and first_directory.name.isdecimal())
         first_record = {"status": "admitted"} if manual_parent else read(first_directory / "worker.json")
         partial_work = first_directory / "source-review/work-ledger.json"
         admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True

@@ -229,8 +229,14 @@ print(json.dumps(result))
         raise AssertionError("export accepted another generation's batch")
     manual_inventory = base / "manual-inventory"
     shutil.copytree(effective["inventory"], manual_inventory)
+    manual_store = base / "manual-state"
+    manual_store.mkdir()
+    if os.name != "nt":
+        alias = base / "manual-state-link"
+        alias.symlink_to(manual_store, target_is_directory=True)
+        manual_store = alias
     manual_project = native("project", "bind", "--source-root", source, "--inventory", manual_inventory,
-                            "--stream", "manual", "--memory-store", memory)["project_run"]
+                            "--stream", "manual", "--store", manual_store, "--memory-store", memory)["project_run"]
     manual_claim = base / "manual-claim.json"
     save(manual_claim, native("state", "claim", "--project-run", manual_project, "--expected-generation", "0",
                               "--attempt-id", "manual", "--operation-key", "claim-manual"))
