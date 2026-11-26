@@ -10,6 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -509,6 +510,28 @@ class JobCheckpoint:
         self.state["elapsed_seconds"] = self.prior_elapsed + time.monotonic() - self.started
         write(self.path, self.state)
 
+    def invoke_provider(self, command, output, remaining, frame, provider, budget_path, lease, *, correction_turn):
+        turn = {"conversation_id": frame["conversation_id"], "round": frame["research"]["round"]}
+        self.save(status="running", calls=self.state["calls"] + 1, model_inflight=True,
+                  active_since=time.time(), active_turn=turn)
+        try:
+            response = execute_provider(command, output, review_child_environment(), remaining(), frame,
+                                        provider, budget_path, lease=lease)
+        except CommandFailure as error:
+            if observed_turn(output, turn, provider) is None:
+                raise ProviderFailure(error.returncode, error.stderr) from error
+            self.save(model_inflight=False, active_turn=None, active_since=time.time())
+            correction = reply_validation_feedback(error, frame)
+            if correction is None:
+                raise
+            if (budget_path or not correction_turn or self.state.get("reply_validation_corrections")
+                    or self.deadline <= time.monotonic()):
+                raise ReplyValidationFailure(error.returncode, "local reply validation failed; no correction allowance remains") from error
+            self.save(reply_validation_corrections=1)
+            return None, correction
+        self.save(model_inflight=False, active_turn=None, active_since=time.time())
+        return response, None
+
     def complete(self, draft):
         self.save(status="drafted", draft=draft, draft_digest=context.digest(draft), active_since=None)
         return draft
@@ -524,7 +547,6 @@ class JobCheckpoint:
 
 def copy_review_files(source, destination):
     """Copy flat native artifacts by bytes; filesystem metadata is not evidence."""
-    import shutil
     destination.mkdir()
     for path in source.iterdir():
         if path.is_symlink() or not path.is_file():
@@ -534,7 +556,6 @@ def copy_review_files(source, destination):
 
 def copy_bundle_run(source, destination, responses=None):
     """Copy the canonical run layout without requiring filesystem metadata."""
-    import shutil
     destination.mkdir()
     for filename in ("manifest.json", "input-binding.json"):
         path = source / filename
@@ -997,6 +1018,125 @@ def run(args):
         return run_locked(args)
 
 
+def complete_source_handoff(summary_path, task, job, validate, timeout):
+    prepared = read(summary_path)
+    review_ids = task["review_ids"]
+    assessments = prepared["assessments"]
+    if not set(review_ids).issubset(assessments):
+        raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
+    draft = {"results": [assessments[rid] for rid in review_ids]}
+    validate(task, job, draft, timeout)
+    assignment_ids = {aid for rid in review_ids for aid in prepared["question_assignments"].get(rid, [])}
+    plan = read(Path(summary_path).parent / "plan.json")
+    completed = {}
+    for result in prepared["results"]:
+        if result["status"] == "complete" and result["assignment_id"] in assignment_ids:
+            completed.setdefault(result["assignment_id"], []).append(result)
+    material = {}
+    for assignment in plan["assignments"]:
+        for result in completed.get(assignment["id"], []):
+            windows = ({"result_id": context.digest([plan["plan_id"], window]),
+                "query": {"tool": "source", "review_id": None, "purpose": "Assigned original source",
+                          "arguments": {key: window[key] for key in ("path", "start_line", "end_line")}},
+                "result": {"operation": "prepared_source", "results": window}} for window in assignment["windows"])
+            origin = result["reuse"]["prior_plan_id"] if result.get("reuse") else prepared["plan_id"]
+            for facts, plan_id in ((result["facts"], origin), (windows, prepared["plan_id"])):
+                for fact in facts:
+                    if fact["result_id"] not in material:
+                        material[fact["result_id"]] = {**fact, "origin_package_id": plan_id, "origin_review_id": None,
+                            "origin_kind": "source_assignment", "source_assignment_id": assignment["id"]}
+    notes = {key: [note for note in prepared.get(key, []) if note["review_id"] in review_ids]
+             for key in ("claim_contexts", "claim_context_errors", "followups")}
+    job.save(results=list(material.values()), source_assignment_ids=sorted(assignment_ids), **notes)
+    return job.complete(draft)
+
+
+def restore_native_attempt(recovery, output, recovery_binding, *, second_mode, snapshot_id,
+                           scanner_hash, broker, shared_facts, record):
+    if not recovery:
+        (output / "journals").mkdir()
+        (output / "jobs").mkdir()
+        return False
+    prior = read(recovery / "recovery.json")
+    if prior["binding"] != recovery_binding:
+        raise ValueError("recovery requires the same current source, work, bundles and reviewer configuration")
+    if (recovery / "continued-to.json").exists():
+        raise ValueError("recovery attempt already continued; resume from the latest attempt instead")
+    recovered_change_pass = prior["change_pass_completed"]
+    copy_review_files(recovery / "journals", output / "journals")
+    copy_review_files(recovery / "jobs", output / "jobs")
+    if second_mode != "off" and (recovery / "training-turns").is_dir():
+        (output / "training-turns").mkdir()
+        for directory in (recovery / "training-turns").iterdir():
+            if directory.is_symlink() or not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{64}", directory.name):
+                raise ValueError("invalid recovered training trajectory directory")
+            copy_review_files(directory, output / "training-turns" / directory.name)
+    if second_mode != "off":
+        # These are retained observed inputs, not regenerated provider
+        # requests. They also make the recovered training index usable.
+        for pattern in ("context-*.json", "facts-*.json"):
+            for path in recovery.glob(pattern):
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("recovered reviewer inputs require regular files")
+                shutil.copyfile(path, output / path.name)
+        for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json", "review-options.json", "review-options.md"):
+            path = recovery / name
+            if path.exists():
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("recovered second-pass records require regular files")
+                shutil.copyfile(path, output / name)
+    # Retain actual previous provider counters; recovery never presents
+    # the new attempt's usage alone as the cost of the whole review.
+    consolidate_metrics(output, recovery)
+    record["recovered_from"] = str(recovery)
+    old_facts = read(recovery / "source-facts.json")
+    if old_facts["scanner_sha256"] != scanner_hash or old_facts["snapshot_id"] != snapshot_id:
+        raise ValueError("recovery source facts differ from current source/runtime")
+    shared_facts.extend(old_facts["facts"])
+    for fact in shared_facts:
+        broker.seed(fact["cache_key"], fact)
+    if (recovery / "research.jsonl").is_file():
+        shutil.copyfile(recovery / "research.jsonl", output / "research.jsonl")
+    if (recovery / "research-knowledge.json").is_file():
+        shutil.copyfile(recovery / "research-knowledge.json", output / "research-knowledge.json")
+    return recovered_change_pass
+
+
+def admission_operations(report, package, output, record_options, attempt_key, *, supersede, continued_heads):
+    payload = package["payload"]
+    links = []
+    if supersede or continued_heads:
+        for decision in report.get("decision_records",[]):
+            rid = decision["response"]["review_id"]
+            parents = payload["expected_parents"][rid]
+            if not supersede and rid not in continued_heads:
+                continue
+            if parents and decision["decision_id"] not in parents:
+                reason = ("Source-validated decision carried from the Value checkpoint " if rid in continued_heads
+                          else "Fresh validated review of current work package ")
+                links.append({"decision_id": decision["decision_id"], "parents": parents,
+                              "reason": reason + package["package_id"]})
+    if links:
+        links_path = output / "supersessions.json"
+        write(links_path, links)
+        record_options["--supersessions"] = str(links_path)
+    entries = [{"operation": "record", "operation_key": "worker-record:" + attempt_key,
+                "options": record_options}]
+    for decision in report.get("decision_records",[]):
+        if decision["response"]["decision"] != "needs_review":
+            continue
+        trace = decision["response"].get("investigation") or {}
+        questions = list(dict.fromkeys([*decision["response"]["checks"], *trace.get("blockers", [])]))
+        identity = hashlib.sha256(decision["decision_id"].encode()).hexdigest()
+        for index, question in enumerate(questions):
+            path = output / ("pending-" + str(index) + "-" + identity + ".json")
+            write(path, {"schema_version": "1", "origin": {"kind": "decision", "decision_id": decision["decision_id"]},
+                         "kind": "other", "question": question})
+            entries.append({"operation": "pending", "options": {"--input": str(path)},
+                "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
+    return entries
+
+
 def run_locked(args, *, source_prepared=None):
     assignment = getattr(args, "assignment", None)
     group_operations = getattr(args, "group_operations", False)
@@ -1317,34 +1457,7 @@ def run_locked(args, *, source_prepared=None):
         if job.state["status"] == "drafted":
             return job.state["draft"]
         if source_prepared and task["kind"] == "native_bundle" and not task.get("second_pass") and not task.get("stage_context"):
-            prepared=read(source_prepared)
-            rows=prepared["assessments"]
-            if not set(task["review_ids"]) <= set(rows):
-                raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
-            if set(task["review_ids"]) <= set(rows):
-                draft={"results":[rows[rid] for rid in task["review_ids"]]}
-                validate_native_candidate(task,job,draft,args.timeout)
-                assignment_ids={aid for rid in task["review_ids"] for aid in prepared["question_assignments"].get(rid,[])}
-                source_plan=read(Path(source_prepared).parent/"plan.json")
-                material=[]
-                for assignment in source_plan["assignments"]:
-                    if assignment["id"] not in assignment_ids:continue
-                    matches=[r for r in prepared["results"] if r["assignment_id"]==assignment["id"] and r["status"]=="complete"]
-                    for result in matches:
-                        facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
-                            "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
-                            "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
-                        for index, fact in enumerate(facts):
-                            if any(prior["result_id"]==fact["result_id"] for prior in material):
-                                continue
-                            reuse = result.get("reuse") if index < len(result["facts"]) else None
-                            material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
-                                "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
-                job.save(results=material,source_assignment_ids=sorted(assignment_ids),
-                    claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
-                    claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
-                    followups=[n for n in prepared.get("followups", []) if n["review_id"] in task["review_ids"]])
-                return job.complete(draft)
+            return complete_source_handoff(source_prepared, task, job, validate_native_candidate, args.timeout)
         if job.state.get("unknown_provider_calls"):
             raise ValueError("previous provider usage is unknown; reconcile before another call")
         if "candidate_draft" in job.state:
@@ -1628,39 +1741,24 @@ def run_locked(args, *, source_prepared=None):
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
             lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
-            job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time(),
-                     active_turn={"conversation_id":conversation_id,"round":round_index})
+            provider = tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider")
             succeeded = False
             try:
-                value = execute_provider(worker_command, output, review_child_environment(), remaining(), frame,
-                    tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"), budget_path, lease=lease)
+                value, correction = job.invoke_provider(worker_command, output, remaining, frame, provider,
+                    budget_path, lease, correction_turn=round_index + 1 < calls_left)
+                if correction is not None:
+                    feedback = correction
+                    with shared_lock:
+                        record["reply_validation_corrections"] = record.get("reply_validation_corrections", 0) + 1
+                    execution_trace.emit("reply_validation_rejected", job_id=job.path.stem,
+                        conversation_id=conversation_id, round=round_index, feedback=correction)
+                    continue
                 succeeded = True
-            except CommandFailure as error:
-                provider = tiered_policy["expert"] if profile=="expert" else bound_runtime.get("provider")
-                if observed_turn(output, job.state["active_turn"], provider) is not None:
-                    job.save(model_inflight=False, active_turn=None, active_since=time.time())
-                    correction = reply_validation_feedback(error, frame)
-                    if (not budget_path and correction is not None and not job.state.get("reply_validation_corrections")
-                            and round_index + 1 < calls_left and deadline > time.monotonic()):
-                        job.save(reply_validation_corrections=1)
-                        feedback = correction
-                        with shared_lock:
-                            record["reply_validation_corrections"] = record.get("reply_validation_corrections", 0) + 1
-                        execution_trace.emit("reply_validation_rejected", job_id=job.path.stem,
-                            conversation_id=conversation_id, round=round_index, feedback=correction)
-                        continue
-                    if correction is not None:
-                        raise ReplyValidationFailure(error.returncode, "local reply validation failed; no correction allowance remains") from error
-                    # Receipted but untyped failures are not automatically retried.
-                    raise
-                raise ProviderFailure(error.returncode, error.stderr) from error
             finally:
                 with shared_lock:
                     timings.append({"operation": "reviewer/" + task["kind"], "round": round_index,
-                        "job_id": job.path.stem, "profile":profile, "role":role,
-                        "provider":tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
-                        "succeeded":succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
-            job.save(model_inflight=False, active_turn=None, active_since=time.time())
+                        "job_id": job.path.stem, "profile": profile, "role": role, "provider": provider,
+                        "succeeded": succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
             check_fresh()
             received_response = json.loads(json.dumps(value))
             if second_mode != "off":
@@ -2169,56 +2267,9 @@ def run_locked(args, *, source_prepared=None):
                 "first_report_sha256":digest_file(first_directory / "findings.json") if first_directory else None,
                 "rates_sha256":digest_file(rates_path) if rates_path else None,
                 "correction_handoff_sha256":correction_handoff_digest}
-        recovered_change_pass = False
-        if recovery:
-            prior = read(recovery / "recovery.json")
-            if prior["binding"] != recovery_binding:
-                raise ValueError("recovery requires the same current source, work, bundles and reviewer configuration")
-            if (recovery / "continued-to.json").exists():
-                raise ValueError("recovery attempt already continued; resume from the latest attempt instead")
-            recovered_change_pass = prior["change_pass_completed"]
-            copy_review_files(recovery / "journals", output / "journals")
-            copy_review_files(recovery / "jobs", output / "jobs")
-            if second_mode != "off" and (recovery / "training-turns").is_dir():
-                (output / "training-turns").mkdir()
-                for directory in (recovery / "training-turns").iterdir():
-                    if directory.is_symlink() or not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{64}", directory.name):
-                        raise ValueError("invalid recovered training trajectory directory")
-                    copy_review_files(directory, output / "training-turns" / directory.name)
-            if second_mode != "off":
-                import shutil
-                # These are retained observed inputs, not regenerated provider
-                # requests. They also make the recovered training index usable.
-                for pattern in ("context-*.json", "facts-*.json"):
-                    for path in recovery.glob(pattern):
-                        if path.is_symlink() or not path.is_file():
-                            raise ValueError("recovered reviewer inputs require regular files")
-                        shutil.copyfile(path, output / path.name)
-                for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json", "review-options.json", "review-options.md"):
-                    path = recovery / name
-                    if path.exists():
-                        if path.is_symlink() or not path.is_file():
-                            raise ValueError("recovered second-pass records require regular files")
-                        shutil.copyfile(path, output / name)
-            # Retain actual previous provider counters; recovery never presents
-            # the new attempt's usage alone as the cost of the whole review.
-            consolidate_metrics(output, recovery)
-            record["recovered_from"] = str(recovery)
-            old_facts = read(recovery / "source-facts.json")
-            if old_facts["scanner_sha256"] != scanner_hash or old_facts["snapshot_id"] != payload["snapshot_id"]:
-                raise ValueError("recovery source facts differ from current source/runtime")
-            shared_facts.extend(old_facts["facts"])
-            for fact in shared_facts:
-                broker.seed(fact["cache_key"], fact)
-            if (recovery / "research.jsonl").is_file():
-                import shutil
-                shutil.copyfile(recovery / "research.jsonl", output / "research.jsonl")
-            if (recovery / "research-knowledge.json").is_file():
-                import shutil
-                shutil.copyfile(recovery / "research-knowledge.json", output / "research-knowledge.json")
-        else:
-            (output / "journals").mkdir()
-            (output / "jobs").mkdir()
+        recovered_change_pass = restore_native_attempt(recovery, output, recovery_binding,
+            second_mode=second_mode, snapshot_id=payload["snapshot_id"], scanner_hash=scanner_hash,
+            broker=broker, shared_facts=shared_facts, record=record)
 
         def save_recovery(change_pass_completed):
             recovery_binding["package_id"] = package["package_id"]
@@ -2390,7 +2441,6 @@ def run_locked(args, *, source_prepared=None):
                         if digest_file(destination) != job.state["combined_sha256"]:
                             raise ValueError("recovered baseline bytes changed")
                     elif job and job.state["binding"]["role"] == "investigator":
-                        import shutil
                         shutil.copyfile(output / "assessments" / (job.path.stem + ".json"), destination)
                     else:
                         draft_path = output / ("combined-" + filename)
@@ -2398,7 +2448,6 @@ def run_locked(args, *, source_prepared=None):
                         native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
                                 "--source-root", str(root), "--journal-dir", str(journals), "--output", str(destination)])
                     if job:
-                        import shutil
                         job.save(combined_sha256=digest_file(destination))
                         shutil.copyfile(destination, response_dir / filename)
 
@@ -2768,38 +2817,10 @@ def run_locked(args, *, source_prepared=None):
                 if tiered_policy:
                     write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
                                           "cases": [execution_cases[identity] for identity in requested]})
-                links = []
-                if args.supersede or continued_heads:
-                    for decision in report.get("decision_records",[]):
-                        rid = decision["response"]["review_id"]
-                        parents = payload["expected_parents"][rid]
-                        if not args.supersede and rid not in continued_heads:
-                            continue
-                        if parents and decision["decision_id"] not in parents:
-                            reason = ("Source-validated decision carried from the Value checkpoint " if rid in continued_heads
-                                      else "Fresh validated review of current work package ")
-                            links.append({"decision_id": decision["decision_id"], "parents": parents,
-                                          "reason": reason + package["package_id"]})
-                if links:
-                    links_path = output / "supersessions.json"
-                    write(links_path, links)
-                    record_options["--supersessions"] = str(links_path)
                 if tiered_policy:
                     record_options["--review-execution"] = str(execution_path)
-                entries = [{"operation": "record", "operation_key": "worker-record:" + attempt_key,
-                            "options": record_options}]
-                for decision in report.get("decision_records",[]):
-                    if decision["response"]["decision"] != "needs_review":
-                        continue
-                    trace = decision["response"].get("investigation") or {}
-                    questions = list(dict.fromkeys([*decision["response"]["checks"], *trace.get("blockers", [])]))
-                    for index, question in enumerate(questions):
-                        identity = hashlib.sha256(decision["decision_id"].encode()).hexdigest()
-                        path = output / ("pending-" + str(index) + "-" + identity + ".json")
-                        write(path, {"schema_version": "1", "origin": {"kind": "decision", "decision_id": decision["decision_id"]},
-                                     "kind": "other", "question": question})
-                        entries.append({"operation": "pending", "options": {"--input": str(path)},
-                            "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
+                entries = admission_operations(report, package, output, record_options, attempt_key,
+                    supersede=args.supersede, continued_heads=continued_heads)
                 if not validate_only:
                     admission_entries = entries
         if recovered_admission or admission_entries is not None:

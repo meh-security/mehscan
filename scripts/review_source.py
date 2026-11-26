@@ -272,54 +272,6 @@ def validate_assignment_scope(plan):
         raise ValueError("queryable-only source cannot enter default assignment windows")
 
 
-def validate_reuse_alias(previous, assignment, original):
-    if (original is None or original[0] != assignment or
-        Path(previous["reuse"]["prior_result"]).resolve() != original[2].resolve() or
-        previous["reuse"]["prior_plan_id"] != original[3] or
-        any(previous.get(key) != original[1].get(key) for key in
-            ("assignment_id", "draft", "proofs", "proposals", "inspected", "facts", "followups", "claim_contexts", "claim_context_errors", "proposal_followups", "proposal_contexts"))):
-        raise ValueError("prior reused source result differs from its supplied original")
-
-
-def reused_source_result(assignment, previous, plan):
-    """Reconstruct and validate the completed result's source-backed envelope."""
-    if previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
-        raise ValueError("only completed source assignments with known usage are reusable")
-    if previous.get("assignment_id") != assignment["id"]:
-        raise ValueError("reused source assignment identity changed")
-    draft = previous["draft"]
-    expected = {(w["path"], w["start_line"], w["end_line"]) for w in assignment["windows"]}
-    coverage = [(w["path"], w["start_line"], w["end_line"]) for w in draft["coverage"]]
-    ids = [row["review_id"] for row in draft["results"]]
-    if len(coverage) != len(set(coverage)) or set(coverage) != expected or len(ids) != len(set(ids)) or set(ids) != set(assignment["review_ids"]):
-        raise ValueError("reused source coverage or assessment membership changed")
-    visible = [*assignment["windows"], *previous["inspected"]]
-    def citations(assessment):
-        result = []
-        for cite in assessment.get("evidence", []):
-            lines = {w["start_line"] + i: line for w in visible if w["path"] == cite["path"]
-                     for i, line in enumerate(w["text"].split("\n"))}
-            first, last = cite["start_line"], cite["end_line"]
-            if not 1 <= first <= last or last - first >= 400 or any(n not in lines for n in range(first, last + 1)):
-                raise ValueError("reused assessment cites unseen source")
-            result.append({**{k: cite[k] for k in ("path", "start_line", "end_line")},
-                           "quote": "\n".join(lines[n] for n in range(first, last + 1))})
-        return result
-    proofs = [c for row in draft["results"] for c in citations(row)]
-    proposals = []
-    for proposal in draft["proposals"]:
-        proofs.extend(citations(proposal["assessment"]))
-        proposals.append({k: v for k, v in proposal.items() if k != "assessment"} | {
-            "assignment_id": assignment["id"],
-            "anchor": citations({"evidence": [proposal["anchor"]]})[0],
-            "evidence": citations({"evidence": proposal["evidence"]}),
-        })
-    if proofs != previous["proofs"] or proposals != previous["proposals"]:
-        raise ValueError("reused source proof or proposal differs from completed draft")
-    return {"plan": plan, "inspected": previous["inspected"], "proposals": proposals,
-            "assessment_evidence": proofs}
-
-
 def retain_training_turns(summary, output):
     """Copy observed source turns without rewriting inputs or replaying models."""
     stage = Path(summary).parent
@@ -427,6 +379,98 @@ def finish_recovered(previous, data, output, worker, result):
         result["continuation"] = data["continuation"]
     worker.write(output / "worker.json", result)
     return result
+
+
+def reserve_source_turn(frame, budget_path, *, lane, completion_owner, prepaid, turn, question_budget, case_id):
+    if prepaid is not None and budget_path and review_budget.snapshot(budget_path).get("fenced"):
+        raise review_budget.BudgetExhausted("Observed usage fenced further calls")
+    lease = prepaid if turn == 0 else None
+    if lease is None and budget_path:
+        lease = review_budget.reserve(budget_path, frame["kind"], lane=lane, completion_owner=completion_owner)
+    if question_budget:
+        try:
+            question_budget.reserve(case_id, "model_calls", 1)
+        except review_orchestration.BudgetExhausted:
+            if lease is not None:
+                review_budget.abandon(budget_path, lease)
+            raise
+    if budget_path:
+        state = review_budget.snapshot(budget_path)
+        remaining = state["max_calls"] - state["reserved_calls"] - review_budget.held_calls(state, completion_owner)
+        lane_state = state.get("lanes", {}).get(lane)
+        if lane_state:
+            remaining = min(remaining, lane_state["allocation"] - lane_state["reserved_calls"])
+        research = frame["research"]
+        research["rounds_remaining"] = min(research["rounds_remaining"], remaining)
+        if remaining == 0:
+            research["queries_remaining"] = 0
+    return lease
+
+
+def schedule_comprehensive(first, followup, entries, results, execute, *, workers, budget_path, admit,
+                           carried_cases=(), carried_assessments=None):
+    """Finish the Value phase before deriving Comprehensive follow-up from admitted results."""
+    def schedule(jobs):
+        return review_scheduler.run({"ai": jobs}, execute, workers=workers, budget_path=budget_path, admit=admit)
+
+    yield from schedule(first)
+    dependency_results = results
+    if carried_assessments:
+        # Use the journal's current verdict and citations for already
+        # admitted work. The original source proof remains attributed.
+        dependency_results = [
+            {**r, "draft": {**r["draft"], "results": [carried_assessments.get(a["review_id"], a)
+                for a in r["draft"]["results"]]}}
+            if r.get("case_id") in carried_cases and r["status"] == "complete" else r for r in results]
+    yield from schedule(prepare_followup(followup, entries, dependency_results))
+
+
+def claim_source_handoff(args, stage, root, augmented, claim, package, *, continuation, native, worker):
+    output_id = context.digest(str(stage.parent))
+    private = Path(args.store) / ("source-control-" + output_id)
+    private.mkdir(parents=True)
+    binding = ["--store", args.store, "--stream", args.stream, "--inventory", augmented, "--source-root", root]
+    receipt = native(["state", "claim", *binding, "--expected-generation", claim["generation"],
+        "--attempt-id", "source-" + output_id[:24], "--operation-key", "source-claim:" + output_id,
+        *(["--retry", "true"] if continuation else [])])
+    claim_path = private / "claim.json"
+    worker.write(claim_path, receipt)
+    # The host needs this pointer to close the derived claim if plan preparation fails.
+    worker.write(stage / "handoff.json", {"parent_work_package_id": package["package_id"],
+        "effective_args": {"inventory": str(augmented), "claim": str(claim_path)}})
+    owner = receipt["result"]
+    return private, [*binding, "--generation", owner["generation"], "--owner", owner["owner"]]
+
+
+def select_handoff_reviews(draft, payload, ids, results, priorities, entries, excluded_ids, current_ids):
+    deferred = draft.setdefault("deferred_review_ids", {})
+    excluded = draft.setdefault("excluded_review_ids", {})
+    comprehensive = payload["policy"] == "comprehensive"
+    failed = {rid for result in results if result["status"] != "complete" for rid in result["review_ids"]}
+    selected = (set(ids) - failed) | {rid for rid, priority in priorities.items() if priority == "value" or comprehensive}
+    draft["selected_review_ids"] = sorted(selected)
+    for rid in selected:
+        deferred.pop(rid, None)
+        excluded.pop(rid, None)
+    previous = payload.get("deferred_review_ids", {})
+    for rid in entries:
+        if rid not in selected and rid not in excluded:
+            deferred.setdefault(rid, previous.get(rid,
+                "Outside the requested native selection; source coverage is recorded separately."))
+    for rid, reason in excluded_ids.items():
+        excluded.pop(rid, None)
+        deferred[rid] = reason
+    for rid in priorities:
+        if rid not in selected:
+            deferred[rid] = "Source-discovered question retained for Comprehensive review."
+    for rid in failed:
+        deferred[rid] = "Source assignment did not complete; no automatic replacement model call."
+    membership_changes = reconcile_completion_plan(draft, current_ids)
+    if comprehensive:
+        # Reconciliation can replace the selection and deferrals.
+        draft["selected_review_ids"] = sorted(set(draft["selected_review_ids"]) | set(draft["deferred_review_ids"]))
+        draft["deferred_review_ids"] = {}
+    return membership_changes
 
 
 def prepare(args, worker):
@@ -831,64 +875,10 @@ def prepare(args, worker):
             "authority": "Cases share source facts and a provider thread; verdicts remain case-specific. Cover/Context roles have no native verdict obligation."})
     source_metrics = source_recovery.receipts(stage, worker) if source_resume or continuation else []
     inherited_source_calls = len(source_metrics)
-    reuse_jobs = {}
-    stale_reuse_jobs = set()
-    partial_windows = []
     reuse_paths = getattr(args, "reuse_source_results", None) or []
     if isinstance(reuse_paths, str):
         reuse_paths = [reuse_paths]
-    for reuse_path in reuse_paths:
-        prior = worker.outside(reuse_path, root)
-        if prior.resolve() == output.resolve():
-            raise ValueError("source reuse requires a separate prior attempt")
-        prior_stage = prior / "source-review"
-        prior_plan = worker.read(prior_stage / "plan.json")
-        for key in ("source_fingerprint", "inventory_fingerprint"):
-            if prior_plan[key] != plan[key]:
-                raise ValueError("prior source plan binding differs from current plan")
-        prior_assignments = {a["id"]: a for a in prior_plan["assignments"]}
-        for directory in (prior_stage / "jobs").iterdir():
-            if not directory.is_dir():
-                continue
-            old = prior_assignments.get(directory.name)
-            if old is None:
-                raise ValueError("prior source job is absent from its plan")
-            result_path = directory / "result.json"
-            previous = worker.read(result_path) if result_path.is_file() else None
-            if previous is None or previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
-                partial_windows.extend(old["windows"])
-                continue
-            if previous.get("reuse"):
-                if directory.name in stale_reuse_jobs:
-                    continue
-                original = reuse_jobs.get(directory.name)
-                validate_reuse_alias(previous, old, original)
-                continue
-            frame = worker.read(directory / "0-input.json")
-            prior_work = worker.read(Path(frame["work_package"]))["payload"]
-            prior_runtime = prior_work["runtime"]
-            prior_context = worker.read(directory / "context.json")
-            prior_windows = [{key: window[key] for key in ("path", "start_line", "end_line", "source_sha256", "text")}
-                             for window in prior_context["primary"]["windows"]]
-            if (prior_work["policy"] != payload["policy"] or
-                any(prior_runtime.get(key) != runtime.get(key) for key in ("provider", "policy", "worker_protocol", "limits")) or
-                frame.get("review_ids") != old["review_ids"] or prior_context["work"]["policy"] != prior_work["policy"] or
-                prior_context["work"]["runtime"] != prior_runtime or prior_context["work"]["review_ids"] != old["review_ids"] or
-                prior_context.get("source_assignment_id") != old["id"] or prior_windows != old["windows"]):
-                raise ValueError("prior source reviewer policy, provider or membership differs")
-            assignment_paths = [window["path"] for window in old["windows"]]
-            previous_knowledge = context.compact_work(prior_work, old["review_ids"],
-                source_paths=assignment_paths).get("knowledge", [])
-            current_knowledge = context.compact_work(payload, old["review_ids"],
-                source_paths=assignment_paths).get("knowledge", [])
-            if prior_context["work"].get("knowledge", []) != previous_knowledge:
-                raise ValueError("prior source reviewer knowledge differs from its work package")
-            if previous_knowledge != current_knowledge:
-                stale_reuse_jobs.add(directory.name)
-                continue
-            if directory.name in reuse_jobs:
-                raise ValueError("duplicate independent completed source assignment")
-            reuse_jobs[directory.name] = (old, previous, result_path, prior_plan["plan_id"])
+    reuse_jobs, partial_windows = source_recovery.load_reusable_assignments(reuse_paths, root, output, plan, payload, worker)
 
     def overlaps_partial(assignment):
         return any(w["path"] == p["path"] and w["start_line"] <= p["end_line"] and p["start_line"] <= w["end_line"]
@@ -1019,7 +1009,7 @@ def prepare(args, worker):
         if prior_job and prior_job[0] == assignment:
             _, previous, prior_result, prior_plan_id = prior_job
             try:
-                admission = reused_source_result(assignment, previous, plan)
+                admission = source_recovery.reused_source_result(assignment, previous, plan)
                 worker.write(directory / "admission.json", admission)
                 native(["investigate", "source-review-check", root, "--inventory", inventory,
                         "--input", directory / "admission.json"])
@@ -1423,31 +1413,15 @@ def prepare(args, worker):
                     frame["research"]["considered_assertions"] = considered_assertions
                 worker.write(directory / (str(turn) + "-input.json"), frame)
                 worker.write(directory / (str(turn) + "-facts.json"), {"facts": facts})
-                if question_budget:
-                    if question is not None and question_budget.remaining(domain_case["id"], "model_calls") <= (completion_remaining(domain_case["id"]) if owner_required else 0):
+                case_id = domain_case["id"] if question_budget else None
+                if question_budget and question is not None:
+                    protected = completion_remaining(case_id) if owner_required else 0
+                    if question_budget.remaining(case_id, "model_calls") <= protected:
                         raise review_orchestration.BudgetExhausted("Reserved final owner call; question work stopped")
-                if prepaid is not None and budget_path and review_budget.snapshot(budget_path).get("fenced"):
-                    raise review_budget.BudgetExhausted("Observed usage fenced further calls")
-                lease = (prepaid if turn == 0 and prepaid is not None else
-                    review_budget.reserve(budget_path, frame["kind"], lane=lane_by_id.get(assignment["id"]),
-                        completion_owner=completion_owner) if budget_path else None)
-                if question_budget:
-                    try:
-                        question_budget.reserve(domain_case["id"], "model_calls", 1)
-                    except review_orchestration.BudgetExhausted:
-                        if lease is not None:
-                            review_budget.abandon(budget_path, lease)
-                        raise
+                lease = reserve_source_turn(frame, budget_path, lane=lane_by_id.get(assignment["id"]),
+                    completion_owner=completion_owner, prepaid=prepaid, turn=turn,
+                    question_budget=question_budget, case_id=case_id)
                 if budget_path:
-                    budget_state = review_budget.snapshot(budget_path)
-                    remaining_calls = budget_state["max_calls"] - budget_state["reserved_calls"] - review_budget.held_calls(
-                        budget_state, completion_owner)
-                    lane_state = budget_state.get("lanes", {}).get(lane_by_id.get(assignment["id"]))
-                    if lane_state:
-                        remaining_calls = min(remaining_calls, lane_state["allocation"] - lane_state["reserved_calls"])
-                    frame["research"]["rounds_remaining"] = min(frame["research"]["rounds_remaining"], remaining_calls)
-                    if remaining_calls == 0:
-                        frame["research"]["queries_remaining"] = 0
                     worker.write(directory / (str(turn) + "-input.json"), frame)
                 calls += 1
                 unknown_calls += 1
@@ -1777,38 +1751,7 @@ def prepare(args, worker):
     worker.write(stage / "progress.json", results)
     if resolution_path:
         request = worker.read(worker.outside(resolution_path, root))
-        if (not isinstance(request, dict) or set(request) != {"schema_version", "checks"}
-                or request["schema_version"] != "mehscanWorkResolution/v1"
-                or not isinstance(request["checks"], list) or not 1 <= len(request["checks"]) <= 2000):
-            raise ValueError("invalid scoped resolution request")
-        saved_plan = worker.read(stage / "resolution-plan.json") if (stage / "resolution-plan.json").is_file() else None
-        if saved_plan and saved_plan["request"] != request:
-            previous_results = Path(source_resume) / "source-review/resolution-results.json"
-            done = worker.read(previous_results) if previous_results.is_file() else []
-            if len(done) != len(saved_plan["cases"]) or any(r["status"] != "complete" for r in done):
-                raise ValueError("interrupted resolution requires its original exact request")
-            saved_plan = None
-        selections = {}
-        projected = {r["case_id"]:r for r in case_store.results()}
-        for spec in request["checks"]:
-            if (not isinstance(spec, dict) or set(spec) != {"case_id", "check_ids"}
-                    or not isinstance(spec["case_id"], str) or spec["case_id"] in selections
-                    or spec["case_id"] not in case_by_assignment):
-                raise ValueError("resolution requires distinct current case identities")
-            identity = spec["case_id"]
-            if saved_plan:
-                selections[identity] = saved_plan["cases"][identity]
-            else:
-                prior = projected[identity]
-                selections[identity] = {"ticket":case_store.resolution_ticket(identity, spec["check_ids"]),
-                    "previous_checks":prior.get("draft", {}).get("work_checks", []),
-                    "reconsideration":prior.get("reconsideration", {}),
-                    "native_reconsideration":prior.get("native_reconsideration", {})}
-        native_parent = (saved_plan or {}).get("native_parent")
-        if not native_parent:
-            inherited = Path(source_resume) / "source-review/resolution-plan.json"
-            native_parent = worker.read(inherited).get("native_parent") if inherited.is_file() else str(source_resume)
-        worker.write(stage / "resolution-plan.json", {"request":request, "cases":selections, "native_parent":native_parent})
+        selections = source_recovery.prepare_resolution(stage, source_resume, request, case_store, case_by_assignment, worker)
         source_recovery.seal(stage, source_recovery_binding(args, package, plan, command_bindings, scanner_sha, worker),
             budget_path, lineage_output, worker)
         source_recovery.claim_successor(source_resume, stage, worker)
@@ -2105,42 +2048,32 @@ def prepare(args, worker):
                         # Keep the original immutable result reference and receipts.
                         results.append(projected[case_id])
                         review_budget.release_completion(budget_path, case_id)
-                    elif case_id in recovery_cases:
-                        job["completion"] = review_budget.snapshot(budget_path).get("completion_holds", {}).get(
-                            case_id, {"requested":0, "granted":0, "remaining":0})
+                        continue
+                    holds = review_budget.snapshot(budget_path).get("completion_holds", {}) if source_resume or case_id in recovery_cases else {}
+                    if case_id in recovery_cases:
+                        job["completion"] = holds.get(case_id, {"requested":0, "granted":0, "remaining":0})
                         path = stage / "jobs" / context.digest(["work-item", case_id]) / "result.json"
                         saved = worker.read(path) if path.is_file() else None
                         if saved and saved.get("case_id") == case_id:
                             review_budget.release_completion(budget_path, case_id)
                             yield job, saved
-                        else:
-                            yield job, execute_work(job)
+                            continue
+                    elif source_resume and case_id in holds:
+                        # A hold can survive a crash before the start checkpoint.
+                        recovery_cases.add(case_id)
+                        job["completion"] = holds[case_id]
                     else:
-                        # A hold may have been booked immediately before the start checkpoint.
-                        if source_resume and case_id in review_budget.snapshot(budget_path).get("completion_holds", {}):
-                            recovery_cases.add(case_id)
-                            job["completion"] = review_budget.snapshot(budget_path)["completion_holds"][case_id]
-                            yield job, execute_work(job)
-                        else:
-                            pending.append(job)
+                        pending.append(job)
+                        continue
+                    yield job, execute_work(job)
                 if not staged:
                     yield from review_scheduler.run({"ai":pending}, execute_work, workers=args.workers,
                         budget_path=budget_path, admit=admit_work)
                     return
                 first, followup = comprehensive_cases(pending, value_ids)
-                yield from review_scheduler.run({"ai":first}, execute_work, workers=args.workers,
-                    budget_path=budget_path, admit=admit_work)
-                dependency_results = results
-                if carried_assessments:
-                    # Use the journal's current verdict and citations for already
-                    # admitted work. The original source proof remains attributed.
-                    dependency_results = [
-                        {**r, "draft": {**r["draft"], "results": [carried_assessments.get(a["review_id"], a)
-                            for a in r["draft"]["results"]]}}
-                        if r.get("case_id") in carried_cases and r["status"] == "complete" else r for r in results]
-                followup = prepare_followup(followup, entries, dependency_results)
-                yield from review_scheduler.run({"ai":followup}, execute_work, workers=args.workers,
-                    budget_path=budget_path, admit=admit_work)
+                yield from schedule_comprehensive(first, followup, entries, results, execute_work,
+                    workers=args.workers, budget_path=budget_path, admit=admit_work,
+                    carried_cases=carried_cases, carried_assessments=carried_assessments)
 
             for job, result in recover_then_schedule():
                 result.update(case_id=job["id"], domain_id=job["id"])
@@ -2158,62 +2091,9 @@ def prepare(args, worker):
                 for future in as_completed(futures):
                     results.extend(future.result())
                     worker.write(stage / "progress.json", results)
-        by_case = {result["case_id"]: result for result in results if "case_id" in result}
-        for item in domain_registry["lead_accounting"].values():
-            case_result = by_case.get(item["case_id"])
-            if case_result is None:
-                continue
-            if case_result["status"] != "complete":
-                item.update(status="deferred", case_status=case_result["status"])
-            elif item["role"] == "verify":
-                item.update(status="assessed", reviewed=True, case_status="complete")
-            elif item["role"] == "cover":
-                item.update(status="incorporated", case_status="complete")
-            else:
-                item.update(status="available", case_status="complete")
-        worker.write(stage / "lead-accounting.json", domain_registry["lead_accounting"])
-        metrics = []
-        for path in (stage / "jobs").glob("*/provider-metrics-*.jsonl"):
-            metrics.extend(json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip())
-        domain_usage = []
-        audit_cases = case_store.snapshot()["cases"] if case_store else {}
-        for domain in domain_registry["domains"]:
-            conversations = {case["conversation_id"] for case in domain_states[domain["id"]]["cases"]}
-            if question_routing:
-                conversations.update(note["conversation_id"] for case in domain["cases"]
-                    for note in by_case.get(case["id"], {}).get("question_work", []) if note.get("conversation_id"))
-                conversations.update(note["conversation_id"] for case in domain["cases"]
-                    for note in audit_cases[case["id"]].get("factual_audits", {}).values()
-                    if note.get("conversation_id"))
-            rows = [row for row in metrics if row.get("conversation_id") in conversations]
-            domain_usage.append({"id": domain["id"], "wall_seconds": domain_timings.get(domain["id"], by_case.get(domain["id"], {}).get("seconds", 0)),
-                "calls": len(rows), "cold_turns": sum(not row.get("resumed", False) for row in rows),
-                "warm_case_starts": sum(bool(row.get("resumed") and row.get("domain_case_start")) for row in rows),
-                "input_tokens": sum(row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows),
-                "cached_input_tokens": sum(row.get("usage", {}).get("cached_input_tokens", 0) or 0 for row in rows),
-                "output_tokens": sum(row.get("usage", {}).get("output_tokens", 0) or 0 for row in rows),
-                "max_turn_input_tokens": max((row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows), default=0),
-                "provider_elapsed_ms": sum(row.get("elapsed_ms", 0) or 0 for row in rows)})
-        worker.write(stage / "domain-metrics.json", {
-            "session_mode": getattr(args, "domain_session_mode", "shared"),
-            "domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
-            "completed_cases": sum(result["status"] == "complete" for result in by_case.values()),
-            "provider_calls": sum(result["calls"] for result in by_case.values()),
-            "unknown_provider_calls": sum(result["unknown_provider_calls"] for result in by_case.values()),
-            "usage_complete": (len(metrics) == sum(result["calls"] for result in by_case.values())
-                and not any(result["unknown_provider_calls"] for result in by_case.values())
-                and all(not set(row.get("unknown_delta_counters", [])).intersection(("input_tokens", "cached_input_tokens", "output_tokens"))
-                        and all(type(row.get("usage", {}).get(key)) is int for key in ("input_tokens", "cached_input_tokens", "output_tokens"))
-                        for row in metrics)),
-            "cold_turns": sum(not row.get("resumed", False) for row in metrics),
-            "warm_turns": sum(row.get("resumed", False) for row in metrics),
-            "input_tokens": sum(row.get("usage", {}).get("input_tokens", 0) or 0 for row in metrics),
-            "cached_input_tokens": sum(row.get("usage", {}).get("cached_input_tokens", 0) or 0 for row in metrics),
-            "cache_write_tokens": (sum(row["usage"]["cache_write_tokens"] for row in metrics)
-                if metrics and all(type(row.get("usage", {}).get("cache_write_tokens")) is int for row in metrics) else None),
-            "output_tokens": sum(row.get("usage", {}).get("output_tokens", 0) or 0 for row in metrics),
-            "per_domain": domain_usage,
-            "note": "Observed provider usage; shared context is not a shared verdict, and missing cache-write usage is unknown."})
+        review_domains.write_domain_metrics(stage, domain_registry, domain_states, domain_timings, results,
+            session_mode=getattr(args, "domain_session_mode", "shared"), question_routing=question_routing,
+            case_store=case_store, write=worker.write)
     elif queues is not None:
         jobs = {lane: [by_id[identity] for identity in members] for lane, members in queues.items()}
         for assignment, result in review_scheduler.run(jobs, assignment_job, workers=args.workers, budget_path=budget_path):
@@ -2237,12 +2117,10 @@ def prepare(args, worker):
             finally:
                 review_budget.release_completion(budget_path, owner)
 
-        for first_pass, phase in ((True, first), (False, followup)):
-            selected_jobs = phase if first_pass else prepare_followup(phase, entries, results)
-            for _, result in review_scheduler.run({"ai":selected_jobs},
-                    execute_assignment, workers=args.workers, budget_path=budget_path, admit=admit_assignment):
-                results.append(result)
-                worker.write(stage / "progress.json", results)
+        for _, result in schedule_comprehensive(first, followup, entries, results, execute_assignment,
+                workers=args.workers, budget_path=budget_path, admit=admit_assignment):
+            results.append(result)
+            worker.write(stage / "progress.json", results)
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [pool.submit(assignment_job, by_id[identity]) for identity in selected]
@@ -2324,56 +2202,8 @@ def prepare(args, worker):
             question_assignments.setdefault(identity, []).append(
                 result["assignment_id"]
             )
-    private = Path(args.store) / ("source-control-" + context.digest(str(output)))
-    private.mkdir(parents=True)
-    next_claim = native(
-        [
-            "state",
-            "claim",
-            "--store",
-            args.store,
-            "--stream",
-            args.stream,
-            "--inventory",
-            augmented,
-            "--source-root",
-            root,
-            "--expected-generation",
-            claim["generation"],
-            "--attempt-id",
-            "source-" + context.digest(str(output))[:24],
-            "--operation-key",
-            "source-claim:" + context.digest(str(output)),
-            *(["--retry", "true"] if continuation else []),
-        ]
-    )
-    worker.write(private / "claim.json", next_claim)
-    # Publish only a private-receipt pointer, so the host can end our derived
-    # generation if subsequent plan/publication fails. Never export the owner.
-    worker.write(
-        stage / "handoff.json",
-        {
-            "parent_work_package_id": package["package_id"],
-            "effective_args": {
-                "inventory": str(augmented),
-                "claim": str(private / "claim.json"),
-            },
-        },
-    )
-    effective = [
-        "--store",
-        args.store,
-        "--stream",
-        args.stream,
-        "--inventory",
-        augmented,
-        "--source-root",
-        root,
-        "--generation",
-        next_claim["result"]["generation"],
-        "--owner",
-        next_claim["result"]["owner"],
-    ]
+    private, effective = claim_source_handoff(args, stage, root, augmented, claim, package,
+        continuation=continuation, native=native, worker=worker)
     final_runtime = runtime
     if question_routing:
         # Only the expert's security decisions enter native finalization. The
@@ -2399,50 +2229,8 @@ def prepare(args, worker):
     )
     # Preserve the exact runtime allowance/provider; no implicit reset of model budgets.
     draft["runtime"] = final_runtime
-    draft.setdefault("deferred_review_ids", {})
-    draft.setdefault("excluded_review_ids", {})
-    failed_ids = {
-        rid
-        for result in results
-        if result["status"] != "complete"
-        for rid in result["review_ids"]
-    }
-    eligible = (set(ids) - failed_ids) | {
-        rid
-        for rid, p in priorities.items()
-        if p == "value" or payload["policy"] == "comprehensive"
-    }
-    draft["selected_review_ids"] = sorted(eligible)
-    for rid in eligible:
-        draft["deferred_review_ids"].pop(rid, None)
-        draft["excluded_review_ids"].pop(rid, None)
-    for rid in entries:
-        if rid not in eligible and rid not in draft["excluded_review_ids"]:
-            draft["deferred_review_ids"].setdefault(
-                rid,
-                payload.get("deferred_review_ids", {}).get(
-                    rid,
-                    "Outside the requested native selection; source coverage is recorded separately.",
-                ),
-            )
-    for rid, reason in excluded_ids.items():
-        draft["excluded_review_ids"].pop(rid, None)
-        draft["deferred_review_ids"][rid] = reason
-    for rid in priorities:
-        if rid not in eligible:
-            draft["deferred_review_ids"][
-                rid
-            ] = "Source-discovered question retained for Comprehensive review."
-    for rid in failed_ids:
-        draft["deferred_review_ids"][
-            rid
-        ] = "Source assignment did not complete; no automatic replacement model call."
-    membership_changes = reconcile_completion_plan(draft,
-        [entry["review_id"] for entry in worker.read(augmented / "inventory.json")["entries"]])
-    if payload["policy"] == "comprehensive":
-        # Keep all admitted obligations, including unanswered/refilled IDs.
-        draft["selected_review_ids"] = sorted(set(draft["selected_review_ids"]) | set(draft["deferred_review_ids"]))
-        draft["deferred_review_ids"] = {}
+    current_ids = [entry["review_id"] for entry in worker.read(augmented / "inventory.json")["entries"]]
+    membership_changes = select_handoff_reviews(draft, payload, ids, results, priorities, entries, excluded_ids, current_ids)
     worker.write(stage / "membership-changes.json", membership_changes)
     worker.write(private / "plan.json", draft)
     native(

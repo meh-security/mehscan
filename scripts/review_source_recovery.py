@@ -295,3 +295,147 @@ def receipts(stage, worker):
                     row["work_item_id"] = case_id
                 rows.append(row)
     return rows
+
+
+def validate_reuse_alias(previous, assignment, original):
+    if (original is None or original[0] != assignment or
+        Path(previous["reuse"]["prior_result"]).resolve() != original[2].resolve() or
+        previous["reuse"]["prior_plan_id"] != original[3] or
+        any(previous.get(key) != original[1].get(key) for key in
+            ("assignment_id", "draft", "proofs", "proposals", "inspected", "facts", "followups", "claim_contexts", "claim_context_errors", "proposal_followups", "proposal_contexts"))):
+        raise ValueError("prior reused source result differs from its supplied original")
+
+
+def reused_source_result(assignment, previous, plan):
+    """Reconstruct and validate the completed result's source-backed envelope."""
+    if previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
+        raise ValueError("only completed source assignments with known usage are reusable")
+    if previous.get("assignment_id") != assignment["id"]:
+        raise ValueError("reused source assignment identity changed")
+    draft = previous["draft"]
+    expected = {(w["path"], w["start_line"], w["end_line"]) for w in assignment["windows"]}
+    coverage = [(w["path"], w["start_line"], w["end_line"]) for w in draft["coverage"]]
+    ids = [row["review_id"] for row in draft["results"]]
+    if len(coverage) != len(set(coverage)) or set(coverage) != expected or len(ids) != len(set(ids)) or set(ids) != set(assignment["review_ids"]):
+        raise ValueError("reused source coverage or assessment membership changed")
+    visible = [*assignment["windows"], *previous["inspected"]]
+    def citations(assessment):
+        result = []
+        for cite in assessment.get("evidence", []):
+            lines = {w["start_line"] + i: line for w in visible if w["path"] == cite["path"]
+                     for i, line in enumerate(w["text"].split("\n"))}
+            first, last = cite["start_line"], cite["end_line"]
+            if not 1 <= first <= last or last - first >= 400 or any(n not in lines for n in range(first, last + 1)):
+                raise ValueError("reused assessment cites unseen source")
+            result.append({**{k: cite[k] for k in ("path", "start_line", "end_line")},
+                           "quote": "\n".join(lines[n] for n in range(first, last + 1))})
+        return result
+    proofs = [c for row in draft["results"] for c in citations(row)]
+    proposals = []
+    for proposal in draft["proposals"]:
+        proofs.extend(citations(proposal["assessment"]))
+        proposals.append({k: v for k, v in proposal.items() if k != "assessment"} | {
+            "assignment_id": assignment["id"],
+            "anchor": citations({"evidence": [proposal["anchor"]]})[0],
+            "evidence": citations({"evidence": proposal["evidence"]}),
+        })
+    if proofs != previous["proofs"] or proposals != previous["proposals"]:
+        raise ValueError("reused source proof or proposal differs from completed draft")
+    return {"plan": plan, "inspected": previous["inspected"], "proposals": proposals,
+            "assessment_evidence": proofs}
+
+
+def load_reusable_assignments(reuse_paths, root, output, plan, payload, worker):
+    runtime = payload["runtime"]
+    reuse_jobs = {}
+    stale_reuse_jobs = set()
+    partial_windows = []
+    for reuse_path in reuse_paths:
+        prior = worker.outside(reuse_path, root)
+        if prior.resolve() == output.resolve():
+            raise ValueError("source reuse requires a separate prior attempt")
+        prior_stage = prior / "source-review"
+        prior_plan = worker.read(prior_stage / "plan.json")
+        for key in ("source_fingerprint", "inventory_fingerprint"):
+            if prior_plan[key] != plan[key]:
+                raise ValueError("prior source plan binding differs from current plan")
+        prior_assignments = {a["id"]: a for a in prior_plan["assignments"]}
+        for directory in (prior_stage / "jobs").iterdir():
+            if not directory.is_dir():
+                continue
+            old = prior_assignments.get(directory.name)
+            if old is None:
+                raise ValueError("prior source job is absent from its plan")
+            result_path = directory / "result.json"
+            previous = worker.read(result_path) if result_path.is_file() else None
+            if previous is None or previous.get("status") != "complete" or previous.get("unknown_provider_calls") != 0:
+                partial_windows.extend(old["windows"])
+                continue
+            if previous.get("reuse"):
+                if directory.name in stale_reuse_jobs:
+                    continue
+                original = reuse_jobs.get(directory.name)
+                validate_reuse_alias(previous, old, original)
+                continue
+            frame = worker.read(directory / "0-input.json")
+            prior_work = worker.read(Path(frame["work_package"]))["payload"]
+            prior_runtime = prior_work["runtime"]
+            prior_context = worker.read(directory / "context.json")
+            prior_windows = [{key: window[key] for key in ("path", "start_line", "end_line", "source_sha256", "text")}
+                             for window in prior_context["primary"]["windows"]]
+            if (prior_work["policy"] != payload["policy"] or
+                any(prior_runtime.get(key) != runtime.get(key) for key in ("provider", "policy", "worker_protocol", "limits")) or
+                frame.get("review_ids") != old["review_ids"] or prior_context["work"]["policy"] != prior_work["policy"] or
+                prior_context["work"]["runtime"] != prior_runtime or prior_context["work"]["review_ids"] != old["review_ids"] or
+                prior_context.get("source_assignment_id") != old["id"] or prior_windows != old["windows"]):
+                raise ValueError("prior source reviewer policy, provider or membership differs")
+            assignment_paths = [window["path"] for window in old["windows"]]
+            previous_knowledge = context.compact_work(prior_work, old["review_ids"],
+                source_paths=assignment_paths).get("knowledge", [])
+            current_knowledge = context.compact_work(payload, old["review_ids"],
+                source_paths=assignment_paths).get("knowledge", [])
+            if prior_context["work"].get("knowledge", []) != previous_knowledge:
+                raise ValueError("prior source reviewer knowledge differs from its work package")
+            if previous_knowledge != current_knowledge:
+                stale_reuse_jobs.add(directory.name)
+                continue
+            if directory.name in reuse_jobs:
+                raise ValueError("duplicate independent completed source assignment")
+            reuse_jobs[directory.name] = (old, previous, result_path, prior_plan["plan_id"])
+    return reuse_jobs, partial_windows
+
+
+def prepare_resolution(stage, source_resume, request, case_store, case_by_assignment, worker):
+    if (not isinstance(request, dict) or set(request) != {"schema_version", "checks"}
+            or request["schema_version"] != "mehscanWorkResolution/v1"
+            or not isinstance(request["checks"], list) or not 1 <= len(request["checks"]) <= 2000):
+        raise ValueError("invalid scoped resolution request")
+    saved_plan = worker.read(stage / "resolution-plan.json") if (stage / "resolution-plan.json").is_file() else None
+    if saved_plan and saved_plan["request"] != request:
+        previous_results = Path(source_resume) / "source-review/resolution-results.json"
+        done = worker.read(previous_results) if previous_results.is_file() else []
+        if len(done) != len(saved_plan["cases"]) or any(r["status"] != "complete" for r in done):
+            raise ValueError("interrupted resolution requires its original exact request")
+        saved_plan = None
+    selections = {}
+    projected = {r["case_id"]:r for r in case_store.results()}
+    for spec in request["checks"]:
+        if (not isinstance(spec, dict) or set(spec) != {"case_id", "check_ids"}
+                or not isinstance(spec["case_id"], str) or spec["case_id"] in selections
+                or spec["case_id"] not in case_by_assignment):
+            raise ValueError("resolution requires distinct current case identities")
+        identity = spec["case_id"]
+        if saved_plan:
+            selections[identity] = saved_plan["cases"][identity]
+        else:
+            prior = projected[identity]
+            selections[identity] = {"ticket":case_store.resolution_ticket(identity, spec["check_ids"]),
+                "previous_checks":prior.get("draft", {}).get("work_checks", []),
+                "reconsideration":prior.get("reconsideration", {}),
+                "native_reconsideration":prior.get("native_reconsideration", {})}
+    native_parent = (saved_plan or {}).get("native_parent")
+    if not native_parent:
+        inherited = Path(source_resume) / "source-review/resolution-plan.json"
+        native_parent = worker.read(inherited).get("native_parent") if inherited.is_file() else str(source_resume)
+    worker.write(stage / "resolution-plan.json", {"request":request, "cases":selections, "native_parent":native_parent})
+    return selections
