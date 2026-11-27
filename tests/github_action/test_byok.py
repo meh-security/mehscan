@@ -287,6 +287,35 @@ else:
         self.assertFalse((directory / "usage.json").exists())
         self.assertFalse((directory / "review/source-review/jobs").exists())
         self.assertTrue(Path(result["source_selection"]).is_file())
+        self.assertFalse((Path(plan["review_control"]) / "close.json").exists())
+
+    def test_value_consumes_a_trusted_selection_for_the_same_pinned_source(self):
+        os.environ["MEHSCAN_REVIEW_MODE"] = "value"
+        directory, _, _ = self.ready()
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        options = json.loads(Path(result["source_selection"]).read_text())
+        selected = self.workspace / "trusted" / "selection.json"
+        selected.write_text(json.dumps({
+            "source_plan_id": options["source_plan_id"],
+            "source_fingerprint": options["source_fingerprint"],
+            "assignment_ids": [], "assignments": [],
+        }))
+        os.environ["MEHSCAN_SOURCE_SELECTION"] = str(selected)
+        directory, plan, _ = self.ready()
+        selected.unlink()  # Handoff uses the private copy from preparation.
+        result = adapter.run_model(directory / "plan.json", self.delivery.get, self.execute)
+        self.assertEqual(result["status"], "reviewed", result)
+        output = (self.workspace / "outputs").read_text().splitlines()
+        [receipt] = [Path(line.removeprefix("close-receipt=")) for line in output if line.startswith("close-receipt=")]
+        self.assertEqual(receipt.parent, Path(plan["review_control"]))
+        self.assertFalse(receipt.is_relative_to(directory))
+        close = json.loads(receipt.read_text())
+        self.assertEqual(close["result"]["generation"], result["coordination"]["generation"])
+        self.assertEqual(close["result"]["status"], "finished")
+        self.assertEqual(close["memory"]["reason"], "temporary_mode")
+        rendered = json.loads(self.execute([plan["scanner"], "report", "--close-receipt", str(receipt), "--format", "json"]))
+        self.assertEqual(rendered, json.loads((directory / "review/findings.json").read_text()))
+        self.assertTrue(rendered["decision_records"])
 
     def test_pending_verdict_keeps_success_separate_from_security_resolution(self):
         self.auth.write_text('{"fixture":"not-a-real-key","pending":true}')
@@ -374,7 +403,7 @@ else:
     def test_export_failure_is_incomplete_without_a_ready_manifest(self):
         directory,plan,record=self.ready()
         def execute(argv,**kwargs):
-            if "--format" in argv and argv[argv.index("--format")+1]=="sarif":
+            if "--format" in argv and argv[argv.index("--format")+1] in ("json-sarif", "sarif"):
                 raise RuntimeError("synthetic renderer failure")
             return self.execute(argv,**kwargs)
         result=adapter.run_model(directory / "plan.json",self.delivery.get,execute)

@@ -123,7 +123,7 @@ to 400 lines and 64 KiB per range. Queryable-only source is not examined coverag
 
 `source-review.json` records examined, context-limited and deferred ranges, failed
 assignments and source-stage call counts. Canonical report scope includes a coverage
-summary. Empty results do not certify a file safe. A failed assignment remains
+summary. For named work plans, the JSON and Markdown findings reports also carry the question, check status, evidence lines, and outstanding facts from the source handoff. Later audits and corrections have their own case ledgers. Empty results do not certify a file safe. A failed assignment remains
 incomplete while successful siblings are retained; it does not trigger a replacement
 native model call. Source-stage usage contributes to total input, cache and output
 accounting. For work plans, `--resume-from` with the unchanged original invocation
@@ -369,15 +369,38 @@ optional Fast/Full audits use their existing entry points.
 
 ### Continue Value into Comprehensive
 
-Use `--continue-comprehensive VALUE_ATTEMPT` on the ordinary all-phase worker
-invocation with a new `--output` and the expanded `--work-plan`. Use the
-published repository Value attempt as the checkpoint. Keep its effective
-inventory, source, review stream, memory store, reviewer and runtime. Bind the
-Comprehensive native plan on that inventory and export its current `state work`
-package. Replace an active native plan with its exact parent plan ID. If the
-Value generation is closed, claim a new generation on that same inventory.
-You can also select a saved named correction or a saved native audit linked to
-that Value attempt as the checkpoint.
+For a closed project Value review with a named work plan, use the close receipt
+to list the assignments in Comprehensive scope on the effective inventory.
+
+```sh
+mehscan investigate source-review-plan --close-receipt close.json > assignments.json
+```
+
+Use the returned plan ID, source fingerprint and assignment IDs to prepare
+`expanded.json`. When ready to authorize the broader scope, claim the next
+generation and run the same reviewer with the expanded manifest. Keep the
+original skill, provider settings and supporting-source option.
+
+```sh
+(umask 077 && mehscan state claim --close-receipt close.json --policy comprehensive \
+  --attempt-id broader-1 --operation-key claim-broader-1 > broader-claim.json)
+python scripts/review_worker.py --scanner "$MEHSCAN" --close-receipt close.json \
+  --claim broader-claim.json --work-plan expanded.json \
+  --reviewer-command "$REVIEWER_COMMAND" --reviewer-label "$REVIEWER_LABEL" \
+  --output broader-1 > broader-result.json
+```
+
+The journal checks the close against the current generation and pins the broader
+native plan in the same transaction. Retry the same claim with the same operation
+key. To recover an interrupted worker, repeat the invocation with a new output
+directory and `--resume-from` pointing to its latest attempt. Use the returned
+`project_run` and `private_claim` to close the Comprehensive review.
+
+For an active Value generation, use `--continue-comprehensive VALUE_ATTEMPT`
+with its effective inventory, stream, memory store and reviewer. Bind the
+Comprehensive native plan with the exact parent plan ID and supply its current
+`state work` package. The explicit attempt form also accepts a saved named
+correction or native audit linked to the published Value attempt.
 
 Bind the expanded manifest to the current Comprehensive source plan. Keep the
 original case IDs, questions, Verify membership, actors and conditions. Add the
@@ -590,7 +613,7 @@ scope/budget; they do not create authorization for another full scan.
 
 Reuse the completed first pass instead of paying for it again. Keep its source,
 inventory, runtime, provider binding and original attempt directory unchanged.
-The generation must still be owned and active. Refresh `state work` and save its
+For a closed project review, use its receipt to [start a Fast or Full audit in a fresh generation](standalone-source.md#audit-a-closed-project-review). For an active generation you still own, refresh `state work` and save its
 JSON output as `RUN/work-second-pass.json`:
 
 ```text
@@ -712,6 +735,8 @@ use the effective inventory of the generation being closed:
 ```text
 mehscan state end --store STATE --stream STREAM --generation N --owner OWNER --status finished --operation-key END_ID --source-root ROOT --inventory RUN/inventory
 ```
+
+If the worker used a prepared project, its output supplies the attempt reference and private claim path. Use those to close the effective generation and save the receipt for reporting. [Close and report a project review](standalone-source.md#close-and-report-a-project-review)
 
 The result reports `memory.status=retained` after persisting a finished or
 incomplete attempt. If applicable knowledge changes before a finished attempt
@@ -984,20 +1009,29 @@ history. Native reuse requires a validated native admission.
 
 ## Prepare review work
 
-Keep source, trusted tools and review artifacts in separate directories. Create
-a pinned Changed inventory with a stable repository namespace, claim a generation
-and save its receipt privately. Create a completion template:
+Keep trusted tools, private claims and review artifacts outside the source. Keep private claims outside the shared artifacts.
+Start with the reference from `project prepare`. To use an existing pinned
+inventory, bind it once at its prepared scope. The following example claims a
+new stream. Create PRIVATE outside the source and restrict it to the operator.
 
-```text
-mehscan state plan-template --inventory RUN/inventory --source-root ROOT --policy value --selection policy --skill-root TRUSTED/mehscan-security
+```sh
+mehscan project bind --source-root ROOT --inventory RUN/inventory --stream pr:24
+PROJECT=RUN/inventory/project-run.json
+(umask 077 && mehscan state claim --project-run "$PROJECT" --attempt-id run-1 \
+  --expected-generation 0 --operation-key claim-1 > PRIVATE/claim.json)
+mehscan state plan-template --project-run "$PROJECT" --policy value --selection policy \
+  --skill-root TRUSTED/mehscan-security > RUN/plan.json
 ```
+
+For an existing stream, inspect `state status --project-run "$PROJECT"` and use
+its generation for the claim. Only a currently owned claim authorizes work.
 
 The AI worker requires this native runtime-bound plan. The native contract records
 the exact executable, trusted skill-package digest, worker protocol and effective
 profile limits. Keep the skill outside ROOT. Manual CLI plans without a runtime
 remain supported, but the worker rejects them before model execution.
 
-Save the JSON as `RUN/plan.json`. Comprehensive selects every eligible native ID
+Comprehensive selects every eligible native ID
 and retains native conservative exclusions in `excluded_review_ids`. Value allows
 selection, but every other native ID must have an explicit reason in
 `deferred_review_ids`. Exclusions and deferrals are not dismissals; see
@@ -1061,11 +1095,11 @@ These Python excerpts also reach `review-card` and `review-sweep`, the compact
 views used by the ordinary worker, with their source-only qualification retained.
 
 ```text
-mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
-mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security
+mehscan state plan --project-run "$PROJECT" --claim PRIVATE/claim.json --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
+mehscan state work --project-run "$PROJECT" --claim PRIVATE/claim.json --skill-root TRUSTED/mehscan-security > RUN/work.json
 ```
 
-Save the work JSON as `RUN/work.json`. Create bundles for exactly its `review_ids`
+Pass `--project-run "$PROJECT" --claim PRIVATE/claim.json` to the worker with the authorized plan, reviewer and output directory. It derives work and bundles for the selected IDs. To pin an exported package, also supply `--work-package RUN/work.json`. After admission, [close from the worker result](standalone-source.md#close-and-report-a-project-review). Manual clients preparing requests themselves create bundles for exactly the work package’s `review_ids`
 using `review-bundles --inventory ... --review-ids ... --output RUN/bundles`.
 No bundle run is needed when that array is empty. `--review-ids ""` explicitly
 exports source-only work. The exported package contains no ownership token.
@@ -1103,6 +1137,7 @@ outside ROOT. Adapters apply this contract without resending operator guides.
 
 Tasks identify `kind`, `source_root`, `scanner`, `inventory`, `work_package` and
 `journal_dir`; a native task additionally includes `bundle` and `review_ids`.
+During Full verification from a close receipt, the adapter gets scoped work in the evidence packet. The controller withholds the raw `work_package` path because it contains the earlier decisions.
 A change-pass task returns only `{ "change_pass": [...] }`. A native task returns
 a brief or full response draft supported by `review-bundle-finalize`.
 
@@ -1226,6 +1261,14 @@ A recovery chain cannot fork from an already continued attempt; follow its
 `continued-to.json` to the latest attempt. One OS lock fences controllers for the
 same local state stream and releases when the controller exits.
 
+If a source review reaches native admission and its retry is also interrupted,
+use the same invocation with a new output directory and pass the **latest** attempt
+to `--resume-from`. Keep the earlier attempt directories in place. The latest
+checkpoint records where the source stage finished and the SHA-256 digest of its
+summary. The worker verifies that summary, uses its effective claim and work
+package, and replays native writes from the latest attempt. The original source
+budget and work ledger still account for completed checks.
+
 Recovery also covers native plan, decision and pending-question writes. Before
 writing, the controller saves a typed batch under `native-writes/`, with the
 original operation keys and input hashes. A retry checks native source/runtime
@@ -1307,9 +1350,12 @@ the operator must give the reviewer process only appropriate credentials and
 filesystem access. Reviewer labels are recorded assertions, not authentication.
 
 ```text
-python scripts/review_worker.py --scanner TRUSTED/mehscan --source-root ROOT --inventory RUN/inventory --store STATE --stream pr:24 --claim PRIVATE/claim.json --work-package RUN/work.json --reviewer-command TRUSTED/reviewer-command.json --reviewer-label configured-reviewer --run RUN/bundles --output RUN/attempt-1
+python scripts/review_worker.py --scanner TRUSTED/mehscan --project-run RUN/inventory/project-run.json --claim PRIVATE/claim.json --work-package RUN/work.json --reviewer-command TRUSTED/reviewer-command.json --reviewer-label configured-reviewer --run RUN/bundles --work-plan RUN/work-plan.json --output RUN/attempt-1 > RUN/worker-result.json
 ```
 
+Use this invocation after preparing the ranked work plan. For Value’s zero-call
+selection checkpoint, omit `--work-plan` and choose a new output directory for
+the funded review. Omit `--run` when the prepared native queue is empty.
 Use Python 3.11+. All control/artifact paths stay outside ROOT. The output
 directory must be new. `--phase change-pass` or `--phase native` permits staged
 work. Successful native finalization and report

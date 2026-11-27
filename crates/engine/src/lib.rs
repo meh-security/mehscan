@@ -99,10 +99,10 @@ pub fn scan_path_profiled_with_options(
 ) -> Result<(ScanResult, ScanProfile), EngineError> {
     let total_started = std::time::Instant::now();
     let rules_started = std::time::Instant::now();
-    let rules = rules::load_builtin_rules()?;
-    let relations = rules::load_builtin_relations(&rules)?;
+    let catalog = rules::builtin_catalog()?;
     let rule_loading_microseconds = rules_started.elapsed().as_micros();
-    let (result, mut profile) = code::scan_profiled(path.as_ref(), &rules, &relations, options)?;
+    let (result, mut profile) =
+        code::scan_profiled(path.as_ref(), &catalog.rules, &catalog.relations, options)?;
     profile.rule_loading_microseconds = rule_loading_microseconds;
     profile.total_microseconds = total_started.elapsed().as_micros();
     Ok((result, profile))

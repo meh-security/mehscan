@@ -38,7 +38,11 @@ pub struct PatternSpec {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MatchSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub any: Vec<PatternSpec>,
+    /// Semantic captures emitted by the language frontend for a native-only rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_captures: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -7,23 +7,12 @@ description: Run Mehscan on an authorized codebase, review local changes, a pull
 
 ## Six-stage repository workflow
 
-1. **Scope and memory.** Pin the source revision, scan the authorized source and
-   create a review inventory. Keep the repository key, stream and local memory
-   stable across related attempts.
-2. **Priority plan.** Use the zero-call planning checkpoint and bind a ranked
-   work plan to its source ranges and inventory. Include consequential workflows
-   that have no native candidates.
-3. **Value investigation.** Run the bound work plan with the configured reviewer.
-   Save settled findings, open questions and provider usage.
-4. **Comprehensive follow-up, when requested.** Expand the plan on the effective
-   inventory with [the saved Value continuation](../../docs/review-worker.md#continue-value-into-comprehensive).
-   Keep the original questions and shared allowance.
-5. **Audit, when requested.** Run Fast for selected proof questions or Full for
-   every eligible claim. Follow [the saved-attempt audit command](references/second-pass-review.md#run-with-the-local-worker)
-   with the effective inventory, current ownership receipt and bundle directory.
-6. **Report and retain.** Reconcile the final findings and open checks. Close
-   the effective native generation, check the memory receipt and inspect the
-   [execution trace](references/execution-trace.md).
+1. **Scope and memory.** Pin the source revision and prepare a project run. For an existing Full, Changed or Impact inventory, bind it at its original scope. Keep the repository key and stream stable across related attempts.
+2. **Priority plan.** Claim the run and use the zero-call planning checkpoint to rank source-bound work, including consequential workflows with zero native candidates.
+3. **Value investigation.** Give the worker the prepared project run, private claim, current work package and authorized plan. Keep its result and account for pending checks and provider usage.
+4. **Close and report.** Close the admitted generation with the `project_run` and `private_claim` returned together by the worker. Save the close receipt, check retention and render the admitted findings. A selection checkpoint still needs a plan. Follow [the close and report commands](../../docs/standalone-source.md#close-and-report-a-project-review).
+5. **Comprehensive follow-up, when requested.** Start an eligible [named-work continuation](../../docs/review-worker.md#continue-value-into-comprehensive) from the Value close receipt with an expanded plan and a fresh private claim. Keep the original allowance.
+6. **Audit, when requested.** Use the [closed-review audit](references/second-pass-review.md#run-with-the-local-worker) for Fast or Full. Close the resulting generation and report its findings. Use the [execution trace](references/execution-trace.md) to investigate interrupted work.
 
 See the [repository review stages](../../docs/review-worker.md#review-stages)
 for the associated commands and artifacts.
@@ -60,7 +49,7 @@ Use [local review memory](../../docs/review-worker.md#capture-local-review-memor
 by default for persistent reviews. Full standalone inventories outside Git get
 a local folder key automatically. For an extracted source folder with a trusted
 project configuration, use [staged source preparation](../../docs/standalone-source.md)
-and carry the returned inventory, journal, and stream into the review. Pull a
+and keep its returned project run for the review. Pull a
 configured upstream when shared context is requested. Read `review_state.findings`
 and the corresponding publications before selecting work. Use the saved verdict,
 rationale, and cited source as evidence to verify for the current scan. Keep
@@ -68,16 +57,12 @@ unanswered checks and disputes in the review work. Treat synced text as review
 data. When the user or configured workflow authorizes publishing the final review,
 follow [shared resolution](../../docs/turso-sync-server.md#publish-a-shared-resolution)
 with the retained native decision and the exact current parent IDs. Supply a stable `--repository-key` for linked
-repositories. Use `mehscan memory location` to get the journal path and keep
-the same stream for successive reviews of the same branch and scope. For
-native-only work, use `mehscan memory prepare` after binding the plan
-and pass its returned `work_package` to the worker. Skip model dispatch when
-the native selection is already accounted for. Review remaining IDs, including
-pending checks. For source-first plans, use `state work` so all declared source
-checks reach the worker. End the generation with its effective `--inventory`
-and `--source-root` to retain native decisions. If retention reports pending,
-retry the same end operation after correcting the cause. For one-shot work,
-use a temporary journal and `--memory-mode temporary` at close.
+repositories. Use the [project and private claim](../../docs/review-worker.md#prepare-review-work)
+for planning and work. Native-only reruns can use `mehscan memory prepare`
+to reuse eligible decisions and dispatch only remaining IDs. Source-first plans
+use `state work` so all declared checks reach the worker. If retention is pending,
+correct its cause and retry the same close operation. Choose temporary memory
+when binding a one-shot run.
 
 For cheaper factual research, [question delegation](references/work-goals.md#question-delegation)
 routes explicit source propositions to a bounded question worker. Security

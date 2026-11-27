@@ -36,11 +36,13 @@ Use the [Mehscan security skill](skills/mehscan-security/SKILL.md) with your cod
 
 The workflow is **scope and recall → plan → investigate → follow up → audit → report and retain**. Follow-up and audit are optional. [Review stages](docs/review-worker.md#review-stages)
 
-- **Broaden coverage** with Comprehensive up front or use `--continue-comprehensive` from a saved repository Value attempt on the same pinned source. The continuation shares the original allowance and reuses eligible work. [Continue into Comprehensive](docs/review-worker.md#continue-value-into-comprehensive)
+- **Broaden coverage** with Comprehensive up front or extend a named repository Value review from its close receipt on the same pinned source. The continuation shares the original allowance and reuses eligible work. [Continue into Comprehensive](docs/review-worker.md#continue-value-into-comprehensive)
 - **Resolve a named check** when the deciding evidence is available. [Saved checks](docs/review-worker.md#resolve-named-source-checks)
 - **Audit an existing result** with Fast for concrete proof questions or Full for an independent reassessment of the selected results. [Fast and Full](docs/review-worker.md#optional-second-pass)
 
 For scripted review, see the [local worker](docs/review-worker.md) and [reviewer setup](docs/codex-reviewer.md).
+
+For a configured project, `mehscan project prepare` returns a `project_run` file. The journal and worker accept that reference. After admission, use the reference returned by the worker with `mehscan report --project-run FILE`. [Prepare and continue a project review](docs/standalone-source.md)
 
 ## Local review memory
 

@@ -1,24 +1,33 @@
 """Opt-in domain controller against the real native CLI; no inference."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
+from unittest.mock import patch
 
 import test_source_review as fixtures
 
 
 class DomainReview(unittest.TestCase):
-    def prepare(self):
-        f = fixtures.SourceReview("test_value_without_selection_checkpoints_without_inference")
-        f.setUp()
+    def prepare(self, *, project_run=False):
+        f = fixtures.SourceReview()
         self.addCleanup(f.doCleanups)
+        f.prepare_source_tree()
         for directory, text in (("feature", "function run(request) {\n eval(request.query.code);\n eval(request.body.code);\n}\n"),
                 ("other", "function run(request) {\n eval(request.query.code);\n eval(request.body.code);\n}\n")):
             (f.root / directory).mkdir()
             (f.root / directory / "app.js").write_text(text)
         f.inventory = f.base / "domain-inventory"
-        f.native("investigate", "review-inventory", f.root, "--repository-key", "acceptance:domain", "--output", f.inventory)
-        command = f.prepare_worker(proposal=False)
+        project = None
+        if project_run:
+            config = f.base / "project-config.json"
+            config.write_text(json.dumps({"repository_key":"acceptance:domain", "stream":"source"}))
+            with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(f.base / "memory-home")}):
+                project = f.native("project", "prepare", f.root, "--config", config, "--output", f.inventory)
+        else:
+            f.native("investigate", "review-inventory", f.root, "--repository-key", "acceptance:domain", "--output", f.inventory)
+        command = f.prepare_worker(proposal=False, project=project)
         del command[command.index("--source-selection"):]
         source_selection = json.loads((f.base / "selection.json").read_text())
         rows = {row["owner_path"]: row for row in source_selection["assignments"]}

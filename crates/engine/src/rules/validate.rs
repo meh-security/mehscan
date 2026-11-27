@@ -22,9 +22,21 @@ pub(crate) fn validate_rules(rules: &[Rule]) -> Result<(), EngineError> {
         if rule.version == 0 {
             return Err(EngineError(format!("rule {} has version zero", rule.id)));
         }
-        if rule.match_spec.any.is_empty() {
+        if rule.match_spec.any.is_empty() == rule.match_spec.native_captures.is_empty() {
             return Err(EngineError(format!(
-                "rule {} has no structural patterns",
+                "rule {} requires exactly one of structural patterns or native captures",
+                rule.id
+            )));
+        }
+        let mut roles = BTreeSet::new();
+        if rule
+            .match_spec
+            .native_captures
+            .iter()
+            .any(|role| role.trim().is_empty() || !roles.insert(role))
+        {
+            return Err(EngineError(format!(
+                "rule {} has an empty or duplicate native capture",
                 rule.id
             )));
         }

@@ -157,3 +157,64 @@ def validate(manifest, plan, native_ids, *, validate_selection):
             "source_fingerprint": plan["source_fingerprint"], "domains": normalized_domains,
             "cases": cases, "lead_accounting": accounting,
             "coverage_plan": manifest.get("coverage_plan", {})}
+
+
+def write_domain_metrics(stage, domain_registry, domain_states, domain_timings, results, *,
+                         session_mode, question_routing, case_store, write):
+    by_case = {result["case_id"]: result for result in results if "case_id" in result}
+    for item in domain_registry["lead_accounting"].values():
+        case_result = by_case.get(item["case_id"])
+        if case_result is None:
+            continue
+        if case_result["status"] != "complete":
+            item.update(status="deferred", case_status=case_result["status"])
+        elif item["role"] == "verify":
+            item.update(status="assessed", reviewed=True, case_status="complete")
+        elif item["role"] == "cover":
+            item.update(status="incorporated", case_status="complete")
+        else:
+            item.update(status="available", case_status="complete")
+    write(stage / "lead-accounting.json", domain_registry["lead_accounting"])
+    metrics = []
+    for path in (stage / "jobs").glob("*/provider-metrics-*.jsonl"):
+        metrics.extend(json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip())
+    token_fields = ("input_tokens", "cached_input_tokens", "output_tokens")
+
+    def usage(rows):
+        return {key: sum(row.get("usage", {}).get(key, 0) or 0 for row in rows) for key in token_fields}
+
+    domain_usage = []
+    audit_cases = case_store.snapshot()["cases"] if case_store else {}
+    for domain in domain_registry["domains"]:
+        conversations = {case["conversation_id"] for case in domain_states[domain["id"]]["cases"]}
+        if question_routing:
+            conversations.update(note["conversation_id"] for case in domain["cases"]
+                for note in by_case.get(case["id"], {}).get("question_work", []) if note.get("conversation_id"))
+            conversations.update(note["conversation_id"] for case in domain["cases"]
+                for note in audit_cases[case["id"]].get("factual_audits", {}).values()
+                if note.get("conversation_id"))
+        rows = [row for row in metrics if row.get("conversation_id") in conversations]
+        domain_usage.append({"id": domain["id"], "wall_seconds": domain_timings.get(domain["id"], by_case.get(domain["id"], {}).get("seconds", 0)),
+            "calls": len(rows), "cold_turns": sum(not row.get("resumed", False) for row in rows),
+            "warm_case_starts": sum(bool(row.get("resumed") and row.get("domain_case_start")) for row in rows),
+            **usage(rows),
+            "max_turn_input_tokens": max((row.get("usage", {}).get("input_tokens", 0) or 0 for row in rows), default=0),
+            "provider_elapsed_ms": sum(row.get("elapsed_ms", 0) or 0 for row in rows)})
+    write(stage / "domain-metrics.json", {
+        "session_mode": session_mode,
+        "domains": len(domain_registry["domains"]), "cases": len(domain_registry["cases"]),
+        "completed_cases": sum(result["status"] == "complete" for result in by_case.values()),
+        "provider_calls": sum(result["calls"] for result in by_case.values()),
+        "unknown_provider_calls": sum(result["unknown_provider_calls"] for result in by_case.values()),
+        "usage_complete": (len(metrics) == sum(result["calls"] for result in by_case.values())
+            and not any(result["unknown_provider_calls"] for result in by_case.values())
+            and all(not set(row.get("unknown_delta_counters", [])).intersection(token_fields)
+                    and all(type(row.get("usage", {}).get(key)) is int for key in token_fields)
+                    for row in metrics)),
+        "cold_turns": sum(not row.get("resumed", False) for row in metrics),
+        "warm_turns": sum(row.get("resumed", False) for row in metrics),
+        **usage(metrics),
+        "cache_write_tokens": (sum(row["usage"]["cache_write_tokens"] for row in metrics)
+            if metrics and all(type(row.get("usage", {}).get("cache_write_tokens")) is int for row in metrics) else None),
+        "per_domain": domain_usage,
+        "note": "Observed provider usage; shared context is not a shared verdict, and missing cache-write usage is unknown."})

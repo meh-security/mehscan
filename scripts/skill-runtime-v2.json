@@ -1,0 +1,9 @@
+{
+  "distribution_only": [
+    "scripts/install-mehscan.ps1",
+    "scripts/install-mehscan.py",
+    "scripts/install-mehscan.sh",
+    "scripts/public-download.ps1",
+    "scripts/release-pins.json"
+  ]
+}

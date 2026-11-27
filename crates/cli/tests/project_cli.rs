@@ -119,17 +119,8 @@ fn linked_source_folders_keep_project_memory_and_compare_an_explicit_baseline() 
     assert!(Path::new(original["memory_store"].as_str().unwrap()).is_file());
     let claimed = ok(fixture
         .command()
-        .args(["state", "claim"])
-        .args([
-            "--store",
-            original["state_store"].as_str().unwrap(),
-            "--stream",
-            "main",
-        ])
-        .arg("--inventory")
-        .arg(&output)
-        .arg("--source-root")
-        .arg(&source)
+        .args(["state", "claim", "--project-run"])
+        .arg(original["project_run"].as_str().unwrap())
         .args([
             "--attempt-id",
             "first",
@@ -220,6 +211,25 @@ fn project_preparation_handles_temporary_memory_and_unavailable_upstream() {
     assert_eq!(prepared["upstream"]["sync"]["status"], "unavailable");
     assert!(!Path::new(prepared["memory_store"].as_str().unwrap()).exists());
     assert!(output.join("inventory.json").is_file());
+
+    // A later adapter must not replace an existing run's journal or stream.
+    let reference = output.join("project-run.json");
+    let original = fs::read(&reference).unwrap();
+    rejected(
+        fixture
+            .command()
+            .args(["project", "bind", "--source-root"])
+            .arg(&source)
+            .arg("--inventory")
+            .arg(&output)
+            .arg("--store")
+            .arg(&fixture.state)
+            .args(["--stream", "another-stream", "--memory-mode", "temporary"])
+            .output()
+            .unwrap(),
+        "could not bind inventory",
+    );
+    assert_eq!(fs::read(reference).unwrap(), original);
 
     fs::create_dir_all(prepared["memory_store"].as_str().unwrap()).unwrap();
     let local = fixture.root.path().join("local-only");

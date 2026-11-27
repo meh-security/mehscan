@@ -7,9 +7,7 @@
   confidence: high
   cwe: [CWE-22]
   match:
-    any:
-      - pattern: $ENTRY.FullName
-        captures: { path: ENTRY }
+    native_captures: [path]
   tags: [archive, zip, entry-path, attacker-controlled]
   ai:
     investigate:

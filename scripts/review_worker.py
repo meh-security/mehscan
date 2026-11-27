@@ -4,11 +4,13 @@ import argparse
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import contextmanager
+from copy import copy
 import hashlib
 import json
 import os
 import re
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -508,6 +510,28 @@ class JobCheckpoint:
         self.state["elapsed_seconds"] = self.prior_elapsed + time.monotonic() - self.started
         write(self.path, self.state)
 
+    def invoke_provider(self, command, output, remaining, frame, provider, budget_path, lease, *, correction_turn):
+        turn = {"conversation_id": frame["conversation_id"], "round": frame["research"]["round"]}
+        self.save(status="running", calls=self.state["calls"] + 1, model_inflight=True,
+                  active_since=time.time(), active_turn=turn)
+        try:
+            response = execute_provider(command, output, review_child_environment(), remaining(), frame,
+                                        provider, budget_path, lease=lease)
+        except CommandFailure as error:
+            if observed_turn(output, turn, provider) is None:
+                raise ProviderFailure(error.returncode, error.stderr) from error
+            self.save(model_inflight=False, active_turn=None, active_since=time.time())
+            correction = reply_validation_feedback(error, frame)
+            if correction is None:
+                raise
+            if (budget_path or not correction_turn or self.state.get("reply_validation_corrections")
+                    or self.deadline <= time.monotonic()):
+                raise ReplyValidationFailure(error.returncode, "local reply validation failed; no correction allowance remains") from error
+            self.save(reply_validation_corrections=1)
+            return None, correction
+        self.save(model_inflight=False, active_turn=None, active_since=time.time())
+        return response, None
+
     def complete(self, draft):
         self.save(status="drafted", draft=draft, draft_digest=context.digest(draft), active_since=None)
         return draft
@@ -523,7 +547,6 @@ class JobCheckpoint:
 
 def copy_review_files(source, destination):
     """Copy flat native artifacts by bytes; filesystem metadata is not evidence."""
-    import shutil
     destination.mkdir()
     for path in source.iterdir():
         if path.is_symlink() or not path.is_file():
@@ -533,7 +556,6 @@ def copy_review_files(source, destination):
 
 def copy_bundle_run(source, destination, responses=None):
     """Copy the canonical run layout without requiring filesystem metadata."""
-    import shutil
     destination.mkdir()
     for filename in ("manifest.json", "input-binding.json"):
         path = source / filename
@@ -543,6 +565,17 @@ def copy_bundle_run(source, destination, responses=None):
             shutil.copyfile(path, destination / filename)
     copy_review_files(source / "requests", destination / "requests")
     copy_review_files(responses if responses is not None else source / "responses", destination / "responses")
+
+
+def write_admission_report(output, root, options, native):
+    """Report the attempt's frozen responses with the journal record's review settings."""
+    command = ["report", "--run", str(output / "run"), "--source-root", str(root),
+               "--reviewer", options["--reviewer"]]
+    if "--allow-partial" in options:
+        command += ["--allow-partial", options["--allow-partial"]]
+    report = native(command)
+    write(output / "findings.json", report)
+    return report
 
 
 def digest_file(path):
@@ -927,6 +960,7 @@ def execute(command, cwd, env, timeout, payload=None, *, output_limit=REVIEWER_O
 
 
 def run(args):
+    args = copy(args)
     assignment = getattr(args, "assignment", None)
     if assignment and args.phase != "native":
         raise ValueError("local assignments require --phase native")
@@ -964,7 +998,11 @@ def run(args):
         if args.phase == "all":
             import review_source
             try:
-                return review_source.run(args, run_locked,sys.modules[__name__])
+                stage = review_source.prepare(args, sys.modules[__name__])
+                if not isinstance(stage, review_source.NativeStage):
+                    return stage
+                result = run_locked(stage.args, source_prepared=stage.summary)
+                return stage.finish(result) if stage.finish else result
             except Exception as error:
                 output=outside(args.output,root,False)
                 # Retain the attempt; handoff failure must not buy a fresh call.
@@ -980,7 +1018,126 @@ def run(args):
         return run_locked(args)
 
 
-def run_locked(args):
+def complete_source_handoff(summary_path, task, job, validate, timeout):
+    prepared = read(summary_path)
+    review_ids = task["review_ids"]
+    assessments = prepared["assessments"]
+    if not set(review_ids).issubset(assessments):
+        raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
+    draft = {"results": [assessments[rid] for rid in review_ids]}
+    validate(task, job, draft, timeout)
+    assignment_ids = {aid for rid in review_ids for aid in prepared["question_assignments"].get(rid, [])}
+    plan = read(Path(summary_path).parent / "plan.json")
+    completed = {}
+    for result in prepared["results"]:
+        if result["status"] == "complete" and result["assignment_id"] in assignment_ids:
+            completed.setdefault(result["assignment_id"], []).append(result)
+    material = {}
+    for assignment in plan["assignments"]:
+        for result in completed.get(assignment["id"], []):
+            windows = ({"result_id": context.digest([plan["plan_id"], window]),
+                "query": {"tool": "source", "review_id": None, "purpose": "Assigned original source",
+                          "arguments": {key: window[key] for key in ("path", "start_line", "end_line")}},
+                "result": {"operation": "prepared_source", "results": window}} for window in assignment["windows"])
+            origin = result["reuse"]["prior_plan_id"] if result.get("reuse") else prepared["plan_id"]
+            for facts, plan_id in ((result["facts"], origin), (windows, prepared["plan_id"])):
+                for fact in facts:
+                    if fact["result_id"] not in material:
+                        material[fact["result_id"]] = {**fact, "origin_package_id": plan_id, "origin_review_id": None,
+                            "origin_kind": "source_assignment", "source_assignment_id": assignment["id"]}
+    notes = {key: [note for note in prepared.get(key, []) if note["review_id"] in review_ids]
+             for key in ("claim_contexts", "claim_context_errors", "followups")}
+    job.save(results=list(material.values()), source_assignment_ids=sorted(assignment_ids), **notes)
+    return job.complete(draft)
+
+
+def restore_native_attempt(recovery, output, recovery_binding, *, second_mode, snapshot_id,
+                           scanner_hash, broker, shared_facts, record):
+    if not recovery:
+        (output / "journals").mkdir()
+        (output / "jobs").mkdir()
+        return False
+    prior = read(recovery / "recovery.json")
+    if prior["binding"] != recovery_binding:
+        raise ValueError("recovery requires the same current source, work, bundles and reviewer configuration")
+    if (recovery / "continued-to.json").exists():
+        raise ValueError("recovery attempt already continued; resume from the latest attempt instead")
+    recovered_change_pass = prior["change_pass_completed"]
+    copy_review_files(recovery / "journals", output / "journals")
+    copy_review_files(recovery / "jobs", output / "jobs")
+    if second_mode != "off" and (recovery / "training-turns").is_dir():
+        (output / "training-turns").mkdir()
+        for directory in (recovery / "training-turns").iterdir():
+            if directory.is_symlink() or not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{64}", directory.name):
+                raise ValueError("invalid recovered training trajectory directory")
+            copy_review_files(directory, output / "training-turns" / directory.name)
+    if second_mode != "off":
+        # These are retained observed inputs, not regenerated provider
+        # requests. They also make the recovered training index usable.
+        for pattern in ("context-*.json", "facts-*.json"):
+            for path in recovery.glob(pattern):
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("recovered reviewer inputs require regular files")
+                shutil.copyfile(path, output / path.name)
+        for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json", "review-options.json", "review-options.md"):
+            path = recovery / name
+            if path.exists():
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("recovered second-pass records require regular files")
+                shutil.copyfile(path, output / name)
+    # Retain actual previous provider counters; recovery never presents
+    # the new attempt's usage alone as the cost of the whole review.
+    consolidate_metrics(output, recovery)
+    record["recovered_from"] = str(recovery)
+    old_facts = read(recovery / "source-facts.json")
+    if old_facts["scanner_sha256"] != scanner_hash or old_facts["snapshot_id"] != snapshot_id:
+        raise ValueError("recovery source facts differ from current source/runtime")
+    shared_facts.extend(old_facts["facts"])
+    for fact in shared_facts:
+        broker.seed(fact["cache_key"], fact)
+    if (recovery / "research.jsonl").is_file():
+        shutil.copyfile(recovery / "research.jsonl", output / "research.jsonl")
+    if (recovery / "research-knowledge.json").is_file():
+        shutil.copyfile(recovery / "research-knowledge.json", output / "research-knowledge.json")
+    return recovered_change_pass
+
+
+def admission_operations(report, package, output, record_options, attempt_key, *, supersede, continued_heads):
+    payload = package["payload"]
+    links = []
+    if supersede or continued_heads:
+        for decision in report.get("decision_records",[]):
+            rid = decision["response"]["review_id"]
+            parents = payload["expected_parents"][rid]
+            if not supersede and rid not in continued_heads:
+                continue
+            if parents and decision["decision_id"] not in parents:
+                reason = ("Source-validated decision carried from the Value checkpoint " if rid in continued_heads
+                          else "Fresh validated review of current work package ")
+                links.append({"decision_id": decision["decision_id"], "parents": parents,
+                              "reason": reason + package["package_id"]})
+    if links:
+        links_path = output / "supersessions.json"
+        write(links_path, links)
+        record_options["--supersessions"] = str(links_path)
+    entries = [{"operation": "record", "operation_key": "worker-record:" + attempt_key,
+                "options": record_options}]
+    for decision in report.get("decision_records",[]):
+        if decision["response"]["decision"] != "needs_review":
+            continue
+        trace = decision["response"].get("investigation") or {}
+        questions = list(dict.fromkeys([*decision["response"]["checks"], *trace.get("blockers", [])]))
+        identity = hashlib.sha256(decision["decision_id"].encode()).hexdigest()
+        for index, question in enumerate(questions):
+            path = output / ("pending-" + str(index) + "-" + identity + ".json")
+            write(path, {"schema_version": "1", "origin": {"kind": "decision", "decision_id": decision["decision_id"]},
+                         "kind": "other", "question": question})
+            entries.append({"operation": "pending", "options": {"--input": str(path)},
+                "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
+    return entries
+
+
+def run_locked(args, *, source_prepared=None):
     assignment = getattr(args, "assignment", None)
     group_operations = getattr(args, "group_operations", False)
     if type(group_operations) is not bool or group_operations and args.phase != "native":
@@ -1021,6 +1178,7 @@ def run_locked(args):
     root = Path(args.source_root).resolve(strict=True)
     scanner = outside(args.scanner, root)
     first_directory = outside(first_path, root) if first_path else None
+    closed_report = getattr(args, "_closed_report", None)
     correction_handoff_digest = None
     correction_handoff = None
     correction_ledger = None
@@ -1033,30 +1191,49 @@ def run_locked(args):
         correction_handoff, correction_ledger, first_directory = review_work.read_resolution_handoff(
             first_directory, root, sys.modules[__name__])
     if first_directory:
-        first_record = read(first_directory / "worker.json")
+        manual_store = Path(args.store) / "manual-admissions"
+        # The native receipt may use an extended Windows path for the same directory.
+        manual_parent = (closed_report is not None and first_directory.name.isdecimal()
+                         and manual_store.is_dir() and first_directory.parent.samefile(manual_store))
+        first_record = {"status": "admitted"} if manual_parent else read(first_directory / "worker.json")
         partial_work = first_directory / "source-review/work-ledger.json"
         admitted_partial = (first_record["status"] == "incomplete" and first_record.get("native_admission") is True
             and partial_work.is_file() and read(partial_work).get("native_admission_status") == "admitted"
             and (first_directory / "source-review/work-handoff.json").is_file())
+        if closed_report is not None and first_record["status"] == "incomplete" and first_record.get("native_admission"):
+            # Only the frozen report's admitted decisions can be audited.
+            admitted_partial = True
         if first_record["status"] not in ("admitted", "source_validated") and not admitted_partial:
             raise ValueError("first pass must have source-validated native results")
     work_followup = None
-    if first_directory and (first_directory / "source-review/work-plan.json").is_file() and not (
-            first_directory / "source-review/work-handoff.json").is_file():
+    budget_path = None
+    work_origin = first_directory
+    if closed_report is not None:
+        if inherited := first_record.get("work_followup"):
+            work_origin = outside(inherited["parent_attempt"], root)
+            if digest_file(work_origin / "source-review/work-handoff.json") != inherited["handoff_sha256"]:
+                raise ValueError("closed audit work handoff changed")
+        elif first_record.get("source_review", {}).get("work_review"):
+            import review_source
+            summary = review_source.recovery_summary(first_directory, root, sys.modules[__name__])
+            work_origin = summary.parent.parent
+            if not (work_origin / "source-review/work-handoff.json").is_file():
+                raise ValueError("closed work-plan audit requires its original budget handoff")
+    if work_origin and (work_origin / "source-review/work-plan.json").is_file() and not (
+            work_origin / "source-review/work-handoff.json").is_file():
         raise ValueError("work-plan first pass lacks a bound handoff; cannot start a fresh follow-up allowance")
-    if first_directory and (first_directory / "source-review/work-handoff.json").is_file():
+    if work_origin and (work_origin / "source-review/work-handoff.json").is_file():
         import review_work
-        handoff, parent_source, parent_budget = review_work.read_handoff(first_directory, root, sys.modules[__name__])
-        args._review_budget = parent_budget
-        work_followup = {"parent_attempt":str(first_directory), "budget_path":parent_budget,
+        _, _, budget_path = review_work.read_handoff(work_origin, root, sys.modules[__name__])
+        work_followup = {"parent_attempt":str(work_origin), "budget_path":budget_path,
             "case_coverage":"Historical first-pass checks; this follow-up audits native claims.",
-            "handoff_sha256":digest_file(first_directory / "source-review/work-handoff.json")}
+            "handoff_sha256":digest_file(work_origin / "source-review/work-handoff.json")}
     rates_path = outside(args.second_pass_rates, root) if getattr(args, "second_pass_rates", None) else None
     if rates_path:
         second_pass.validate_rates(read(rates_path))
     invocation = outside(args.reviewer_command, root)
     claim_path = outside(args.claim, root)
-    supplied_work_path = outside(args.work_package, root)
+    supplied_work_path = outside(args.work_package, root) if args.work_package else None
     command = read(invocation)
     if not isinstance(command, list) or not command or not all(isinstance(value, str) for value in command):
         raise ValueError("reviewer command must be a JSON argv array from trusted configuration")
@@ -1067,13 +1244,10 @@ def run_locked(args):
         if Path(argument).is_file():
             outside(argument, root)
     output = outside(args.output, root, False)
-    source_prepared = getattr(args,"_source_prepared",None)
-    budget_path = getattr(args, "_review_budget", None)
     if source_prepared:
+        source_prepared = outside(source_prepared, root)
         budget_path = read(source_prepared).get("budget_path", budget_path)
-    if source_prepared:
-        prepared_path=outside(source_prepared,root)
-        if prepared_path.parent.parent != output and not getattr(args,"resume_from",None):
+        if source_prepared.parent.parent != output and not getattr(args,"resume_from",None):
             raise ValueError("source handoff must belong to this attempt")
         if output.exists() and sorted(p.name for p in output.iterdir()) != ["source-review"]:
             raise ValueError("source handoff cannot overwrite an existing attempt")
@@ -1122,7 +1296,7 @@ def run_locked(args):
             raise ValueError("explicit source profile changed during review")
         if bound_runtime is not None and (
                 bound_runtime["engine_sha256"] != scanner_hash
-                or bound_runtime["skill_bundle_id"] != context.skill_bundle_id(skill_root)):
+                or bound_runtime["skill_bundle_id"] != context.skill_bundle_id(skill_root, bound_runtime["skill_bundle_id"])):
             raise ValueError("review runtime changed; prepare a new native contract and plan")
         if bound_runtime is not None and bound_runtime.get("provider") != (read(provider_path) if provider_path else None):
             raise ValueError("review provider changed; prepare a new native contract and plan")
@@ -1169,7 +1343,11 @@ def run_locked(args):
         return value
 
     package_path = output / "work.json"
-    requested = read(supplied_work_path)["payload"]["review_ids"]
+    closed_heads = {r["response"]["review_id"]: [r["decision_id"]]
+                    for r in closed_report["decision_records"]} if closed_report is not None else None
+    requested = sorted(closed_heads) if closed_heads is not None else None
+    if supplied_work_path:
+        requested = read(supplied_work_path)["payload"]["review_ids"]
     shared_facts = []  # Raw source facts only, never old-verdict reuse.
     application_cache = {}
 
@@ -1206,7 +1384,9 @@ def run_locked(args):
         options = ["--assignment", assignment] if assignment else []
         if assignment and read_completed:
             options += ["--read-completed-assignment", "true"]
-        return native(["state", "work", *common, "--review-ids", ",".join(requested), *options], timeout)
+        if requested is not None:
+            options += ["--review-ids", ",".join(requested)]
+        return native(["state", "work", *common, *options], timeout)
 
     def job_for(task):
         identity_parts = [task["kind"], task.get("review_ids", []),
@@ -1277,34 +1457,7 @@ def run_locked(args):
         if job.state["status"] == "drafted":
             return job.state["draft"]
         if source_prepared and task["kind"] == "native_bundle" and not task.get("second_pass") and not task.get("stage_context"):
-            prepared=read(source_prepared)
-            rows=prepared["assessments"]
-            if not set(task["review_ids"]) <= set(rows):
-                raise SourceUnanswered("Source questions remain unanswered; retained as incomplete without a replacement model call")
-            if set(task["review_ids"]) <= set(rows):
-                draft={"results":[rows[rid] for rid in task["review_ids"]]}
-                validate_native_candidate(task,job,draft,args.timeout)
-                assignment_ids={aid for rid in task["review_ids"] for aid in prepared["question_assignments"].get(rid,[])}
-                source_plan=read(Path(source_prepared).parent/"plan.json")
-                material=[]
-                for assignment in source_plan["assignments"]:
-                    if assignment["id"] not in assignment_ids:continue
-                    matches=[r for r in prepared["results"] if r["assignment_id"]==assignment["id"] and r["status"]=="complete"]
-                    for result in matches:
-                        facts=[*result["facts"],*[{"result_id":context.digest([source_plan["plan_id"],w]),
-                            "query":{"tool":"source","review_id":None,"purpose":"Assigned original source", "arguments":{k:w[k] for k in ("path","start_line","end_line")}},
-                            "result":{"operation":"prepared_source","results":w}} for w in assignment["windows"]]]
-                        for index, fact in enumerate(facts):
-                            if any(prior["result_id"]==fact["result_id"] for prior in material):
-                                continue
-                            reuse = result.get("reuse") if index < len(result["facts"]) else None
-                            material.append({**fact,"origin_package_id":reuse["prior_plan_id"] if reuse else prepared["plan_id"],
-                                "origin_review_id":None, "origin_kind":"source_assignment","source_assignment_id":assignment["id"]})
-                job.save(results=material,source_assignment_ids=sorted(assignment_ids),
-                    claim_contexts=[n for n in prepared.get("claim_contexts", []) if n["review_id"] in task["review_ids"]],
-                    claim_context_errors=[n for n in prepared.get("claim_context_errors", []) if n["review_id"] in task["review_ids"]],
-                    followups=[n for n in prepared.get("followups", []) if n["review_id"] in task["review_ids"]])
-                return job.complete(draft)
+            return complete_source_handoff(source_prepared, task, job, validate_native_candidate, args.timeout)
         if job.state.get("unknown_provider_calls"):
             raise ValueError("previous provider usage is unknown; reconcile before another call")
         if "candidate_draft" in job.state:
@@ -1559,6 +1712,9 @@ def run_locked(args):
                      "dependency_catalog":dependency_catalog,
                      "evidence_agenda":orchestration.evidence_agenda(task, display_facts),
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
+            if closed_report is not None and role == "verification":
+                # A closed generation's raw work package contains the first-pass verdicts.
+                del frame["work_package"]
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
             if role in second_pass.FINAL_ONLY_ROLES:
@@ -1585,39 +1741,24 @@ def run_locked(args):
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
             lease = review_budget.reserve(budget_path, frame["kind"]) if budget_path else None
-            job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time(),
-                     active_turn={"conversation_id":conversation_id,"round":round_index})
+            provider = tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider")
             succeeded = False
             try:
-                value = execute_provider(worker_command, output, review_child_environment(), remaining(), frame,
-                    tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"), budget_path, lease=lease)
+                value, correction = job.invoke_provider(worker_command, output, remaining, frame, provider,
+                    budget_path, lease, correction_turn=round_index + 1 < calls_left)
+                if correction is not None:
+                    feedback = correction
+                    with shared_lock:
+                        record["reply_validation_corrections"] = record.get("reply_validation_corrections", 0) + 1
+                    execution_trace.emit("reply_validation_rejected", job_id=job.path.stem,
+                        conversation_id=conversation_id, round=round_index, feedback=correction)
+                    continue
                 succeeded = True
-            except CommandFailure as error:
-                provider = tiered_policy["expert"] if profile=="expert" else bound_runtime.get("provider")
-                if observed_turn(output, job.state["active_turn"], provider) is not None:
-                    job.save(model_inflight=False, active_turn=None, active_since=time.time())
-                    correction = reply_validation_feedback(error, frame)
-                    if (not budget_path and correction is not None and not job.state.get("reply_validation_corrections")
-                            and round_index + 1 < calls_left and deadline > time.monotonic()):
-                        job.save(reply_validation_corrections=1)
-                        feedback = correction
-                        with shared_lock:
-                            record["reply_validation_corrections"] = record.get("reply_validation_corrections", 0) + 1
-                        execution_trace.emit("reply_validation_rejected", job_id=job.path.stem,
-                            conversation_id=conversation_id, round=round_index, feedback=correction)
-                        continue
-                    if correction is not None:
-                        raise ReplyValidationFailure(error.returncode, "local reply validation failed; no correction allowance remains") from error
-                    # Receipted but untyped failures are not automatically retried.
-                    raise
-                raise ProviderFailure(error.returncode, error.stderr) from error
             finally:
                 with shared_lock:
                     timings.append({"operation": "reviewer/" + task["kind"], "round": round_index,
-                        "job_id": job.path.stem, "profile":profile, "role":role,
-                        "provider":tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
-                        "succeeded":succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
-            job.save(model_inflight=False, active_turn=None, active_since=time.time())
+                        "job_id": job.path.stem, "profile": profile, "role": role, "provider": provider,
+                        "succeeded": succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
             check_fresh()
             received_response = json.loads(json.dumps(value))
             if second_mode != "off":
@@ -2000,7 +2141,9 @@ def run_locked(args):
         prior_work = read(recovery / "recovery.json").get("work_file", "work.json") if recovery else None
         recovery_work = read(recovery / prior_work) if recovery else None
         package = recovery_work if recovering_writes else current_work
-        supplied = read(supplied_work_path)
+        if closed_heads is not None and package["payload"]["expected_parents"] != closed_heads:
+            raise ValueError("closed decisions differ from current journal heads")
+        supplied = read(supplied_work_path) if supplied_work_path else package
         if not recovery and package != supplied:
             raise ValueError("supplied work package is stale or altered")
         if recovery and not recovering_writes and package != recovery_work:
@@ -2012,6 +2155,8 @@ def run_locked(args):
                 raise ValueError("recovery requires the same current source, runtime and scope")
         write(package_path, package)
         payload = package["payload"]
+        if requested is None:
+            requested = payload["review_ids"]
         continued_heads = getattr(args, "_continued_heads", {})
         if any(payload["expected_parents"].get(rid) != [head] for rid, head in continued_heads.items()):
             raise ValueError("a carried decision changed before native finalization")
@@ -2070,11 +2215,23 @@ def run_locked(args):
         direct_ids = set(filter(None, (getattr(args, "expert_review_ids", None) or "").split(",")))
         if not direct_ids <= set(requested):
             raise ValueError("direct expert IDs must belong to this exact work package")
+        if closed_report is not None and closed_report["triage"]["work"]["missing_review_ids"]:
+            args.run = output / "audit-bundles"
+            native(["investigate", "review-bundles", str(root), "--inventory", str(inventory),
+                    "--review-ids", ",".join(requested), "--output", str(args.run),
+                    "--max-reviews", str(read(first_directory / "run/manifest.json")["max_reviews_per_bundle"])])
         bundle_binding = None
-        if args.phase in ("all", "native") and requested:
+        if args.phase in ("all", "native") and (requested or source_prepared):
+            if not args.run and getattr(args, "project_run", None) and requested:
+                args.run = output / "selected-bundles"
+                native(["investigate", "review-bundles", str(root), "--inventory", str(inventory),
+                        "--review-ids", ",".join(requested), "--output", str(args.run)])
             if not args.run:
                 raise ValueError("--run is required for selected native claims. For --first-pass, use that attempt's bundle directory.")
             selected_run = outside(args.run, root)
+            manifest_sha256 = digest_file(selected_run / "manifest.json")
+            if getattr(args, "_source_manifest_sha256", None) not in (None, manifest_sha256):
+                raise ValueError("source handoff bundle manifest changed")
             selected_manifest = read(selected_run / "manifest.json")
             source_profiles.check_bundles(source_profile, [b["review_ids"] for b in selected_manifest["bundles"]])
             bundle_files = []
@@ -2083,7 +2240,7 @@ def run_locked(args):
                 if Path(filename).name != filename:
                     raise ValueError("manifest request filename is not bounded")
                 bundle_files.append([filename, digest_file(selected_run / "requests" / filename)])
-            bundle_binding = context.digest([digest_file(selected_run / "manifest.json"), bundle_files,
+            bundle_binding = context.digest([manifest_sha256, bundle_files,
                 digest_file(selected_run / "input-binding.json") if (selected_run / "input-binding.json").exists() else None])
         recovery_binding = {"schema_version": "1", "package_id": package["package_id"],
                             "source_profile_implementation_sha256":source_profile_implementation,
@@ -2093,6 +2250,11 @@ def run_locked(args):
                             "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
                             "controller_sha256": digest_file(__file__),
                             "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
+        if source_prepared:
+            recovery_binding["source_handoff"] = {
+                "attempt": str(source_prepared.parent.parent),
+                "summary_sha256": digest_file(source_prepared),
+            }
         if assignment:
             recovery_binding["assignment"] = assignment
         if group_operations:
@@ -2105,56 +2267,9 @@ def run_locked(args):
                 "first_report_sha256":digest_file(first_directory / "findings.json") if first_directory else None,
                 "rates_sha256":digest_file(rates_path) if rates_path else None,
                 "correction_handoff_sha256":correction_handoff_digest}
-        recovered_change_pass = False
-        if recovery:
-            prior = read(recovery / "recovery.json")
-            if prior["binding"] != recovery_binding:
-                raise ValueError("recovery requires the same current source, work, bundles and reviewer configuration")
-            if (recovery / "continued-to.json").exists():
-                raise ValueError("recovery attempt already continued; resume from the latest attempt instead")
-            recovered_change_pass = prior["change_pass_completed"]
-            copy_review_files(recovery / "journals", output / "journals")
-            copy_review_files(recovery / "jobs", output / "jobs")
-            if second_mode != "off" and (recovery / "training-turns").is_dir():
-                (output / "training-turns").mkdir()
-                for directory in (recovery / "training-turns").iterdir():
-                    if directory.is_symlink() or not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{64}", directory.name):
-                        raise ValueError("invalid recovered training trajectory directory")
-                    copy_review_files(directory, output / "training-turns" / directory.name)
-            if second_mode != "off":
-                import shutil
-                # These are retained observed inputs, not regenerated provider
-                # requests. They also make the recovered training index usable.
-                for pattern in ("context-*.json", "facts-*.json"):
-                    for path in recovery.glob(pattern):
-                        if path.is_symlink() or not path.is_file():
-                            raise ValueError("recovered reviewer inputs require regular files")
-                        shutil.copyfile(path, output / path.name)
-                for name in ("second-pass.json", "second-pass-status.json", "first-pass-metrics.json", "review-options.json", "review-options.md"):
-                    path = recovery / name
-                    if path.exists():
-                        if path.is_symlink() or not path.is_file():
-                            raise ValueError("recovered second-pass records require regular files")
-                        shutil.copyfile(path, output / name)
-            # Retain actual previous provider counters; recovery never presents
-            # the new attempt's usage alone as the cost of the whole review.
-            consolidate_metrics(output, recovery)
-            record["recovered_from"] = str(recovery)
-            old_facts = read(recovery / "source-facts.json")
-            if old_facts["scanner_sha256"] != scanner_hash or old_facts["snapshot_id"] != payload["snapshot_id"]:
-                raise ValueError("recovery source facts differ from current source/runtime")
-            shared_facts.extend(old_facts["facts"])
-            for fact in shared_facts:
-                broker.seed(fact["cache_key"], fact)
-            if (recovery / "research.jsonl").is_file():
-                import shutil
-                shutil.copyfile(recovery / "research.jsonl", output / "research.jsonl")
-            if (recovery / "research-knowledge.json").is_file():
-                import shutil
-                shutil.copyfile(recovery / "research-knowledge.json", output / "research-knowledge.json")
-        else:
-            (output / "journals").mkdir()
-            (output / "jobs").mkdir()
+        recovered_change_pass = restore_native_attempt(recovery, output, recovery_binding,
+            second_mode=second_mode, snapshot_id=payload["snapshot_id"], scanner_hash=scanner_hash,
+            broker=broker, shared_facts=shared_facts, record=record)
 
         def save_recovery(change_pass_completed):
             recovery_binding["package_id"] = package["package_id"]
@@ -2176,6 +2291,7 @@ def run_locked(args):
             # A retry chain cannot fork from an older budget checkpoint. The
             # stream lock fences this append before any new model invocation.
             write(recovery / "continued-to.json", {"output": str(output)})
+        admission_entries = None
         recovered_admission = mutations.exists("admission")
         if recovered_admission:
             # Complete the original transaction batch before deriving any new
@@ -2201,11 +2317,7 @@ def run_locked(args):
                     raise ValueError("admitted second-pass recovery requires its original outcome record")
                 summary = read(output / "second-pass.json")
                 record["second_pass"] = {k:summary[k] for k in ("mode", "status", "scope", "selected", "targeted", "checked", "outside_scope", "outcomes")}
-            receipts = mutations.apply("admission")
-            record["admission_sequence"] = receipts[0]["sequence"]
-            record["recovered_admission"] = True
-            write(output / "findings.json", native(["report", "--run", str(output / "run"),
-                  "--source-root", str(root), "--reviewer", args.reviewer_label]))
+            report = write_admission_report(output, root, batch["entries"][0]["options"], native)
         def complete_change_writes(receipts=None):
             nonlocal package, payload, recovered_change_pass
             receipts = receipts if receipts is not None else mutations.apply("plan")
@@ -2329,7 +2441,6 @@ def run_locked(args):
                         if digest_file(destination) != job.state["combined_sha256"]:
                             raise ValueError("recovered baseline bytes changed")
                     elif job and job.state["binding"]["role"] == "investigator":
-                        import shutil
                         shutil.copyfile(output / "assessments" / (job.path.stem + ".json"), destination)
                     else:
                         draft_path = output / ("combined-" + filename)
@@ -2337,7 +2448,6 @@ def run_locked(args):
                         native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
                                 "--source-root", str(root), "--journal-dir", str(journals), "--output", str(destination)])
                     if job:
-                        import shutil
                         job.save(combined_sha256=digest_file(destination))
                         shutil.copyfile(destination, response_dir / filename)
 
@@ -2476,12 +2586,18 @@ def run_locked(args):
                 if second_mode != "off":
                     original_metrics = []
                     if first_directory:
-                        first_work = read(first_directory / "work.json")["payload"]
+                        first_work_path = first_directory / "work.json"
+                        # Manual admissions without a bound package rely on the native receipt claim.
+                        first_work = (payload if manual_parent and not first_work_path.exists()
+                                      else read(first_work_path)["payload"])
+                        if closed_report is not None and first_work["runtime"] != bound_runtime:
+                            raise ValueError("closed first-pass runtime differs from the current plan")
                         for key in ("snapshot_id", "inventory_input_fingerprint", "repository", "assessment_context"):
                             if first_work[key] != payload[key]:
                                 raise ValueError("first-pass source or assessment binding differs from current work")
                         source_run = first_directory / "run"
-                        prior_report = native(["report", "--run", str(source_run), "--source-root", str(root)])
+                        prior_report = closed_report if closed_report is not None else native(
+                            ["report", "--run", str(source_run), "--source-root", str(root)])
                         old = {r["response"]["review_id"]:r["response"] for r in prior_report["decision_records"]}
                         for filename, request, data in requests:
                             if not set(data["review_ids"]) <= set(old):
@@ -2685,59 +2801,35 @@ def run_locked(args):
                         "reopened_review_ids":[r["review_id"] for filename, _, _ in requests for r in read(response_dir / filename)["results"]
                             if r["decision"] == "needs_review" and next(x["decision"] for x in read(output / "decisions" / filename)["results"] if x["review_id"] == r["review_id"]) != "needs_review"],
                         "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
-                # Report validates the completed response set before a state write.
-                report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
-                                 "--reviewer", args.reviewer_label, *(["--allow-partial", "true"] if source_prepared else [])])
-                write(output / "findings.json", report)
-                execution_path = output / "review-execution.json"
-                if tiered_policy:
-                    write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
-                                          "cases": [execution_cases[identity] for identity in requested]})
-                links = []
-                if args.supersede or continued_heads:
-                    for decision in report.get("decision_records",[]):
-                        rid = decision["response"]["review_id"]
-                        parents = payload["expected_parents"][rid]
-                        if not args.supersede and rid not in continued_heads:
-                            continue
-                        if parents and decision["decision_id"] not in parents:
-                            reason = ("Source-validated decision carried from the Value checkpoint " if rid in continued_heads
-                                      else "Fresh validated review of current work package ")
-                            links.append({"decision_id": decision["decision_id"], "parents": parents,
-                                          "reason": reason + package["package_id"]})
-                # Keep response override distinct from requests; copy the run binding
-                # into a new attempt run so normal state admission can validate it.
+                # Validate exactly the run that state record will admit.
                 admitted_run = output / "run"
                 copy_bundle_run(run_dir, admitted_run, response_dir)
+                if digest_file(admitted_run / "manifest.json") != manifest_sha256:
+                    raise ValueError("bundle manifest changed before native admission")
                 record_options = {"--run": str(admitted_run), "--work-package": str(package_path),
                                   "--reviewer": args.reviewer_label}
                 if assignment:
                     record_options["--assignment"] = assignment
                 if source_prepared:
                     record_options["--allow-partial"] = "true"
-                if links:
-                    links_path = output / "supersessions.json"
-                    write(links_path, links)
-                    record_options["--supersessions"] = str(links_path)
+                report = write_admission_report(output, root, record_options, native)
+                execution_path = output / "review-execution.json"
+                if tiered_policy:
+                    write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
+                                          "cases": [execution_cases[identity] for identity in requested]})
                 if tiered_policy:
                     record_options["--review-execution"] = str(execution_path)
-                entries = [{"operation": "record", "operation_key": "worker-record:" + attempt_key,
-                            "options": record_options}]
-                for decision in report.get("decision_records",[]):
-                    if decision["response"]["decision"] != "needs_review":
-                        continue
-                    trace = decision["response"].get("investigation") or {}
-                    questions = list(dict.fromkeys([*decision["response"]["checks"], *trace.get("blockers", [])]))
-                    for index, question in enumerate(questions):
-                        identity = hashlib.sha256(decision["decision_id"].encode()).hexdigest()
-                        path = output / ("pending-" + str(index) + "-" + identity + ".json")
-                        write(path, {"schema_version": "1", "origin": {"kind": "decision", "decision_id": decision["decision_id"]},
-                                     "kind": "other", "question": question})
-                        entries.append({"operation": "pending", "options": {"--input": str(path)},
-                            "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
+                entries = admission_operations(report, package, output, record_options, attempt_key,
+                    supersede=args.supersede, continued_heads=continued_heads)
                 if not validate_only:
-                    receipts = mutations.apply("admission", entries)
-                    record["admission_sequence"] = receipts[0]["sequence"]
+                    admission_entries = entries
+        if recovered_admission or admission_entries is not None:
+            if report["triage"]["work"]["missing_review_ids"]:
+                record["source_unanswered_results"] = True
+            receipts = mutations.apply("admission", admission_entries)
+            record["admission_sequence"] = receipts[0]["sequence"]
+            if recovered_admission:
+                record["recovered_admission"] = True
         final_work = fresh_work(read_completed=True)
         if any(final_work["payload"][key] != payload[key] for key in ("generation", "snapshot_id", "plan_id")):
             raise ValueError("worker ownership or plan changed before result emission")
@@ -2749,27 +2841,45 @@ def run_locked(args):
         record.update(status="source_validated" if validate_only else "admitted",
                       completion=state["completion"], work_package_id=package["package_id"],
                       native_admission=not validate_only)
+        manifest = output / "run/manifest.json"
+        if getattr(args, "_project_bindings", None) and not validate_only and manifest.is_file():
+            receipt = {**args._project_bindings, "inventory": str(inventory),
+                       "inventory_fingerprint": payload["inventory_input_fingerprint"],
+                       "report_manifest_sha256": digest_file(manifest)}
+            if source_prepared:
+                routing = read(source_prepared).get("question_routing", {})
+                if "source_generation" in routing:
+                    receipt["routed_source_generation"] = routing["source_generation"]
+            receipt.pop("admitted_report", None)
+            if "admission_sequence" in record:
+                receipt["admitted_report"] = {"generation": generation,
+                                              "findings_sha256": digest_file(output / "findings.json")}
+            receipt_path = output / "project-run.json"
+            write(receipt_path, receipt)
+            record["project_run"] = str(receipt_path)
+            record["private_claim"] = str(claim_path)
     except Exception as error:
         record.update(status="cancelled" if _cancelled else "incomplete", reason=type(error).__name__, detail=str(error))
     finally:
         query_pool.shutdown(wait=True, cancel_futures=True)
         if shared_budget:
             shared_budget.close()
+    source_incomplete = False
     if source_prepared:
         source=read(source_prepared)
         record["source_review"]={k:source[k] for k in ("plan_id","assignments","completed_assignments","source_questions","coverage","limitations")}
-        record["source_review"].update({k:source[k] for k in ("origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review", "work_review") if k in source})
+        record["source_review"].update({k:source[k] for k in ("parent_work_package_id", "origin", "native_selected_claims", "selected_assignments", "selected_assignment_ids", "budget_path", "schedule", "native_admitted_ids", "native_unreviewed_ids", "native_membership_changes", "domain_review", "work_review") if k in source})
         work_review = source.get("work_review")
         source_incomplete = (work_review["completed_items"] != work_review["funded_items"] if work_review else
             source["completed_assignments"] != source.get("selected_assignments", source["assignments"]))
-        if source_incomplete or record.get("source_unanswered_results"):
-            if record["status"] != "cancelled":
-                record["status"]="incomplete"
-            record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
         record["source_review"]["calls"]=source["calls"]
         record["source_review"]["incomplete_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] not in ("complete", "deferred")]
         record["source_review"]["deferred_assignments"]=[{k:r[k] for k in ("assignment_id","error","detail")} for r in source["results"] if r["status"] == "deferred"]
         write(output/"source-review.json",record["source_review"])
+    if source_incomplete or record.get("source_unanswered_results"):
+        if record["status"] != "cancelled":
+            record["status"]="incomplete"
+        record.setdefault("detail", "Native results retained; some assigned source ranges were not reviewed.")
     record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000) + (source["elapsed_ms"] if source_prepared else 0)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
     record["unknown_provider_calls"] = sum(job["unknown_provider_calls"] for job in checkpoints)+(source["unknown_provider_calls"] if source_prepared else 0)
@@ -2809,7 +2919,7 @@ def run_locked(args):
         if (output / "second-pass.json").is_file():
             audit = read(output / "second-pass.json")
             work_followup["case_reconsideration"] = review_work.audit_case_gaps(
-                read(first_directory / "source-review/work-plan.json"), audit["results"])
+                read(work_origin / "source-review/work-plan.json"), audit["results"])
         if correction_handoff and (output / "second-pass.json").is_file() and (output / "findings.json").is_file():
             native_rows = [r["response"] for r in read(output / "findings.json").get("decision_records", [])]
             reconciled = review_work.reconciled_resolution(correction_directory, correction_handoff,
@@ -2852,10 +2962,84 @@ def run_locked(args):
     return record
 
 
+def bind_project_run(args):
+    """Resolve the native project receipt before claiming or dispatching any work."""
+    if args.close_receipt:
+        if (args.phase == "change-pass" or args.project_run or args.first_pass or args.run
+                or args.work_package or args.assignment or args.continue_comprehensive or args.resolve_checks
+                or args.group_operations or args.source_selection or args.reuse_source_results):
+            raise ValueError("--close-receipt supplies the project, parent attempt, bundles and work")
+        close = read(args.close_receipt)
+        args.project_run = close["project_run"]
+    elif not args.work_package and not args.project_run:
+        raise ValueError("supply --work-package with explicit state paths or use --project-run")
+    if not args.project_run:
+        missing = [name for name in ("source_root", "inventory", "store", "stream") if not getattr(args, name)]
+        if missing:
+            raise ValueError("supply --project-run or " + ", ".join("--" + name.replace("_", "-") for name in missing))
+        return
+    if any(getattr(args, name) for name in ("source_root", "inventory", "store", "stream", "memory_store", "memory_mode")):
+        raise ValueError("--project-run already supplies source, inventory, store, stream and memory settings")
+    receipt_path = Path(args.project_run).resolve(strict=True)
+    root = Path(read(receipt_path)["source_root"]).resolve(strict=True)
+    outside(receipt_path, root)
+    scanner = outside(args.scanner, root)
+    receipt = json.loads(subprocess.check_output(
+        [str(scanner), "project", "resolve", "--project-run", str(receipt_path)], encoding="utf-8"))
+    if args.close_receipt:
+        outside(args.close_receipt, root)
+        parent = receipt_path.parent
+        manifest = outside(parent / "run/manifest.json", root)
+        if digest_file(manifest) != receipt["report_manifest_sha256"]:
+            raise ValueError("Bundle manifest differs from the admitted run")
+        admitted = close["admitted_report"]
+        claim = read(outside(args.claim, root))["result"]
+        if (receipt.get("admitted_report") != admitted or claim["generation"] != admitted["generation"] + 1
+                or claim.get("audit_parent") != {"sequence": close["sequence"], "findings_sha256": admitted["findings_sha256"]}):
+            raise ValueError("Follow-up requires a fresh claim for this close receipt")
+        if (close["result"]["generation"] != admitted["generation"]
+                or close["result"]["status"] not in ("finished", "incomplete", "cancelled")):
+            raise ValueError("Follow-up requires a terminal receipt for the admitted generation")
+        findings = outside(parent / "findings.json", root).read_bytes()
+        if hashlib.sha256(findings).hexdigest() != admitted["findings_sha256"]:
+            raise ValueError("findings differ from the report authorized by the receipt claim")
+        report = json.loads(findings)
+        if claim.get("continuation_policy") == "comprehensive":
+            if not args.work_plan or args.phase != "all":
+                raise ValueError("Comprehensive continuation requires an expanded --work-plan and all phases")
+            args._continuation_receipt = {"project_run": str(receipt_path), "parent": claim["audit_parent"],
+                                          "claim": context.digest(claim)}
+            args._continuation_heads = {row["response"]["review_id"]: [row["decision_id"]]
+                                        for row in report.get("decision_records", [])}
+            if not args.resume_from:
+                args.continue_comprehensive = str(parent)
+        else:
+            if args.second_pass not in ("fast", "full") or args.work_plan:
+                raise ValueError("receipt audit requires an explicit Fast or Full audit; claim with --policy comprehensive to extend scope")
+            if not report.get("decision_records"):
+                raise ValueError("closed report has no admitted decisions to audit")
+            args._closed_report = report
+            args.first_pass = str(parent)
+            args.run = str(parent / "run")
+            args.phase = "native"
+    args._project_bindings = receipt
+    args.source_root, args.inventory = receipt["source_root"], receipt["inventory"]
+    args.store, args.stream = receipt["state_store"], receipt["stream"]
+    if receipt["memory"].get("reason") == "temporary_mode":
+        args.memory_mode = "temporary"
+    else:
+        args.memory_store = receipt["memory_store"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for option in ("scanner", "source-root", "inventory", "store", "stream", "claim", "work-package", "reviewer-command", "reviewer-label", "output"):
+    for option in ("scanner", "claim", "reviewer-command", "reviewer-label", "output"):
         parser.add_argument("--" + option, required=True)
+    for option in ("source-root", "inventory", "store", "stream"):
+        parser.add_argument("--" + option)
+    parser.add_argument("--close-receipt", help="audit or extend a closed project review using a fresh receipt-bound claim")
+    parser.add_argument("--work-package", help="current native work package (resolved from the journal for project runs and close receipts)")
+    parser.add_argument("--project-run", help="project_run file from native project prepare, supplying source, inventory, store, stream and memory settings")
     parser.add_argument("--run", help="bundle directory for selected native claims, usually FIRST_PASS/run for a saved audit")
     parser.add_argument("--assignment", help="native local worker assignment ID")
     parser.add_argument("--provider-contract")
@@ -2911,6 +3095,10 @@ def main():
     parser.add_argument("--source-collector-profile", choices=("routine", "expert"),
                         help="experimental raw-source collection using a bound profile; otherwise use scoped expert research")
     args = parser.parse_args()
+    try:
+        bind_project_run(args)
+    except (OSError, KeyError, TypeError, ValueError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))
     if not (0 <= args.native_share <= 100 and args.max_calls > 0 and args.input_token_budget > 0 and args.admission_seconds > 0):
         parser.error("native share must be 0..100 and whole-review budgets must be positive")
     if args.call_only_budget and (not args.work_plan or args.phase != "all" or args.first_pass
@@ -2923,6 +3111,9 @@ def main():
         parser.error("review and research budgets must be positive and within bounded limits")
     result = run(args)
     summary = {"status": result["status"], "generation": result["generation"], "directory": args.output}
+    if "project_run" in result:
+        summary["project_run"] = result["project_run"]
+        summary["private_claim"] = result["private_claim"]
     if "second_pass" in result:
         summary["second_pass"] = result["second_pass"]
     if "review_options" in result:

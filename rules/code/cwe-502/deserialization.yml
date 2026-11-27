@@ -6,9 +6,7 @@
   capability: deserialization
   cwe: [CWE-502]
   match:
-    any:
-      - pattern: new BinaryFormatter().Deserialize($PAYLOAD)
-        captures: { payload: PAYLOAD }
+    native_captures: [payload]
   tags: [deserialization, binary, object-graph]
   ai: &deserialization_guidance
     investigate:
@@ -29,11 +27,7 @@
   capability: deserialization
   cwe: [CWE-502]
   match:
-    any:
-      - pattern: new ObjectInputStream($INPUT).readObject()
-        captures: { payload: INPUT }
-      - pattern: $MAPPER.readValue($PAYLOAD, $TYPE)
-        captures: { payload: PAYLOAD, type: TYPE }
+    native_captures: [payload, type]
   tags: [deserialization, java-native, object-graph]
   ai: *deserialization_guidance
   provenance:

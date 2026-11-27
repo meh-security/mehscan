@@ -971,12 +971,12 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     }
     let initializer = fixture.base.join("initializer.turso");
     let mut batches = Vec::new();
-    let retain = |index, verdict| {
+    let retain_inventory = |index, verdict, inventory: &Path, run: &Path| {
         let writer = Fixture {
             base: fixture.base.clone(),
             source: fixture.source.clone(),
-            inventory: fixture.inventory.clone(),
-            run: fixture.run.clone(),
+            inventory: inventory.to_owned(),
+            run: run.to_owned(),
             store: fixture.base.join(format!("writer-{index}")),
         };
         let claim = writer.claim("first", "0", "writer-claim", false);
@@ -996,6 +996,8 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
     };
     let initial_verdicts = ["not_issue", "needs_review"];
     let mut publication_ids = Vec::new();
+    let retain =
+        |index, verdict| retain_inventory(index, verdict, &fixture.inventory, &fixture.run);
     for (index, verdict) in initial_verdicts.into_iter().enumerate() {
         let (db, batch, _) = retain(index, verdict);
         let label = format!("writer-{index}");
@@ -1486,6 +1488,92 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
             .all(|entry| final_publications.contains(entry))
     );
 
+    let root = fixture.source.to_str().unwrap();
+    let prepared = fixture.inventory.to_str().unwrap();
+    let effective = fixture.base.join("source-admitted");
+    let bundles = fixture.base.join("source-admitted-bundles");
+    let admission = fixture.base.join("source-admission.json");
+    let plan = ok(&[
+        "investigate",
+        "source-review-plan",
+        root,
+        "--inventory",
+        prepared,
+    ]);
+    fs::write(
+        &admission,
+        json!({"plan":plan, "inspected":[], "proposals":[]}).to_string(),
+    )
+    .unwrap();
+    let admitted = ok(&[
+        "investigate",
+        "source-review-admit",
+        root,
+        "--inventory",
+        prepared,
+        "--input",
+        admission.to_str().unwrap(),
+        "--output",
+        effective.to_str().unwrap(),
+    ]);
+    assert_ne!(
+        admitted["input_fingerprint"],
+        project["inventory_fingerprint"]
+    );
+    let entries = read(&effective.join("inventory.json"));
+    let ids = entries["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["review_id"].as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join(",");
+    ok(&[
+        "investigate",
+        "review-bundles",
+        root,
+        "--inventory",
+        effective.to_str().unwrap(),
+        "--review-ids",
+        &ids,
+        "--output",
+        bundles.to_str().unwrap(),
+    ]);
+    let (store, batch, _) = retain_inventory(5, "needs_review", &effective, &bundles);
+    let staged = sync(
+        "stage",
+        &human,
+        &[
+            "--inventory",
+            effective.to_str().unwrap(),
+            "--stream",
+            "pr:24",
+            "--batch",
+            &batch,
+            "--publisher-label",
+            "source-review",
+            "--store",
+            store.to_str().unwrap(),
+        ],
+    );
+    sync("push", &human, &[]);
+    let with_history = prepare_project(
+        &fixture.source,
+        &project_config,
+        "published-source-review",
+        &[],
+    );
+    let view = &with_history["upstream"]["sync"]["context"];
+    assert_eq!(view["publications"], final_context["publications"]);
+    assert_eq!(
+        view["source_review_history"][0]["effective_inventory"],
+        admitted["input_fingerprint"]
+    );
+    assert_eq!(
+        view["source_review_history"][0]["publications"][0]["id"],
+        staged["publication"]
+    );
+
     let mut wrong = sync_args("pull", &fixture.base.join("wrong-repo.turso"), &[]);
     let key = wrong
         .iter()
@@ -1496,6 +1584,24 @@ fn native_sync_preserves_offline_conflicts_on_a_clean_third_replica() {
         &wrong.iter().map(String::as_str).collect::<Vec<_>>(),
         "another repository",
     );
+    drop(server);
+    let offline = prepare_project(
+        &fixture.source,
+        &project_config,
+        "offline-source-review",
+        &[],
+    );
+    let cached = &offline["upstream"]["sync"];
+    assert_eq!(cached["status"], "cached", "{cached}");
+    assert_eq!(cached["context"], *view);
+    assert!(cached["age_seconds"].is_u64());
+    let unrelated = prepare_project(
+        &fixture.source,
+        &project_config,
+        "offline-other-stream",
+        &["--stream", "uncached"],
+    );
+    assert_eq!(unrelated["upstream"]["sync"]["status"], "unavailable");
 }
 
 #[test]
@@ -2056,14 +2162,21 @@ impl Fixture {
             self.inventory.to_str().unwrap(),
         ])
     }
-    fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
-        ok(&[
+    fn claim_args<'a>(
+        &'a self,
+        stream: &'a str,
+        attempt: &'a str,
+        expected: &'a str,
+        operation: &'a str,
+        retry: bool,
+    ) -> Vec<&'a str> {
+        vec![
             "state",
             "claim",
             "--store",
             self.store.to_str().unwrap(),
             "--stream",
-            "pr:24",
+            stream,
             "--inventory",
             self.inventory.to_str().unwrap(),
             "--source-root",
@@ -2076,7 +2189,10 @@ impl Fixture {
             operation,
             "--retry",
             if retry { "true" } else { "false" },
-        ])
+        ]
+    }
+    fn claim(&self, attempt: &str, expected: &str, operation: &str, retry: bool) -> Value {
+        ok(&self.claim_args("pr:24", attempt, expected, operation, retry))
     }
     fn record_args<'a>(
         &'a self,
@@ -3027,6 +3143,59 @@ fn concurrent_claims_have_one_owner_and_corrupt_or_torn_journals_refuse_updates(
         &fixture.record_args("1", owner, if a.status.success() { "a" } else { "b" }),
         "different command",
     );
+}
+
+#[test]
+fn large_journal_concurrent_retries_append_once_per_stream() {
+    let fixture = Fixture::new("large-journal");
+    let seed = fixture.claim("seed", "0", "seed", false);
+    let journal = fixture.store.join("transactions.jsonl");
+    // Valid JSON whitespace exercises large-prefix replay with a single real seed claim.
+    let mut prefix = vec![b' '; 300 * 1024];
+    prefix.extend(fs::read(&journal).unwrap());
+    fs::write(&journal, &prefix).unwrap();
+
+    let streams = ["stream-a", "stream-b", "stream-c", "stream-d"];
+    let claims = std::thread::scope(|scope| {
+        let mut threads = Vec::new();
+        for stream in streams.into_iter().cycle().take(8) {
+            let fixture = &fixture;
+            threads.push(scope.spawn(move || {
+                let receipt = ok(&fixture.claim_args(stream, stream, "0", stream, false));
+                (stream, receipt)
+            }));
+        }
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for stream in streams {
+        let receipts = claims
+            .iter()
+            .filter(|(key, _)| *key == stream)
+            .map(|(_, receipt)| receipt)
+            .collect::<Vec<_>>();
+        assert_eq!(receipts[0]["result"], receipts[1]["result"]);
+        assert_eq!(receipts[0]["sequence"], receipts[1]["sequence"]);
+        assert_ne!(receipts[0]["replayed"], receipts[1]["replayed"]);
+    }
+    let bytes = fs::read(&journal).unwrap();
+    assert!(bytes.starts_with(&prefix));
+    assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 5);
+    let retry = fixture.claim("seed", "0", "seed", false);
+    assert_eq!(retry["result"], seed["result"]);
+    assert_eq!(retry["replayed"], true);
+    assert_eq!(fs::read(&journal).unwrap(), bytes);
+    // A retry of the first operation must verify later transactions, too.
+    let torn = &bytes[..bytes.len() - 1];
+    fs::write(&journal, torn).unwrap();
+    reject(
+        &fixture.claim_args("pr:24", "seed", "0", "seed", false),
+        "torn tail",
+    );
+    assert_eq!(fs::read(&journal).unwrap(), torn);
+    fs::remove_dir_all(&fixture.base).unwrap();
 }
 
 #[test]

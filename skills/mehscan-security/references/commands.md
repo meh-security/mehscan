@@ -105,11 +105,13 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Finalize brief or full draft | `mehscan investigate review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals --output RESPONSE --source-root ROOT` |
 | Validate existing response | `mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root ROOT --summary true` |
 | Summarize run | `mehscan investigate review-bundle-summary --run DIR --responses RESPONSES_DIR --source-root ROOT` |
-| Final report | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
+| Report a closed project review | `mehscan report --close-receipt CLOSE.json --format markdown`. Use [the worker result to close the admitted generation](../../../docs/standalone-source.md#close-and-report-a-project-review). |
+| Report a validated bundle run | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
+| Bind an existing scoped inventory | `mehscan project bind --source-root ROOT --inventory DIR --stream STREAM` returns a project run. Use its private claim for [planning and work](../../../docs/review-worker.md#prepare-review-work). |
 | Locate persistent review state | `mehscan memory location --source-root ROOT --inventory DIR` uses the inventory's stable repository key. Use its `state_store` for state commands. |
 | Prepare unchanged native work | `mehscan memory prepare --source-root ROOT --inventory DIR --state-store STATE --stream STREAM --generation N --owner OWNER --skill-root TRUSTED/mehscan-security` returns the remaining `work_package`. |
 | Inspect dependencies after an edit | `mehscan memory compare --source-root ROOT --inventory DIR --stream STREAM --batch BATCH` compares cited files and lexical reference observations. Use its output to guide source checks under the current work package. |
-| Inspect coordinator state | `mehscan state status --store STATE --stream KEY --inventory DIR` or pass `--repository-key ID` instead of the inventory. `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
+| Inspect coordinator state | `mehscan state status --project-run PROJECT.json`. `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 | Reserve a subset for a local worker | Export a package with `state work --review-ids ID,ID`, then reserve it with `state allocate` and record against its `--assignment`. See [local worker assignments](../../../docs/review-state.md#assign-reviews-to-local-workers). |
 | Inspect shared Turso context | Use `memory sync pull` and `memory sync context` on an enrolled replica. See [Turso sync](../../../docs/review-worker.md#share-retained-context-with-turso-sync). Treat published assessments as historical context. |
 

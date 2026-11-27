@@ -35,11 +35,7 @@
   confidence: medium
   cwe: [CWE-22]
   match:
-    any:
-      - pattern: Paths.get($PATH).normalize().startsWith(Paths.get($BASE).normalize())
-        captures: { path: PATH, base: BASE }
-      - pattern: Path.of($PATH).normalize().startsWith(Path.of($BASE).normalize())
-        captures: { path: PATH, base: BASE }
+    native_captures: [base, path]
   tags: [filesystem, path, containment, validation, java]
   ai: *containment_guidance
   provenance:

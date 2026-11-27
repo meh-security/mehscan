@@ -35,7 +35,12 @@ def load_guidance(skill_root, name):
             "authority":"trusted_skill_guidance_not_application_evidence"}
 
 
-def skill_bundle_id(root):
+def skill_bundle_id(root, expected=""):
+    version = "mehscanSkillBundle/v1" if expected.startswith("mehscanSkillBundle/v1:") else "mehscanSkillBundle/v2"
+    excluded = set()
+    if version.endswith("/v2"):
+        policy = Path(__file__).with_name("skill-runtime-v2.json")
+        excluded.update(json.loads(policy.read_text(encoding="utf-8"))["distribution_only"])
     rows, entries, byte_count = [], 0, 0
     def visit(directory):
         nonlocal entries, byte_count
@@ -53,14 +58,16 @@ def skill_bundle_id(root):
                 byte_count += path.stat().st_size
                 if byte_count > 8 * 1024 * 1024:
                     raise ValueError("skill package exceeds byte limit")
-                rows.append([path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()])
+                relative = path.relative_to(root).as_posix()
+                if relative not in excluded:
+                    rows.append([relative, hashlib.sha256(path.read_bytes()).hexdigest()])
             else:
                 raise ValueError("skill package requires regular files")
     visit(root)
     if not any(path == "SKILL.md" for path, _ in rows):
         raise ValueError("skill package requires SKILL.md")
-    encoded = json.dumps(["mehscanSkillBundle/v1", sorted(rows)], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return "mehscanSkillBundle/v1:" + hashlib.sha256(encoded).hexdigest()
+    encoded = json.dumps([version, sorted(rows)], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return version + ":" + hashlib.sha256(encoded).hexdigest()
 
 
 def digest(value):

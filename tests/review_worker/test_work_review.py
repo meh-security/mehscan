@@ -118,8 +118,14 @@ class WorkReview(unittest.TestCase):
         original = worker.execute
         provider_calls = []
         interrupted = []
+        report_settings = []
         def execute(argv, cwd, env, timeout, payload=None, **kwargs):
-            if len(argv) >= 3 and list(argv[1:3]) == ["state", "record"] and not interrupted:
+            if argv[1:2] == ["report"]:
+                report_settings.append((argv[argv.index("--reviewer") + 1],
+                                        argv[argv.index("--allow-partial") + 1] if "--allow-partial" in argv else None))
+            if len(argv) >= 3 and list(argv[1:3]) == ["state", "record"] and len(interrupted) < 2:
+                if interrupted:
+                    original(argv, cwd, env, timeout, payload, **kwargs)  # Commit, then lose the receipt.
                 interrupted.append(True)
                 raise worker.CommandFailure(argv, 2, "Synthetic native publication interruption")
             if len(argv) == 2 and str(argv[1]).endswith("reviewer.py"):
@@ -131,14 +137,33 @@ class WorkReview(unittest.TestCase):
             self.assertEqual(len(provider_calls), 2)
             previous = f.base / "worker"
             before = json.loads((previous/"source-review/budget.json").read_text())["reserved_calls"]
-            resumed = list(command)
-            resumed[resumed.index("--output")+1] = str(f.base/"recovered")
-            resumed += ["--resume-from", str(previous)]
-            with patch.object(sys, "argv", [worker.__file__, *resumed[3:]]):
-                self.assertEqual(worker.main(), 0)
+            resumed = self.source_resume(f, command)
+            self.assertEqual(self.invoke(resumed), 2)
+            latest = f.base / "recovered"
+            final = f.base / "final"
+            resumed[resumed.index("--resume-from") + 1] = str(latest)
+            resumed[resumed.index("--output") + 1] = str(final)
+            summary = previous / "source-review/summary.json"
+            saved = summary.read_bytes()
+            try:
+                summary.write_bytes(saved + b"\n")
+                with self.assertRaisesRegex(ValueError, "source summary changed"):
+                    self.invoke(resumed)
+                self.assertFalse((latest / "continued-to.json").exists())
+            finally:
+                summary.write_bytes(saved)
+            self.assertEqual(self.invoke(resumed), 0)
         self.assertEqual(len(provider_calls), 2)
         self.assertEqual(json.loads((previous/"source-review/budget.json").read_text())["reserved_calls"], before)
-        result = json.loads((f.base/"recovered/worker.json").read_text())
+        result = json.loads((final / "worker.json").read_text())
+        self.assertEqual(report_settings, [(result["reviewer"], "true")] * 3)
+        self.assertTrue(result["recovered_admission"])
+        self.assertEqual(Path(result["recovered_from"]), latest)
+        receipt = json.loads((final / "native-writes/admission.json").read_text())["receipts"][0]
+        self.assertTrue(receipt["replayed"])
+        self.assertEqual(result["admission_sequence"], receipt["sequence"])
+        self.assertEqual(json.loads((previous / "findings.json").read_text()),
+                         json.loads((final / "findings.json").read_text()))
         self.assertEqual(result["work_goal"]["completed_items"], 2)
         self.assertEqual(Path(result["work_goal"]["continuation_of"]), previous)
 
@@ -276,7 +301,7 @@ print(json.dumps(value))
         self.exercise_comprehensive_continuation(close_value=False, cap=3)
 
     def exercise_comprehensive_continuation(self, *, close_value, cap):
-        fixture, command, manifest_path, ids = self.prepare(unresolved=not close_value)
+        fixture, command, manifest_path, ids = self.prepare(unresolved=not close_value, project_run=close_value)
         if close_value:
             self.audit_provider(fixture)
         else:
@@ -304,33 +329,39 @@ print(json.dumps(value))
                 correction[correction.index("--output") + 1] = str(checkpoint)
                 checked = subprocess.run(correction, capture_output=True, text=True, timeout=300)
                 self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-            effective = summary["effective_args"]
-            claim = json.loads(Path(effective["claim"]).read_text())
-            old_claim = claim["result"]
-            source = ["--inventory", effective["inventory"], "--source-root", root]
-            stream = ["--store", fixture.base / "state", "--stream", "source", *source]
-            old_owner = ["--generation", old_claim["generation"], "--owner", old_claim["owner"]]
-            parent_plan = ["--expected-plan-id", json.loads(Path(effective["work_package"]).read_text())["payload"]["plan_id"]]
-            if close_value:
-                ended = fixture.native("state", "end", *stream, *old_owner,
-                                       "--status", "finished", "--operation-key", "close-value")
-                self.assertEqual(ended["memory"]["status"], "retained")
-                claim = fixture.native("state", "claim", *stream, "--expected-generation", old_claim["generation"],
-                                       "--attempt-id", "comprehensive", "--operation-key", "extend", "--retry", "true")
-                parent_plan = []
-            owner = ["--generation", claim["result"]["generation"], "--owner", claim["result"]["owner"]]
-            plan = fixture.native("state", "plan-template", *source, *skill, "--policy", "comprehensive", "--selection", "policy")
-            plan_path = fixture.base / "comprehensive-native.json"
-            plan_path.write_text(json.dumps(plan))
-            fixture.native("state", "plan", *stream, *owner, *skill, *parent_plan,
-                           "--input", plan_path, "--operation-key", "wider-plan")
-            work = fixture.native("state", "work", *stream, *owner, *skill)
-            work_path = fixture.base / "comprehensive-work.json"
-            work_path.write_text(json.dumps(work))
             claim_path = fixture.base / "comprehensive-claim.json"
+            if close_value:
+                value = json.loads((initial / "worker.json").read_text())
+                close = fixture.native("state", "end", "--project-run", value["project_run"],
+                    "--claim", value["private_claim"], "--status", "finished", "--operation-key", "close-value")
+                self.assertEqual(close["memory"]["status"], "retained")
+                receipt = fixture.base / "close.json"
+                receipt.write_text(json.dumps(close))
+                claim_args = ["state", "claim", "--close-receipt", receipt, "--policy", "comprehensive",
+                              "--attempt-id", "comprehensive", "--operation-key", "extend"]
+                claim = fixture.native(*claim_args)
+                self.assertEqual(fixture.native(*claim_args)["result"], claim["result"])
+                self.assertEqual(claim["result"]["generation"], close["result"]["generation"] + 1)
+                source_plan = fixture.native("investigate", "source-review-plan", "--close-receipt", receipt)
+            else:
+                effective = summary["effective_args"]
+                claim = json.loads(Path(effective["claim"]).read_text())
+                old = claim["result"]
+                source = ["--inventory", effective["inventory"], "--source-root", root]
+                stream = ["--store", fixture.base / "state", "--stream", "source", *source]
+                owner = ["--generation", old["generation"], "--owner", old["owner"]]
+                parent_plan = json.loads(Path(effective["work_package"]).read_text())["payload"]["plan_id"]
+                plan = fixture.native("state", "plan-template", *source, *skill, "--policy", "comprehensive", "--selection", "policy")
+                plan_path = fixture.base / "comprehensive-native.json"
+                plan_path.write_text(json.dumps(plan))
+                fixture.native("state", "plan", *stream, *owner, *skill, "--expected-plan-id", parent_plan,
+                               "--input", plan_path, "--operation-key", "wider-plan")
+                work = fixture.native("state", "work", *stream, *owner, *skill)
+                work_path = fixture.base / "comprehensive-work.json"
+                work_path.write_text(json.dumps(work))
+                source_plan = fixture.native("investigate", "source-review-plan", root, "--inventory", effective["inventory"],
+                                             "--review-ids", ",".join(work["payload"]["review_ids"]))
             claim_path.write_text(json.dumps(claim))
-            source_plan = fixture.native("investigate", "source-review-plan", root, "--inventory", effective["inventory"],
-                                         "--review-ids", ",".join(work["payload"]["review_ids"]))
             manifest = json.loads(manifest_path.read_text())
             manifest.update(source_plan_id=source_plan["plan_id"], source_fingerprint=source_plan["source_fingerprint"])
             for item in manifest["items"]:
@@ -346,10 +377,19 @@ print(json.dumps(value))
             manifest["items"].extend([added, named])
             expanded = fixture.base / "comprehensive-plan.json"
             output = fixture.base / "wider"
-            followup = list(command) + ["--continue-comprehensive", str(checkpoint), "--max-calls", "20"]
-            for flag, value in {"--inventory":effective["inventory"], "--claim":claim_path,
-                "--work-package":work_path, "--work-plan":expanded, "--output":output}.items():
+            followup = list(command)
+            replacements = {"--claim":claim_path, "--work-plan":expanded, "--output":output}
+            if close_value:
+                i = followup.index("--work-package")
+                del followup[i:i+2]
+                followup[followup.index("--project-run")] = "--close-receipt"
+                replacements["--close-receipt"] = receipt
+            else:
+                followup.extend(["--continue-comprehensive", str(checkpoint)])
+                replacements.update({"--inventory":effective["inventory"], "--work-package":work_path})
+            for flag, value in replacements.items():
                 followup[followup.index(flag) + 1] = str(value)
+            followup += ["--max-calls", "20"]
             if close_value:
                 expanded.write_text(json.dumps({**manifest, "items":manifest["items"][1:]}))
                 rejected = subprocess.run(followup, capture_output=True, text=True, timeout=180)
@@ -386,7 +426,12 @@ print(json.dumps(value))
                 with patch.object(worker, "write", side_effect=stop_after_case), self.assertRaises(KeyboardInterrupt):
                     self.invoke(followup)
                 self.assertTrue(interrupted)
-                resume = followup[:-4] + ["--max-calls", "20", "--resume-from", str(output), "--second-pass", "full"]
+                wrong = followup + ["--resume-from", str(initial)]
+                wrong_output = fixture.base / "unrelated-recovery"
+                wrong[wrong.index("--output") + 1] = str(wrong_output)
+                self.assertNotEqual(subprocess.run(wrong, capture_output=True, timeout=60).returncode, 0)
+                self.assertFalse(wrong_output.exists())
+                resume = followup + ["--resume-from", str(output), "--second-pass", "full"]
                 output = fixture.base / "recovered-extension"
                 resume[resume.index("--output") + 1] = str(output)
                 result = subprocess.run(resume, capture_output=True, text=True, timeout=300)
@@ -395,14 +440,16 @@ print(json.dumps(value))
             self.assertEqual(result.returncode, 0 if close_value else 2,
                              result.stdout + result.stderr + (output / "worker.json").read_text())
             if close_value:
-                expanded_summary = json.loads((output / "source-review/summary.json").read_text())
-                final_args = expanded_summary["effective_args"]
-                final_owner = json.loads(Path(final_args["claim"]).read_text())["result"]
-                retained = fixture.native("state", "end", "--store", fixture.base / "state", "--stream", "source",
-                    "--inventory", final_args["inventory"], "--source-root", root, "--generation", final_owner["generation"],
-                    "--owner", final_owner["owner"], "--status", "finished", "--operation-key", "retain-comprehensive")
+                completed = json.loads(result.stdout)
+                retained = fixture.native("state", "end", "--project-run", completed["project_run"],
+                    "--claim", completed["private_claim"], "--status", "finished", "--operation-key", "retain-comprehensive")
                 self.assertEqual(retained["memory"]["status"], "retained")
                 self.assertEqual(retained["memory"]["assessments"], 4)
+                final_receipt = fixture.base / "comprehensive-close.json"
+                final_receipt.write_text(json.dumps(retained))
+                refused = fixture.native("state", "claim", "--close-receipt", final_receipt,
+                    "--policy", "comprehensive", "--attempt-id", "again", "--operation-key", "again", okay=False)
+                self.assertIn("requires a closed full-repository Value plan", refused)
 
         stage = output / "source-review"
         continuation = json.loads((stage / "summary.json").read_text())["continuation"]
@@ -516,9 +563,9 @@ print(json.dumps(value))
         self.assertEqual((initial/"source-review/work-ledger.json").read_bytes(), original_ledger)
         frames=[json.loads(path.read_text()) for path in (f.base/"followup/training-turns").glob("*/*-input.json")]
         self.assertEqual([frame["review_role"] for frame in frames], ["second_pass_fast"])
-    def prepare(self, unresolved=False, malformed=False):
+    def prepare(self, unresolved=False, malformed=False, *, project_run=False):
         fixture = domain_fixtures.DomainReview()
-        f, command, ids = fixture.prepare()
+        f, command, ids = fixture.prepare(project_run=project_run)
         self.addCleanup(fixture.doCleanups)
         path = Path(command[command.index("--domain-plan") + 1])
         domain = json.loads(path.read_text())
@@ -566,10 +613,23 @@ print(json.dumps(value))
         self.assertIn("medium", ledger["summary"]["remaining_by_potential_impact"])
 
     def test_coverage_target_closes_only_selected_checks_and_keeps_other_risk_visible(self):
-        f, command, _, _ = self.prepare()
-        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "lower"], 0)
+        f, command, path, _ = self.prepare()
+        manifest = json.loads(path.read_text())
+        # A target ID can contain characters that are invalid in Windows filenames.
+        target = "auth:lower"
+        manifest["items"][0]["id"] = target
+        for item in manifest["items"]:
+            item["signal"]["evidence"].append(dict(path="other/app.js", start_line=1, end_line=4))
+        path.write_text(json.dumps(manifest))
+        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", target], 0)
         self.assertTrue(ledger["target_complete"])
         self.assertEqual(ledger["summary"]["remaining_by_potential_impact"], {"critical":1})
+        frames = self.frames(f)
+        self.assertEqual(set(frames), {target})
+        frame = json.loads(frames[target].read_text())
+        facts = json.loads(Path(frame["shared_facts"]).read_text())["facts"]
+        self.assertEqual(facts[0]["result"]["results"]["path"], "other/app.js")
+        self.assertIn("f0", frame["research"]["citation_windows"])
 
     def test_shared_packet_items_retain_distinct_sessions_and_native_decisions(self):
         f, command, _, ids = self.prepare()
@@ -604,29 +664,6 @@ print(json.dumps(value))
         ledger = self.run_worker(f, command + ["--review-goal", "coverage"], 0)
         self.assertTrue(ledger["target_complete"])
         self.assertTrue(ledger["summary"]["unclassified_native_ids"])
-
-    def test_deciding_source_signal_is_delivered_only_for_started_target(self):
-        f, command, path, _ = self.prepare()
-        value = json.loads(path.read_text())
-        for item in value["items"]:
-            item["signal"]["evidence"].append(dict(path="other/app.js", start_line=1, end_line=4))
-        path.write_text(json.dumps(value))
-        self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "lower"], 0)
-        stage = f.base / "worker/source-review"
-        self.assertEqual(set(self.frames(f)), {"lower"})
-        frame = json.loads(self.frames(f)["lower"].read_text())
-        facts = json.loads(Path(frame["shared_facts"]).read_text())["facts"]
-        self.assertEqual(facts[0]["result"]["results"]["path"], "other/app.js")
-        self.assertIn("f0", frame["research"]["citation_windows"])
-
-    def test_item_identifiers_are_not_used_as_windows_file_paths(self):
-        f, command, path, _ = self.prepare()
-        value = json.loads(path.read_text())
-        value["items"][0]["id"] = "auth:lower"
-        path.write_text(json.dumps(value))
-        ledger = self.run_worker(f, command + ["--review-goal", "coverage", "--coverage-target", "auth:lower"], 0)
-        self.assertTrue(ledger["target_complete"])
-        self.assertEqual(set(self.frames(f)), {"auth:lower"})
 
 
 if __name__ == "__main__":

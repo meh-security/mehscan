@@ -70,9 +70,7 @@
   capability: cookie_configuration
   cwe: [CWE-614]
   match:
-    any:
-      - pattern: $COOKIE.setSecure($VALUE)
-        captures: { secure: VALUE }
+    native_captures: [secure]
   tags: [cookie, secure, configuration]
   ai: *cookie_secure_guidance
   provenance: &java_cookie_secure_provenance
@@ -89,9 +87,7 @@
   capability: cookie_configuration
   cwe: [CWE-1004]
   match:
-    any:
-      - pattern: $COOKIE.setHttpOnly($VALUE)
-        captures: { http_only: VALUE }
+    native_captures: [http_only]
   tags: [cookie, http-only, configuration]
   ai: *cookie_httponly_guidance
   provenance:

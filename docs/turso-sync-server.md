@@ -212,7 +212,15 @@ One maintainer runs `sync_memory init`. The fresh upstream returns
 `created: false`. Each writer and reader runs `sync_memory pull` and checks
 `initialized: true` before using its replica.
 
-Publish from an existing retained review. Use the `memory.batch` value in the
+A retained project close receipt supplies the source, effective inventory, stream, memory database, repository key and batch. After initializing and pulling the replica, stage the receipt and push it.
+
+```sh
+mehscan memory sync stage --close-receipt close.json --replica "$REPLICA" \
+  --remote "$REMOTE" --publisher-label team-maintainer
+sync_memory push
+```
+
+For an existing retained review with explicit paths, use the `memory.batch` value in the
 close receipt, the effective inventory used at close, and the same stream.
 Include `--store /path/to/local-memory.turso` if the review used a custom store.
 Staging can run offline after the initial pull. If a push fails, retry from

@@ -115,8 +115,13 @@ def export_review(plan, directory, record, reviewer, execute, env):
             "--sarif-category", category, "--sarif-run-id", attempt]
         if partial:
             args += ["--allow-partial", "true"]
-        canonical = json.loads(execute([*args, "--format", "json"], env=env))
-        sarif = json.loads(execute([*args, "--format", "sarif"], env=env))
+        # The Action also accepts trusted binaries from before combined export.
+        if "json-sarif" in execute([plan["scanner"], "report", "--help"], env=env):
+            rendered = json.loads(execute([*args, "--format", "json-sarif"], env=env))
+            canonical, sarif = rendered["report"], rendered["sarif"]
+        else:
+            canonical = json.loads(execute([*args, "--format", "json"], env=env))
+            sarif = json.loads(execute([*args, "--format", "sarif"], env=env))
         if sarif["version"] != "2.1.0" or len(sarif["runs"]) != 1:
             raise ValueError("native SARIF export is invalid")
         # Annotation only: never replace native matching/flow/completion fields.

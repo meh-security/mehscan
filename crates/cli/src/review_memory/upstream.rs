@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -17,7 +17,7 @@ use turso::{
 
 use super::{
     Snapshot, assessments, check_store_file, db_error, fingerprint, load_snapshot, lock_store,
-    open_local, open_store_lock, resolve_store,
+    open_local, open_store_lock, query_batch, resolve_store,
 };
 
 const PROJECT_PULL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -40,6 +40,14 @@ const SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS upstream_batch_scope
         ON assessment_batches(repository_id, snapshot_id, inventory_fingerprint, stream, id);
+";
+
+const LINEAGE_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS publication_lineage (
+        publication_id TEXT PRIMARY KEY NOT NULL REFERENCES assessment_batches(id),
+        prepared_inventory TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS upstream_prepared_inventory ON publication_lineage(prepared_inventory);
 ";
 
 const DEPENDENCY_SCHEMA: &str = "
@@ -114,7 +122,7 @@ struct PublishedReview {
 enum Operation {
     Init,
     Pull,
-    PullContext(Selection, Option<Baseline>),
+    PullContext(Selection, Option<Baseline>, String),
     Push,
     Status,
     Checkpoint,
@@ -136,7 +144,7 @@ impl Operation {
 
 pub(super) fn help() {
     println!(
-        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream and again to enable shared resolutions on older upstreams. Writers pull the initialized schema before staging.\n  Stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE] [--resolution FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
+        "\n  mehscan memory sync init|pull|push|status|checkpoint --replica FILE --remote URL --repository-key KEY --source-root ROOT\n  mehscan memory sync context|stage --replica FILE --remote URL --repository-key KEY --source-root ROOT --inventory DIR --stream STREAM\n  Run init once per upstream and again to enable shared resolutions on older upstreams. Writers pull the initialized schema before staging.\n  mehscan memory sync stage --close-receipt FILE --replica FILE --remote URL --publisher-label LABEL\n  Explicit-path stage requires --batch ID --publisher-label LABEL [--store LOCAL_FILE] [--resolution FILE]. Turso credentials come from MEHSCAN_TURSO_AUTH_TOKEN."
     );
 }
 
@@ -147,6 +155,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let closed_snapshot = if operation.as_deref() == Some("stage") {
+        super::CloseReceipt::supply_publication(&mut args, true)?
+    } else {
+        None
+    };
     let replica = PathBuf::from(args.required("--replica")?);
     let remote = args.required("--remote")?;
     let repository_key = args.required("--repository-key")?;
@@ -162,7 +175,10 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         Some("context" | "stage") => {
             let inventory = PathBuf::from(args.required("--inventory")?);
             let stream = args.required("--stream")?;
-            let snapshot = load_snapshot(&root, &inventory, false)?;
+            let snapshot = match closed_snapshot {
+                Some(snapshot) => snapshot,
+                None => load_snapshot(&root, &inventory, false)?,
+            };
             let selection = selection(snapshot, &repository_key, stream)?;
             if operation.as_deref() == Some("stage") {
                 let batch = args.required("--batch")?;
@@ -248,13 +264,66 @@ pub(super) fn pull_project(
 ) -> Result<Value, String> {
     let local_endpoint = validate_remote(remote)?;
     let selection = selection(snapshot, repository_key, stream)?;
-    run_bound(
+    let scope = fingerprint(&(
+        "mehscan-project-view/v1",
+        remote,
+        repository_key,
+        &selection.repository,
+        &selection.source_snapshot,
+        &selection.snapshot.inventory,
+        &selection.stream,
+        baseline.as_ref().map(|b| (&b.snapshot, &b.inventory)),
+    ))?;
+    let cached = replica.with_file_name(format!("published-{scope}.json"));
+    let result = run_bound(
         replica,
         remote,
         repository_key,
         local_endpoint,
-        Operation::PullContext(selection, baseline),
-    )
+        Operation::PullContext(selection, baseline, scope.clone()),
+    );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_secs();
+    match result {
+        Ok(receipt) => Ok(receipt),
+        Err(reason)
+            if reason == "project context replica is busy"
+                || reason.starts_with("project refresh failed:")
+                || reason.starts_with("project context pull timed out") =>
+        {
+            check_store_file(&cached)?;
+            let view: Value = fs::File::open(&cached)
+                .ok()
+                .and_then(|file| serde_json::from_reader(file).ok())
+                .filter(|view: &Value| {
+                    view["scope"] == scope && view["context"]["authority"] == "upstream_context"
+                })
+                .ok_or_else(|| reason.clone())?;
+            let fetched = view["fetched_at"].as_u64().ok_or_else(|| reason.clone())?;
+            let mut receipt = json!({"status":"cached", "reason":reason, "fetched_at":fetched, "age_seconds":now.saturating_sub(fetched), "context":view["context"]});
+            if !view["baseline"].is_null() {
+                receipt["baseline"] = view["baseline"].clone();
+            }
+            Ok(receipt)
+        }
+        Err(reason) => Err(reason),
+    }
+}
+
+fn save_project_view(replica: &Path, scope: &str, receipt: &Value) -> Result<(), std::io::Error> {
+    let cached = replica.with_file_name(format!("published-{scope}.json"));
+    let fetched_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_secs();
+    let view = json!({"scope":scope, "fetched_at":fetched_at, "context":receipt["context"], "baseline":receipt["baseline"]});
+    let mut file = tempfile::NamedTempFile::new_in(cached.parent().unwrap())?;
+    serde_json::to_writer(&mut file, &view)?;
+    file.as_file().sync_all()?;
+    file.persist(cached)?;
+    Ok(())
 }
 
 fn run_bound(
@@ -510,9 +579,10 @@ async fn initialize_upstream(
     let created = !check_repository(&conn, repository_key).await?;
     if created {
         seed_schema(&mut conn, repository_key).await?;
-    } else if resolution::available(&conn).await? {
+    } else if resolution::available(&conn).await? && lineage_available(&conn).await? {
         return Ok((false, false));
     } else {
+        conn.execute_batch(LINEAGE_SCHEMA).await.map_err(db_error)?;
         conn.execute_batch(resolution::SCHEMA)
             .await
             .map_err(db_error)?;
@@ -528,7 +598,8 @@ async fn initialize_upstream(
         .await?;
         verifier.pull().await.map_err(db_error)?;
         Ok(check_repository(&upstream, repository_key).await?
-            && resolution::available(&upstream).await?)
+            && resolution::available(&upstream).await?
+            && lineage_available(&upstream).await?)
     }
     .await;
     match (push, check) {
@@ -553,6 +624,7 @@ async fn seed_schema(conn: &mut Connection, repository_key: &str) -> Result<(), 
     tx.execute_batch(assessments::CONTENT_SCHEMA)
         .await
         .map_err(db_error)?;
+    tx.execute_batch(LINEAGE_SCHEMA).await.map_err(db_error)?;
     tx.execute_batch(DEPENDENCY_SCHEMA)
         .await
         .map_err(db_error)?;
@@ -577,7 +649,16 @@ async fn operate(
 ) -> Result<Value, String> {
     let started = Instant::now();
     let bootstrap = operation.bootstraps();
-    let (db, mut conn) = open_replica(replica, remote, local_endpoint, bootstrap).await?;
+    let refresh_error = |reason: String| {
+        if matches!(operation, Operation::PullContext(..)) {
+            format!("project refresh failed: {reason}")
+        } else {
+            reason
+        }
+    };
+    let (db, mut conn) = open_replica(replica, remote, local_endpoint, bootstrap)
+        .await
+        .map_err(&refresh_error)?;
     let initialized = check_repository(&conn, repository_key).await?;
     match operation {
         Operation::Init => {
@@ -586,6 +667,7 @@ async fn operate(
             db.pull().await.map_err(db_error)?;
             if !check_repository(&conn, repository_key).await?
                 || !resolution::available(&conn).await?
+                || !lineage_available(&conn).await?
             {
                 return Err("replica did not receive the upstream publication schema".into());
             }
@@ -594,16 +676,24 @@ async fn operate(
             )
         }
         Operation::Pull | Operation::PullContext(..) => {
-            let changed = db.pull().await.map_err(db_error)?;
+            let changed = db.pull().await.map_err(db_error).map_err(&refresh_error)?;
             let initialized = check_repository(&conn, repository_key).await?;
             let stats = db.stats().await.map_err(db_error)?;
+            if matches!(operation, Operation::PullContext(..)) && stats.cdc_operations != 0 {
+                return Err("project context replica contains unpublished writes".into());
+            }
             let pull = json!({"status":"pulled","changed":changed,"initialized":initialized,"elapsed_ms":started.elapsed().as_millis(),"sync":stats});
-            if let Operation::PullContext(selection, baseline) = operation {
+            if let Operation::PullContext(selection, baseline, scope) = operation {
                 let current = context(&conn, &selection, initialized, None).await?;
                 let mut receipt = json!({"status": if initialized { "pulled" } else { "uninitialized" }, "pull": pull, "context": current});
                 if let Some(baseline) = baseline {
                     receipt["baseline"] = json!({"snapshot":baseline.snapshot,"inventory_fingerprint":baseline.inventory,
                         "context":context(&conn, &selection, initialized, Some(&baseline)).await?});
+                }
+                // Publish the cache while still holding the replica lock, so an older
+                // refresh cannot overwrite a newer view after a slow serialization.
+                if initialized && let Err(error) = save_project_view(replica, &scope, &receipt) {
+                    receipt["cache_error"] = json!(error.to_string());
                 }
                 Ok(receipt)
             } else {
@@ -721,6 +811,16 @@ async fn operate(
                 (publication.as_str(), repository_key, selection.repository.as_str(), selection.source_snapshot.as_str(),
                     selection.snapshot.inventory.as_str(), selection.stream.as_str(), label.as_str(), content.attempt_status.as_str()),
             ).await.map_err(db_error)?;
+            if let Some(prepared) = &selection.snapshot.prepared_inventory
+                && lineage_available(&tx).await?
+            {
+                tx.execute(
+                    "INSERT INTO publication_lineage VALUES (?1,?2) ON CONFLICT DO NOTHING",
+                    (publication.as_str(), prepared.as_str()),
+                )
+                .await
+                .map_err(db_error)?;
+            }
             if added != 0 {
                 for assessment in &content.assessments {
                     assessments::publish_assessment(&tx, &publication, assessment).await?;
@@ -872,7 +972,24 @@ async fn publication_fingerprint(conn: &Connection, id: &str) -> Result<Option<S
     if id.starts_with(resolution::ID_PREFIX) && resolution.is_none() {
         return Err(format!("publication {id} is missing its resolution record"));
     }
-    fingerprint(&(metadata, assessments, dependencies, resolution)).map(Some)
+    let lineage: Option<String> = if lineage_available(conn).await? {
+        let mut rows = conn
+            .query(
+                "SELECT prepared_inventory FROM publication_lineage WHERE publication_id = ?1",
+                (id,),
+            )
+            .await
+            .map_err(db_error)?;
+        rows.next()
+            .await
+            .map_err(db_error)?
+            .map(|row| row.get(0))
+            .transpose()
+            .map_err(db_error)?
+    } else {
+        None
+    };
+    fingerprint(&(metadata, assessments, dependencies, resolution, lineage)).map(Some)
 }
 
 async fn published_contents(
@@ -890,6 +1007,17 @@ async fn published_contents(
     Ok((assessments, dependencies))
 }
 
+async fn lineage_available(conn: &Connection) -> Result<bool, String> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'publication_lineage'",
+            (),
+        )
+        .await
+        .map_err(db_error)?;
+    Ok(rows.next().await.map_err(db_error)?.is_some())
+}
+
 async fn context(
     conn: &Connection,
     selection: &Selection,
@@ -902,6 +1030,46 @@ async fn context(
     } else {
         Vec::new()
     };
+    let mut source_reviews = Vec::new();
+    if initialized && lineage_available(conn).await? {
+        let (snapshot, prepared) = baseline.map_or(
+            (&selection.source_snapshot, &selection.snapshot.inventory),
+            |base| (&base.snapshot, &base.inventory),
+        );
+        let key = selection
+            .snapshot
+            .repository
+            .repository_key
+            .as_deref()
+            .ok_or("missing repository key")?;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT b.inventory_fingerprint FROM assessment_batches b
+             JOIN publication_lineage l ON l.publication_id = b.id
+             WHERE b.repository_key = ?1 AND b.repository_id = ?2 AND b.snapshot_id = ?3
+                 AND b.stream = ?4 AND l.prepared_inventory = ?5 AND b.inventory_fingerprint != ?5
+             ORDER BY b.inventory_fingerprint",
+                (
+                    key,
+                    selection.repository.as_str(),
+                    snapshot.as_str(),
+                    selection.stream.as_str(),
+                    prepared.as_str(),
+                ),
+            )
+            .await
+            .map_err(db_error)?;
+        while let Some(row) = rows.next().await.map_err(db_error)? {
+            let effective = Baseline {
+                snapshot: snapshot.clone(),
+                inventory: row.get(0).map_err(db_error)?,
+            };
+            let history =
+                read_publications(conn, selection, resolution_enabled, Some(&effective)).await?;
+            source_reviews
+                .push(json!({"effective_inventory":effective.inventory,"publications":history}));
+        }
+    }
     let mut verdicts = BTreeMap::<String, BTreeSet<String>>::new();
     for publication in &publications {
         for assessment in &publication.assessments {
@@ -913,7 +1081,7 @@ async fn context(
     }
     verdicts.retain(|_, values| values.len() > 1);
     Ok(
-        json!({"authority":"upstream_context","publications":publications,"conflicting_verdicts":verdicts,
+        json!({"authority":"upstream_context","source_review_history":source_reviews,"publications":publications,"conflicting_verdicts":verdicts,
         "resolution_enabled":resolution_enabled,"review_state":resolution::project(&publications)}),
     )
 }
@@ -978,10 +1146,10 @@ async fn read_publications(
 async fn read_dependencies(
     conn: &Connection,
     batch: &str,
-    query: &str,
+    query: &'static str,
 ) -> Result<Vec<FileDependency>, String> {
     let mut result = Vec::new();
-    let mut rows = conn.query(query, (batch,)).await.map_err(db_error)?;
+    let mut rows = query_batch(conn, query, batch).await?;
     while let Some(row) = rows.next().await.map_err(db_error)? {
         result.push(FileDependency {
             assessment_id: row.get(0).map_err(db_error)?,

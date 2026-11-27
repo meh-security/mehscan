@@ -36,11 +36,7 @@
   confidence: medium
   cwe: [CWE-79]
   match:
-    any:
-      - pattern: Encode.forHtml($VALUE)
-        captures: { value: VALUE }
-      - pattern: Encode.forHtmlContent($VALUE)
-        captures: { value: VALUE }
+    native_captures: [value]
   tags: [html, xss, encoding, java, owasp]
   ai: *encoding_guidance
   provenance:

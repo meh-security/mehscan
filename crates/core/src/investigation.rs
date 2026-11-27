@@ -894,6 +894,8 @@ pub struct PathReviewBundleManifestEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewBundleManifest {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_review_cases: Vec<crate::report::SourceReviewCase>,
     pub schema_version: String,
     pub root: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

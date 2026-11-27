@@ -82,25 +82,31 @@ def git_state(root, env):
 def publish(args, link):
     root = args.source_root.resolve(strict=True)
     scanner = outside(args.scanner, root)
-    inventory = outside(args.inventory, root)
     outside(args.link, root)
     env = child_env()
     commit = git_state(root, env)
     number = getattr(args, "pull_request", None)
     if number is None and commit != os.environ.get("GITHUB_SHA"):
         raise ShareError(409, "checkout commit differs from the protected job source commit")
-    if number is not None and args.stream != f"pr:{number}":
-        raise ShareError(409, "pull request publication requires its bound PR stream")
-    command = [str(scanner), "memory", "export", "--source-root", str(root), "--inventory", str(inventory),
-               "--stream", args.stream, "--batch", args.batch]
-    if args.store:
-        command += ["--store", str(outside(args.store, root))]
+    command = [str(scanner), "memory", "export", "--source-root", str(root)]
+    if receipt := getattr(args, "close_receipt", None):
+        if any(getattr(args, field, None) is not None for field in ("inventory", "store", "stream", "batch")):
+            raise ShareError(400, "close receipt supplies the retained batch and its bindings")
+        command += ["--close-receipt", str(outside(receipt, root))]
+    else:
+        if not args.inventory or not args.stream or not args.batch:
+            raise ShareError(400, "publication requires a close receipt or inventory, stream and batch")
+        command += ["--inventory", str(outside(args.inventory, root)), "--stream", args.stream, "--batch", args.batch]
+        if args.store:
+            command += ["--store", str(outside(args.store, root))]
     completed = subprocess.run(command, check=True, capture_output=True, env=env, timeout=300)
     if len(completed.stdout) > MAX_DOCUMENT:
         raise ShareError(413, "retained batch exceeds the publication limit")
     if git_state(root, env) != commit:
         raise ShareError(409, "checkout changed while exporting the retained batch")
     batch = parse_document(completed.stdout)
+    if number is not None and batch["stream"] != f"pr:{number}":
+        raise ShareError(409, "pull request publication requires its bound PR stream")
     if batch["repository"]["repository_key"] != link["repository_key"]:
         raise ShareError(403, "inventory does not belong to the linked repository")
     submission = {"commit": commit, "batch": batch, "run_id": os.environ.get("GITHUB_RUN_ID"),
@@ -192,11 +198,12 @@ def main():
             command.add_argument("--id", required=True)
         elif name in ("publish", "sync"):
             for option in ("source-root", "inventory", "scanner"):
-                command.add_argument("--" + option, required=True, type=Path)
+                command.add_argument("--" + option, required=name == "sync" or option != "inventory", type=Path)
         if name == "publish":
             command.add_argument("--store", type=Path)
-            command.add_argument("--stream", required=True)
-            command.add_argument("--batch", required=True)
+            command.add_argument("--close-receipt", type=Path)
+            command.add_argument("--stream")
+            command.add_argument("--batch")
             command.add_argument("--pull-request", type=int)
         if name in ("pr-target", "pr-current"):
             command.add_argument("--pull-request", type=int, required=True)

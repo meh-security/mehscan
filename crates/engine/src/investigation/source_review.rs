@@ -78,6 +78,9 @@ pub struct Admission {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Binding {
+    /// Earliest prepared inventory known to this source-admission chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_inventory: Option<String>,
     pub source_fingerprint: String,
     pub questions: Vec<Proposal>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1134,6 +1137,12 @@ pub fn admit(
         identity_catalog: job.identity_catalog,
         admission_audit: job.review_coverage.admission_audit,
         source_inputs: Some(Binding {
+            prepared_inventory: Some(
+                base.source_inputs
+                    .as_ref()
+                    .and_then(|binding| binding.prepared_inventory.clone())
+                    .unwrap_or_else(|| input.plan.inventory_fingerprint.clone()),
+            ),
             source_fingerprint: base.source_fingerprint.clone(),
             questions,
             additional_sources: additional_sources.into_values().collect(),

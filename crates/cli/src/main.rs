@@ -60,17 +60,13 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         print_report_help();
         return Ok(());
     }
-    let run = PathBuf::from(parsed.required("--run")?);
-    let responses = parsed.optional("--responses").map(PathBuf::from);
-    let source_root = parsed.optional("--source-root").map(PathBuf::from);
-    let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
     let format = match parsed.optional("--format").as_deref().unwrap_or("json") {
         "json" => ReportOutputFormat::Json,
         "sarif" => ReportOutputFormat::Sarif,
+        "json-sarif" => ReportOutputFormat::JsonSarif,
         "markdown" | "md" => ReportOutputFormat::Markdown,
         value => return Err(format!("unsupported report format {value:?}")),
     };
-    let reviewer = parsed.optional("--reviewer");
     let sarif_category = parsed.optional("--sarif-category");
     let sarif_run_id = parsed.optional("--sarif-run-id");
     // Validate configured identities before reading a run or writing output.
@@ -87,28 +83,13 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         )?;
     }
     let output = parsed.optional("--output").map(PathBuf::from);
-    let include_dismissed = parsed
-        .optional_bool("--include-dismissed")?
-        .unwrap_or(false);
     let scope = parse_report_scope(&mut parsed);
-    parsed.finish()?;
-
-    let (manifest, bundle_responses, work) = read_complete_bundle_responses(
-        &run,
-        responses.as_deref(),
-        allow_partial,
-        source_root.as_deref(),
-    )?;
-    let mut report = engine(
-        mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
-            &manifest,
-            env!("CARGO_PKG_VERSION"),
-            reviewer,
-            &bundle_responses,
-            include_dismissed,
-            work,
-        ),
-    )?;
+    let mut report = if let Some(path) = parsed.optional("--close-receipt") {
+        parsed.finish()?;
+        review_memory::CloseReceipt::read(Path::new(&path))?.findings()?
+    } else {
+        report_from_run(parsed)?
+    };
     report.scan.sarif_automation = Some(sarif_automation.unwrap_or(
         mehscan_core::SarifAutomationConfiguration::new(
             report.default_sarif_category(),
@@ -133,8 +114,59 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             &mehscan_core::FindingSarifLog::from_finding_report(&report),
             output.as_deref(),
         ),
+        ReportOutputFormat::JsonSarif => {
+            #[derive(serde::Serialize)]
+            struct Exports<'a> {
+                report: &'a mehscan_core::FindingReport,
+                sarif: mehscan_core::FindingSarifLog,
+            }
+            write_json(
+                &Exports {
+                    report: &report,
+                    sarif: mehscan_core::FindingSarifLog::from_finding_report(&report),
+                },
+                output.as_deref(),
+            )
+        }
         ReportOutputFormat::Markdown => write_text(&report.to_markdown(), output.as_deref()),
     }
+}
+
+fn report_from_run(mut parsed: ParsedArguments) -> Result<mehscan_core::FindingReport, String> {
+    let (run, source_root) = if let Some(path) = parsed.optional("--project-run") {
+        let path = Path::new(&path);
+        let project = review_memory::PreparedProject::read(path)?;
+        (project.report_run(path)?, Some(project.source_root))
+    } else {
+        (
+            PathBuf::from(parsed.required("--run")?),
+            parsed.optional("--source-root").map(PathBuf::from),
+        )
+    };
+    let responses = parsed.optional("--responses").map(PathBuf::from);
+    let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
+    let reviewer = parsed.optional("--reviewer");
+    let include_dismissed = parsed
+        .optional_bool("--include-dismissed")?
+        .unwrap_or(false);
+    parsed.finish()?;
+
+    let (manifest, bundle_responses, work) = read_complete_bundle_responses(
+        &run,
+        responses.as_deref(),
+        allow_partial,
+        source_root.as_deref(),
+    )?;
+    engine(
+        mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
+            &manifest,
+            env!("CARGO_PKG_VERSION"),
+            reviewer,
+            &bundle_responses,
+            include_dismissed,
+            work,
+        ),
+    )
 }
 
 /// Explicit, portable handoff metadata; it is not a security fact supplied to AI.
@@ -163,20 +195,21 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         return Ok(());
     }
     let mut root = None;
-    let mut manifest = if operation.starts_with("review-") {
+    let default_manifest = if operation.starts_with("review-") {
         PathBuf::from("benchmarks/cross-language-review-verdicts.yml")
     } else {
         PathBuf::from("benchmarks/v2-ai-eval.yml")
     };
+    let mut manifest = None;
     let mut responses = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--manifest" => {
-                manifest = PathBuf::from(
+                manifest = Some(PathBuf::from(
                     arguments
                         .next()
                         .ok_or_else(|| "--manifest requires a path".to_string())?,
-                );
+                ));
             }
             "--responses" => {
                 responses = Some(PathBuf::from(
@@ -195,13 +228,15 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         }
     }
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    let manifest = || maintainer_manifest(&root, manifest, &default_manifest);
     match operation.as_str() {
         "prepare" => {
             if responses.is_some() {
                 return Err("--responses is only valid for evaluation scoring".to_string());
             }
             let pack = engine(mehscan_engine::evaluation::prepare_evaluation(
-                &root, &manifest,
+                &root,
+                &manifest()?,
             ))?;
             print_json(&pack)
         }
@@ -225,7 +260,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             })?;
             let report = engine(mehscan_engine::evaluation::score_evaluation(
                 &root,
-                &manifest,
+                &manifest()?,
                 &response_set,
             ))?;
             print_json(&report)
@@ -235,7 +270,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 return Err("--responses is only valid for evaluation scoring".to_string());
             }
             let pack = engine(
-                mehscan_engine::evaluation::prepare_review_verdict_evaluation(&root, &manifest),
+                mehscan_engine::evaluation::prepare_review_verdict_evaluation(&root, &manifest()?),
             )?;
             print_json(&pack)
         }
@@ -259,7 +294,7 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 })?;
             let report = engine(mehscan_engine::evaluation::score_review_verdict_evaluation(
                 &root,
-                &manifest,
+                &manifest()?,
                 &response_set,
             ))?;
             print_json(&report)
@@ -566,20 +601,37 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     output
 }
 
+fn maintainer_manifest(
+    root: &Path,
+    supplied: Option<PathBuf>,
+    default: &Path,
+) -> Result<PathBuf, String> {
+    if let Some(path) = supplied {
+        return Ok(path);
+    }
+    if root.join(default).is_file() {
+        return Ok(default.to_owned());
+    }
+    Err(format!(
+        "supply --manifest PATH for this workspace (default {} is absent)",
+        default.display()
+    ))
+}
+
 fn run_benchmark(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut root = None;
-    let mut manifest = PathBuf::from("benchmarks/v2-sast.yml");
+    let mut manifest = None;
     let mut include_optional = false;
     let mut format = OutputFormat::Text;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--manifest" => {
-                manifest = PathBuf::from(
+                manifest = Some(PathBuf::from(
                     arguments
                         .next()
                         .ok_or_else(|| "--manifest requires a path".to_string())?,
-                );
+                ));
             }
             "--include-optional" => include_optional = true,
             "--format" => {
@@ -603,6 +655,7 @@ fn run_benchmark(arguments: impl Iterator<Item = String>) -> Result<(), String> 
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    let manifest = maintainer_manifest(&root, manifest, Path::new("benchmarks/v2-sast.yml"))?;
     let report = engine(mehscan_engine::benchmark::run_manifest(
         &root,
         &manifest,
@@ -952,7 +1005,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     output.display()
                 )
             })?;
-            write_review_inventory(&output, &inventory)?;
+            let input_fingerprint = engine(inventory.input_fingerprint())?;
+            write_review_inventory(&output, &inventory, &input_fingerprint)?;
             if timings {
                 eprintln!(
                     "{}",
@@ -964,22 +1018,46 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
         }
         "source-review-plan" | "source-review-check" | "source-review-admit" => {
-            let directory = PathBuf::from(parsed.required("--inventory")?);
-            let base: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
-                &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?;
+            let (root, base, receipt_scope) = if operation == "source-review-plan"
+                && let Some(path) = parsed.optional("--close-receipt")
+            {
+                if root != Path::new(".") {
+                    return Err("--close-receipt supplies the source root".into());
+                }
+                let close = review_memory::CloseReceipt::read(Path::new(&path))?;
+                let project = review_memory::PreparedProject::read(&close.project_run)?;
+                close.validate_project(&project)?;
+                let (base, binding) =
+                    review_state::inventory(&project.inventory, &project.source_root)?;
+                if binding.impact_scope.is_some() {
+                    return Err("Comprehensive continuation requires a full-repository plan".into());
+                }
+                let scope = review_completion::template(
+                    &binding,
+                    mehscan_core::ReviewCompletionPolicy::Comprehensive,
+                );
+                (project.source_root, base, Some(scope.selected_review_ids))
+            } else {
+                let directory = PathBuf::from(parsed.required("--inventory")?);
+                let base = serde_json::from_slice(
+                    &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                (root, base, None)
+            };
             if operation == "source-review-plan" {
                 let include_supporting_source = parsed
                     .optional_bool("--include-supporting-source")?
                     .unwrap_or(false);
-                let ids = parsed
-                    .optional("--review-ids")
-                    .unwrap_or_default()
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
+                let ids = receipt_scope.unwrap_or_else(|| {
+                    parsed
+                        .optional("--review-ids")
+                        .unwrap_or_default()
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                });
                 parsed.finish()?;
                 print_json(&engine(
                     mehscan_engine::investigation::source_review::plan_with_options(
@@ -1035,9 +1113,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     return Err("source admission output must be outside the target source".into());
                 }
                 fs::create_dir(&output).map_err(|e| e.to_string())?;
-                write_review_inventory(&output, &inventory)?;
+                let input_fingerprint = engine(inventory.input_fingerprint())?;
+                write_review_inventory(&output, &inventory, &input_fingerprint)?;
                 print_json(
-                    &serde_json::json!({"mapping":mapping,"input_fingerprint":engine(inventory.input_fingerprint())?,"review_count":inventory.entries.len()}),
+                    &serde_json::json!({"mapping":mapping,"input_fingerprint":input_fingerprint,"review_count":inventory.entries.len()}),
                 )
             }
         }
@@ -1261,7 +1340,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "output": output,
             }))
         }
-        "review-jobs" => {
+        "review-jobs" | "review-tasks" => {
             let repository_key = parsed.optional("--repository-key");
             let source_repository_key = parsed.optional("--source-repository-key");
             let limit = parsed.optional_usize("--limit")?;
@@ -1283,31 +1362,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 repository_key,
                 source_repository_key,
             ))?;
-            print_json(&job)
-        }
-        "review-tasks" => {
-            let repository_key = parsed.optional("--repository-key");
-            let source_repository_key = parsed.optional("--source-repository-key");
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
-                &root,
-                context_lines,
-                limit,
-                offset,
-                include_review_material,
-            ))?;
-            engine(mehscan_engine::investigation::bind_review_job_repository(
-                &mut job,
-                repository_key,
-                source_repository_key,
-            ))?;
-            print_json(&mehscan_engine::investigation::path_review_tasks(&job))
+            if operation == "review-tasks" {
+                print_json(&mehscan_engine::investigation::path_review_tasks(&job))
+            } else {
+                print_json(&job)
+            }
         }
         "review-bundles" => {
             let repository_key = parsed.optional("--repository-key");
@@ -3110,11 +3169,12 @@ fn read_source_admission(
 fn write_review_inventory(
     output: &Path,
     inventory: &mehscan_engine::investigation::ReviewInventory,
+    input_fingerprint: &str,
 ) -> Result<(), String> {
     let summary = serde_json::json!({
         "schema_version": inventory.schema_version,
         "source_fingerprint": inventory.source_fingerprint,
-        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "input_fingerprint": input_fingerprint,
         "include_review_material": inventory.include_review_material,
         "review_count": inventory.entries.len(),
         "coverage": inventory.scan.coverage.totals,
@@ -3172,7 +3232,7 @@ fn write_review_inventory(
         })),
         "schema_version": inventory.schema_version,
         "source_fingerprint": inventory.source_fingerprint,
-        "input_fingerprint": engine(inventory.input_fingerprint())?,
+        "input_fingerprint": input_fingerprint,
         "review_count": inventory.entries.len(),
         "coverage": inventory.scan.coverage.totals,
         "impact_scope": inventory.scan.impact_scope,
@@ -4506,6 +4566,7 @@ enum ScanOutputFormat {
 
 enum ReportOutputFormat {
     Json,
+    JsonSarif,
     Sarif,
     Markdown,
 }
@@ -4604,15 +4665,29 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
+        r#"mehscan - deterministic security evidence scanner
+
+USAGE
+  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N]
+  mehscan scan [PATH] (--changed-from REF | --files-from PATH) [--diff-mode full|impact|files]
+  mehscan project prepare ROOT --config FILE --output DIR
+  mehscan investigate <OPERATION> [PATH] [OPTIONS]
+  mehscan state <OPERATION> [--project-run FILE] [OPTIONS]
+  mehscan report (--run DIR | --project-run FILE | --close-receipt FILE) [--format json|sarif|markdown|json-sarif] [--output PATH]
+  mehscan memory <OPERATION> [OPTIONS]
+  mehscan --version
+
+MAINTAINER TOOLS
+  mehscan benchmark [ROOT] --manifest PATH [--include-optional] [--format text|json]
+  mehscan evaluate <prepare|score|review-prepare|review-score> [ROOT] --manifest PATH [OPTIONS]
+
+Run a command with --help for details."#
     );
-    println!("\nRepository memory: mehscan memory --help");
-    println!("Prepare linked source: mehscan project --help");
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
+        "USAGE:\n  mehscan report (--run DIR | --project-run FILE | --close-receipt FILE) [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown|json-sarif] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
     );
 }
 
@@ -4642,13 +4717,13 @@ Diff mode 'full' remains the scan default: analyze the complete repository, then
 
 fn print_benchmark_help() {
     println!(
-        "SAST BENCHMARK\n\nUSAGE:\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n\nThe default manifest is benchmarks/v2-sast.yml beneath ROOT. Fixture cases always run twice to verify deterministic evidence, paths, and coverage. Optional corpora are skipped unless --include-optional is supplied. No external scanner is downloaded or executed."
+        "SAST BENCHMARK\n\nUSAGE:\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n\nSupply a benchmark manifest beneath ROOT. Workspaces containing benchmarks/v2-sast.yml can omit --manifest. Fixture cases always run twice to verify deterministic evidence, paths, and coverage. Optional corpora are skipped unless --include-optional is supplied. No external scanner is downloaded or executed."
     );
 }
 
 fn print_evaluation_help() {
     println!(
-        "PROVIDER-NEUTRAL MATCHED EVALUATION\n\nUSAGE:\n  mehscan evaluate prepare [ROOT] [--manifest PATH]\n  mehscan evaluate score [ROOT] [--manifest PATH] --responses PATH\n  mehscan evaluate review-prepare [ROOT] [--manifest PATH]\n  mehscan evaluate review-score [ROOT] [--manifest PATH] --responses PATH\n\n'prepare' emits matched AI-only, evidence-assisted, and candidate-assisted trials. 'review-prepare' emits a small cross-language issue/not_issue/needs_review pack without oracle decisions; 'review-score' validates exactly one compact result per selected case against the hidden manifest truth and exact pack fingerprint. Known secret ranges are masked. No model or external service is called by these commands."
+        "PROVIDER-NEUTRAL MATCHED EVALUATION\n\nUSAGE:\n  mehscan evaluate prepare [ROOT] [--manifest PATH]\n  mehscan evaluate score [ROOT] [--manifest PATH] --responses PATH\n  mehscan evaluate review-prepare [ROOT] [--manifest PATH]\n  mehscan evaluate review-score [ROOT] [--manifest PATH] --responses PATH\n\nSupply a workspace evaluation manifest with --manifest, or use an existing benchmarks/v2-ai-eval.yml or benchmarks/cross-language-review-verdicts.yml beneath ROOT. 'prepare' emits matched AI-only, evidence-assisted, and candidate-assisted trials. 'review-prepare' emits a small cross-language issue/not_issue/needs_review pack without oracle decisions; 'review-score' validates exactly one compact result per selected case against the hidden manifest truth and exact pack fingerprint. Known secret ranges are masked. No model or external service is called by these commands."
     );
 }
 
@@ -4675,6 +4750,7 @@ USAGE:
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
   mehscan investigate review-sweep --bundle PATH
+  mehscan investigate source-review-plan --close-receipt FILE [--include-supporting-source true]
   mehscan investigate source-review-plan [ROOT] --inventory DIR [--review-ids ID,ID] [--include-supporting-source true]
   mehscan investigate source-review-check [ROOT] --inventory DIR --input FILE
   mehscan investigate source-review-admit [ROOT] --inventory DIR --input FILE --output NEW_DIR

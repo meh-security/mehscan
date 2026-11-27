@@ -233,7 +233,6 @@ pub(crate) fn scan_profiled(
     let mut evidence = Vec::new();
     let mut security_paths = Vec::new();
     let mut diagnostics = discovery.diagnostics;
-    let mut compiled = BTreeMap::new();
     let (secret_allowlist, allowlist_warnings) = if options.scan_secrets {
         load_allowlist(&discovery.root)
     } else {
@@ -244,13 +243,6 @@ pub(crate) fn scan_profiled(
         message,
         path: Some(".mehscan-secrets-allowlist".to_string()),
     }));
-
-    let compilation_started = Instant::now();
-    for language in all_languages() {
-        compiled.insert(language, compile_for_language(rules, language)?);
-    }
-    let rule_compilation_microseconds = compilation_started.elapsed().as_micros();
-    trace_scan_phase("rule_compilation", rule_compilation_microseconds);
 
     let source_started = Instant::now();
     let mut source_read_microseconds = 0;
@@ -926,6 +918,18 @@ pub(crate) fn scan_profiled(
             });
         }
     }
+    let compilation_started = Instant::now();
+    let mut compiled = BTreeMap::new();
+    let mut languages: BTreeSet<_> = analysis_prepared.iter().map(|file| file.language).collect();
+    if options.razor.is_some() && !razor_sources.is_empty() {
+        languages.insert(Language::Csharp);
+    }
+    for language in languages {
+        compiled.insert(language, compile_for_language(rules, language)?);
+    }
+    let rule_compilation_microseconds = compilation_started.elapsed().as_micros();
+    trace_scan_phase("rule_compilation", rule_compilation_microseconds);
+
     let file_analysis_started = Instant::now();
     let mut file_analysis = FileAnalysisProfile {
         files: specialized_files,
@@ -1393,7 +1397,7 @@ fn scan_prepared_file(
         file.language,
         compiled
             .get(&file.language)
-            .expect("all languages are compiled"),
+            .expect("prepared file language has compiled rules"),
         ScanDependencies {
             project_symbols,
             secret_allowlist,

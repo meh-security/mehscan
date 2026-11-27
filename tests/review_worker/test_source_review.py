@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import review_source
+import review_source_recovery
 
 
 class SourceReuse(unittest.TestCase):
@@ -92,13 +93,13 @@ class SourceReuse(unittest.TestCase):
         path = Path.cwd() / "original-result.json"
         alias = {**original, "reuse":{"prior_result":str(path), "prior_plan_id":"plan"}}
         source = (assignment, original, path, "plan")
-        review_source.validate_reuse_alias(alias, assignment, source)
+        review_source_recovery.validate_reuse_alias(alias, assignment, source)
         changed = copy.deepcopy(alias)
         changed["draft"]["results"].append({"review_id":"invented"})
         with self.assertRaises(ValueError):
-            review_source.validate_reuse_alias(changed, assignment, source)
+            review_source_recovery.validate_reuse_alias(changed, assignment, source)
         with self.assertRaises(ValueError):
-            review_source.validate_reuse_alias(alias, assignment, None)
+            review_source_recovery.validate_reuse_alias(alias, assignment, None)
 
     def test_reconstructed_source_proof_rejects_membership_and_quote_changes(self):
         window = {"path":"app.js", "start_line":1, "end_line":1,
@@ -109,20 +110,20 @@ class SourceReuse(unittest.TestCase):
                   "inspected":[], "proofs":[{**cite, "quote":"safe();"}], "proposals":[],
                   "draft":{"coverage":[{**cite, "status":"examined"}],
                            "results":[{"review_id":"id", "evidence":[cite]}], "proposals":[]}}
-        admission = review_source.reused_source_result(assignment, result, {"plan_id":"current"})
+        admission = review_source_recovery.reused_source_result(assignment, result, {"plan_id":"current"})
         self.assertEqual(admission["assessment_evidence"], result["proofs"])
         changed = copy.deepcopy(result)
         changed["proofs"][0]["quote"] = "invented"
         with self.assertRaises(ValueError):
-            review_source.reused_source_result(assignment, changed, {})
+            review_source_recovery.reused_source_result(assignment, changed, {})
         changed = copy.deepcopy(result)
         changed["draft"]["results"][0]["review_id"] = "other"
         with self.assertRaises(ValueError):
-            review_source.reused_source_result(assignment, changed, {})
+            review_source_recovery.reused_source_result(assignment, changed, {})
         changed = copy.deepcopy(result)
         changed["unknown_provider_calls"] = 1
         with self.assertRaises(ValueError):
-            review_source.reused_source_result(assignment, changed, {})
+            review_source_recovery.reused_source_result(assignment, changed, {})
 
 
 class SourceReview(unittest.TestCase):
@@ -239,15 +240,8 @@ windows=packet['primary']['windows']""")
             (self.root/folder/'app.js').write_text('function run(request) { eval(request.query.code); }\n')
         self.inventory=self.base/'partial-inventory'
         self.native('investigate','review-inventory',self.root,'--repository-key','acceptance:partial','--output',self.inventory)
-        command=self.prepare_worker(proposal=False)
+        command=self.prepare_worker(proposal=False, policy='comprehensive')
         del command[command.index('--source-selection'):]
-        claim=json.loads((self.base/'claim.json').read_text())['result']
-        common=['--store',self.base/'state','--stream','source','--inventory',self.inventory,'--source-root',self.root,'--generation',claim['generation'],'--owner',claim['owner'],'--skill-root',SKILL]
-        old=json.loads((self.base/'work.json').read_text())['payload']['plan_id']
-        plan=self.native('state','plan-template','--inventory',self.inventory,'--source-root',self.root,'--policy','comprehensive','--skill-root',SKILL)
-        path=self.base/'comprehensive.json';path.write_text(json.dumps(plan))
-        self.native('state','plan',*common,'--input',path,'--expected-plan-id',old,'--operation-key','comprehensive')
-        (self.base/'work.json').write_text(json.dumps(self.native('state','work',*common)))
         reviewer=self.base/'reviewer.py'
         reviewer.write_text(reviewer.read_text().replace("if False: raise RuntimeError('fixture source failure')", "if packet['primary']['windows'][0]['path']=='feature/app.js': raise RuntimeError('fixture source failure')"))
         result=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=180)
@@ -282,11 +276,7 @@ windows=packet['primary']['windows']""")
         self.assertTrue((output / "review-options.md").is_file())
         self.assertTrue((output / "finding-groups.json").is_file())
 
-    def test_last_budget_call_is_offered_as_final_without_research(self):
-        command = self.prepare_worker(proposal=False) + ["--max-calls", "1"]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf8", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
-        frame = json.loads(next((self.base / "worker/source-review/jobs").glob("*/0-input.json")).read_text())
+        frame = json.loads(next((output / "source-review/jobs").glob("*/0-input.json")).read_text())
         self.assertEqual(frame["research"]["rounds_remaining"], 0)
         self.assertEqual(frame["research"]["queries_remaining"], 0)
 
@@ -523,6 +513,25 @@ windows=packet['primary']['windows']""")
                 )
 
     def setUp(self):
+        self.prepare_source_tree()
+        self.native(
+            "investigate",
+            "review-inventory",
+            self.root,
+            "--repository-key",
+            "acceptance:source",
+            "--output",
+            self.inventory,
+        )
+        self.plan = self.native(
+            "investigate",
+            "source-review-plan",
+            self.root,
+            "--inventory",
+            self.inventory,
+        )
+
+    def prepare_source_tree(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mehscan-source-review-")
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
@@ -544,22 +553,6 @@ windows=packet['primary']['windows']""")
         (self.root / "tests").mkdir()
         (self.root / "tests/control.js").write_text(
             "eval(request.query.code);\n", encoding="utf8"
-        )
-        self.native(
-            "investigate",
-            "review-inventory",
-            self.root,
-            "--repository-key",
-            "acceptance:source",
-            "--output",
-            self.inventory,
-        )
-        self.plan = self.native(
-            "investigate",
-            "source-review-plan",
-            self.root,
-            "--inventory",
-            self.inventory,
         )
 
     def native(self, *args, okay=True):
@@ -641,13 +634,77 @@ windows=packet['primary']['windows']""")
         import review_context as context
         (self.root / "Widget.razor").unlink()
         (self.root / "lib.rs").write_text("pub fn answer() -> u8 { 42 }\n", encoding="utf8")
+        from unittest.mock import patch
         self.inventory = self.base / "rust-inventory"
-        self.native("investigate", "review-inventory", self.root,
-                    "--repository-key", "acceptance:rust-source", "--output", self.inventory)
+        config = self.base / "project-config.json"
+        config.write_text(json.dumps({"repository_key": "acceptance:rust-source", "stream": "source"}))
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(self.base / "state-home")}):
+            project = self.native("project", "prepare", self.root, "--config", config, "--output", self.inventory)
         self.assertEqual(json.loads((self.inventory / "inventory.json").read_text())["entries"], [])
-        result = subprocess.run(self.prepare_worker(proposal=False), capture_output=True,
-                                text=True, encoding="utf8", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + self.debug_output())
+        command = self.prepare_worker(proposal=False, project=project)
+        del command[command.index("--source-selection"):]
+        selection = json.loads((self.base / "selection.json").read_text())
+        item = dict(selection["assignments"][0], id="answer", actor="Library caller", conditions="Calling answer().",
+                    question="What does answer() return to its caller?", protected_effect="The library return value",
+                    area="Library interface", reason="The return value is exposed to library callers.",
+                    next_deciding_fact="Identify the deployed caller.",
+                    priority=dict(impact="unknown", exposure="unknown", evidence="strong", basis="Visible source."),
+                    checks=[{"id":"value", "question":"Does the function return zero?"},
+                            {"id":"caller", "question":"Which deployment calls the function?"}])
+        manifest = {k:selection[k] for k in ("source_plan_id", "source_fingerprint")}
+        manifest.update(schema_version="mehscanWorkPlan/v1", items=[item])
+        work_plan = self.base / "checks.json"
+        work_plan.write_text(json.dumps(manifest))
+        reviewer = self.base / "reviewer.py"
+        reviewer.write_text(reviewer.read_text().replace("'proposals':proposals,'coverage':", """'proposals':proposals,
+    'work_checks':[{'check_id':'value','status':'violated','summary':'The body returns 42.',
+        'evidence':[cite],'next_deciding_fact':None},
+        {'check_id':'caller','status':'unresolved','summary':'No deployment is shown.',
+        'evidence':[],'next_deciding_fact':'Identify the deployed caller.'}], 'coverage':"""))
+        command += ["--work-plan", str(work_plan), "--max-calls", "1", "--review-goal", "coverage"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr + self.debug_output())
+        worker = json.loads(result.stdout)
+        self.assertEqual(worker["work_goal"]["remaining_items"], 1)
+        close = self.native("state", "end", "--project-run", worker["project_run"], "--claim", worker["private_claim"],
+                            "--status", "incomplete", "--operation-key", "close-source")
+        receipt = self.base / "close.json"
+        receipt.write_text(json.dumps(close))
+        exports = self.native("report", "--close-receipt", receipt, "--format", "json-sarif")
+        report = exports["report"]
+        self.assertEqual(report["summary"]["reviewed"], 0)
+        self.assertEqual(exports["sarif"]["runs"][0]["results"], [])
+        case, = report["source_review_cases"]
+        self.assertEqual((case["id"], case["status"]), ("answer", "investigated_unresolved"))
+        answered, open_check = case["checks"]
+        self.assertEqual(answered["status"], "violated")
+        self.assertEqual(answered["evidence"], [{"path":"lib.rs", "start_line":1, "end_line":1}])
+        self.assertEqual((open_check["status"], open_check["next_deciding_fact"]),
+                         ("unresolved", "Identify the deployed caller."))
+        markdown = subprocess.check_output([self.scanner, "report", "--close-receipt", receipt, "--format", "markdown"], text=True)
+        for value in ("Named source checks", answered["question"], answered["summary"], "lib.rs:1-1",
+                      open_check["question"], open_check["next_deciding_fact"]):
+            self.assertIn(value, markdown)
+        claim = self.base / "broader-claim.json"
+        claim.write_text(json.dumps(self.native("state", "claim", "--close-receipt", receipt,
+            "--policy", "comprehensive", "--attempt-id", "broader", "--operation-key", "claim-broader")))
+        broader = self.native("investigate", "source-review-plan", "--close-receipt", receipt)
+        manifest.update(source_plan_id=broader["plan_id"], source_fingerprint=broader["source_fingerprint"])
+        manifest["items"].append(dict(item, id="response", checks=[{"id":"other", "question":"Is a caller documented?"}]))
+        expanded = self.base / "expanded.json"
+        expanded.write_text(json.dumps(manifest))
+        output = self.base / "broader"
+        result = subprocess.run([*command[:3], "--scanner", self.scanner, "--close-receipt", receipt, "--claim", claim,
+            "--reviewer-command", self.base / "command.json", "--reviewer-label", "fixture/source",
+            "--work-plan", expanded, "--output", output], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+        continued = json.loads((output / "worker.json").read_text())
+        self.assertEqual(continued["continuation"]["new_source_calls"], 0, continued)
+        self.assertEqual(continued["continuation"]["carried_cases"], 1)
+        latest = json.loads((output / "findings.json").read_text())
+        unfunded = next(case for case in latest["source_review_cases"] if case["id"] == "response")
+        self.assertEqual(unfunded["checks"][0]["status"], "not_checked")
+        self.assertEqual(self.native("report", "--close-receipt", receipt), report)
         packets = list((self.base / "worker/source-review/jobs").glob("*/context.json"))
         self.assertTrue(packets)
         router = context.language_contracts(SKILL, ["lib.rs"])[0]["text"]
@@ -677,62 +734,24 @@ windows=packet['primary']['windows']""")
         (self.root / "Widget.razor").write_text("changed\n")
         self.admit(data, "stale", okay=False)
 
-    def prepare_worker(self, *, proposal=True, fail=False, lookup=False, policy="value"):
+    def prepare_worker(self, *, proposal=True, fail=False, lookup=False, policy="value", project=None):
         if lookup:
             (self.root / "context.reviewdata").write_text(
                 "configuration reference\n", encoding="utf8"
             )
         store = self.base / "state"
-        claim = self.native(
-            "state",
-            "claim",
-            "--store",
-            store,
-            "--stream",
-            "source",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--expected-generation",
-            "0",
-            "--attempt-id",
-            "initial",
-            "--operation-key",
-            "claim",
-        )
-        common = [
-            "--store",
-            store,
-            "--stream",
-            "source",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--generation",
-            "1",
-            "--owner",
-            claim["result"]["owner"],
-            "--skill-root",
-            SKILL,
-        ]
-        plan = self.native(
-            "state",
-            "plan-template",
-            "--inventory",
-            self.inventory,
-            "--source-root",
-            self.root,
-            "--policy",
-            policy,
-            "--selection",
-            "policy",
-            "--skill-root",
-            SKILL,
-        )
-        for name, data in (("claim", claim), ("plan", plan)):
-            (self.base / (name + ".json")).write_text(json.dumps(data))
+        source = ["--inventory", self.inventory, "--source-root", self.root]
+        project_args = ["--project-run", project["project_run"]] if project else None
+        lane = project_args or [*source, "--store", store, "--stream", "source"]
+        claim = self.native("state", "claim", *lane, "--expected-generation", "0",
+                            "--attempt-id", "initial", "--operation-key", "claim")
+        claim_path = self.base / "claim.json"
+        claim_path.write_text(json.dumps(claim))
+        ownership = ["--claim", claim_path] if project else ["--generation", "1", "--owner", claim["result"]["owner"]]
+        common = [*lane, *ownership, "--skill-root", SKILL]
+        plan = self.native("state", "plan-template", *(project_args or source), "--policy", policy,
+                           "--selection", "policy", "--skill-root", SKILL)
+        (self.base / "plan.json").write_text(json.dumps(plan))
         self.native(
             "state",
             "plan",
@@ -768,14 +787,24 @@ task=json.load(sys.stdin)
 with Path(task['provider_metrics']).open('a',encoding='utf8') as receipt:
     receipt.write(json.dumps({'conversation_id':task['conversation_id'],'round':task['research']['round'],
         'provider':None,'elapsed_ms':1,'usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':10}})+'\\n')
-if task.get('review_role')=='second_pass_fast':
+role=task.get('review_role')
+if role in ('verification', 'second_pass_compare', 'second_pass_fast'):
     packet=json.loads(Path(task['evidence_packet']).read_text())
-    assert packet['source_handoff']['fact_count']>0, 'Original source facts must reach Fast'
+    if role=='verification':
+        assert 'stage_context' not in packet and not packet['work']['parent_decisions']
+    elif role=='second_pass_compare':
+        assert packet['stage_context']['baseline'] and packet['stage_context']['assessment']
+        assert task['research']['queries_remaining']==0
+    else:
+        assert packet['source_handoff']['fact_count']>0, 'Original source facts must reach Fast'
     rows=[{'review_id':i,'decision':'needs_review','confidence':'medium','summary':'Interpreter behavior needs source inspection.',
         'reason':'The custom callee behavior remains unavailable.','evidence':[{'path':'Widget.razor','start_line':1,'end_line':1}],
         'checks':['Read CustomInterpreter.Run to establish whether input is interpreted.'],'blockers':[]} for i in task['review_ids']]
-    print(json.dumps({'draft':{'results':rows},'review_checks':[{'review_id':i,'action':'keep','claim':'The deciding callee remains unavailable.',
-        'proof_status':'supported','investigation_status':'sufficient','error_codes':[]} for i in task['review_ids']], 'working_chain':'','progress':[]}))
+    answer={'draft':{'results':rows}, 'working_chain':'','progress':[]}
+    if role!='verification':
+        answer['review_checks']=[{'review_id':i,'action':'keep','claim':'The deciding callee remains unavailable.',
+            'proof_status':'supported','investigation_status':'sufficient','error_codes':[]} for i in task['review_ids']]
+    print(json.dumps(answer))
     sys.exit()
 assert task['kind']=='source_review', 'Must reuse source assessment without another native model call'
 packet=json.loads(Path(task['evidence_packet']).read_text())
@@ -823,14 +852,10 @@ print(json.dumps({'draft':{'results':rows,
             str(ROOT / "scripts/review_worker.py"),
             "--scanner",
             str(self.scanner),
-            "--source-root",
-            str(self.root),
-            "--inventory",
-            str(self.inventory),
-            "--store",
-            str(store),
-            "--stream",
-            "source",
+            *(["--project-run", project["project_run"]] if project else [
+                "--source-root", str(self.root), "--inventory", str(self.inventory),
+                "--store", str(store), "--stream", "source",
+            ]),
             "--claim",
             str(self.base / "claim.json"),
             "--work-package",
@@ -844,6 +869,98 @@ print(json.dumps({'draft':{'results':rows,
             "--source-selection",
             str(self.base / "selection.json"),
         ]
+
+    def test_project_close_reports_the_admitted_generation(self):
+        from unittest.mock import patch
+        config = self.base / "project-config.json"
+        config.write_text(json.dumps({"repository_key": "acceptance:source", "stream": "source"}))
+        self.inventory = self.base / "prepared"
+        with patch.dict(os.environ, {"MEHSCAN_STATE_HOME": str(self.base / "state-home")}):
+            project = self.native("project", "prepare", self.root, "--config", config,
+                                  "--output", self.inventory)
+            command = self.prepare_worker(project=project)
+            worker = subprocess.run(command, capture_output=True, text=True, check=True)
+        attempt = json.loads(worker.stdout)
+        self.assertEqual(attempt["generation"], 2)
+        end = ["state", "end", "--project-run", attempt["project_run"], "--status", "finished",
+               "--operation-key", "close-project"]
+        self.assertIn("generation", self.native(*end, "--claim", self.base / "claim.json", okay=False))
+        prepared_end = ["state", "end", "--project-run", project["project_run"], "--status", "finished",
+                        "--operation-key", "close-project", "--claim", attempt["private_claim"]]
+        self.assertIn("project inventory differs", self.native(*prepared_end, okay=False))
+        close = self.native(*end, "--claim", attempt["private_claim"])
+        self.assertEqual(close["result"], {"generation": 2, "status": "finished"})
+        self.assertEqual(close["memory"]["status"], "retained")
+        replay = self.native(*end, "--claim", attempt["private_claim"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["sequence"], close["sequence"])
+        self.assertEqual(replay["admitted_report"], close["admitted_report"])
+        receipt = self.base / "close.json"
+        receipt.write_text(json.dumps(close))
+        self.assertNotIn(json.loads(Path(attempt["private_claim"]).read_text())["result"]["owner"],
+                         receipt.read_text())
+        findings = Path(attempt["directory"]) / "findings.json"
+        exports = self.native("report", "--close-receipt", receipt, "--format", "json-sarif")
+        self.assertEqual(exports["report"], json.loads(findings.read_text()))
+        self.assertEqual(exports["sarif"]["version"], "2.1.0")
+        claim_args = ["state", "claim", "--close-receipt", receipt, "--attempt-id", "fast",
+                      "--operation-key", "claim-fast"]
+        receipt.write_text(json.dumps({**close, "sequence": close["sequence"] - 1}))
+        self.assertIn("journal close", self.native(*claim_args, okay=False))
+        receipt.write_text(json.dumps(close))
+        fresh = self.native(*claim_args)
+        self.assertEqual(fresh["result"]["generation"], 3)
+        self.assertEqual(self.native(*claim_args)["result"], fresh["result"])
+        self.assertIn("generation changed", self.native(*claim_args[:-1], "different-claim", okay=False))
+        audit_claim = self.base / "audit-claim.json"
+        audit_claim.write_text(json.dumps(fresh))
+        audit = self.base / "audit"
+        invocation = [*command[:3], "--scanner", str(self.scanner), "--close-receipt", str(receipt),
+                      "--claim", attempt["private_claim"], "--second-pass", "fast", "--second-pass-scope", "pending",
+                      "--supersede", "--reviewer-command", str(self.base / "command.json"),
+                      "--reviewer-label", "fixture/source", "--output", str(audit)]
+        stale = subprocess.run(invocation, capture_output=True, text=True)
+        self.assertNotEqual(stale.returncode, 0)
+        self.assertIn("fresh claim", stale.stderr)
+        self.assertFalse(audit.exists())
+        invocation[invocation.index("--claim") + 1] = str(audit_claim)
+        reviewed = subprocess.run(invocation, capture_output=True, text=True)
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr + reviewed.stdout)
+        checked = json.loads((audit / "second-pass.json").read_text())
+        self.assertEqual(checked["checked"], 1)
+        self.assertEqual(checked["accounting"]["second_pass"]["calls"], 1)
+        self.assertTrue(all(json.loads(p.read_text())["review_role"] == "second_pass_fast"
+                            for p in (audit / "training-turns").glob("*/*-input.json")))
+        self.assertEqual(json.loads(findings.read_text()), exports["report"])
+        # Close the Fast audit and independently recheck the pending result in generation four.
+        fast_result = json.loads(reviewed.stdout)
+        full_receipt = self.base / "fast-close.json"
+        full_receipt.write_text(json.dumps(self.native(
+            "state", "end", "--project-run", fast_result["project_run"], "--claim", fast_result["private_claim"],
+            "--status", "finished", "--operation-key", "close-fast")))
+        full_claim = self.base / "full-claim.json"
+        full_claim.write_text(json.dumps(self.native("state", "claim", "--close-receipt", full_receipt,
+                                                     "--attempt-id", "full", "--operation-key", "claim-full")))
+        full = self.base / "full"
+        for flag, value in (("--close-receipt", full_receipt), ("--claim", full_claim),
+                            ("--second-pass", "full"), ("--output", full)):
+            invocation[invocation.index(flag) + 1] = str(value)
+        audited = subprocess.run(invocation, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(audited.stdout)["generation"], 4)
+        summary = json.loads((full / "second-pass.json").read_text())
+        self.assertEqual((summary["checked"], summary["accounting"]["second_pass"]["calls"]), (1, 2))
+        first_turns = (json.loads(p.read_text()) for p in (full / "training-turns").glob("*/0-input.json"))
+        turns = {turn["review_role"]: turn for turn in first_turns}
+        self.assertEqual(set(turns), {"verification", "second_pass_compare"})
+        self.assertNotIn("work_package", turns["verification"])
+        self.assertNotEqual(turns["verification"]["conversation_id"], turns["second_pass_compare"]["conversation_id"])
+        self.assertEqual(self.native("report", "--close-receipt", receipt), exports["report"])
+        findings.write_bytes(findings.read_bytes() + b"\n")
+        self.assertIn("findings differ", self.native("report", "--close-receipt", receipt, okay=False))
+        replacement = json.loads(Path(attempt["project_run"]).read_text())
+        replacement["admitted_report"]["findings_sha256"] = hashlib.sha256(findings.read_bytes()).hexdigest()
+        Path(attempt["project_run"]).write_text(json.dumps(replacement))
+        self.assertIn("different command", self.native(*end, "--claim", attempt["private_claim"], okay=False))
 
     def test_default_worker_finalizes_a_discovered_question_without_a_second_investigation(
         self,

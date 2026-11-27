@@ -18,7 +18,7 @@ mod project;
 mod shared;
 mod upstream;
 
-pub(super) use project::run as run_project;
+pub(super) use project::{CloseReceipt, PreparedProject, run as run_project};
 
 const LOCAL_FOLDER_KEY_PREFIX: &str = "mehscan-local-folder:v1:";
 
@@ -102,6 +102,7 @@ struct Capture<'a> {
 }
 
 struct Snapshot {
+    prepared_inventory: Option<String>,
     repository: ReviewRepositoryIdentity,
     inventory: String,
     source: String,
@@ -209,6 +210,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         help();
         return Ok(());
     }
+    let closed_snapshot = if command.as_deref() == Some("export") {
+        CloseReceipt::supply_publication(&mut args, false)?
+    } else {
+        None
+    };
     if args.root != Path::new(".") {
         return Err("memory operations accept named options only".into());
     }
@@ -236,11 +242,14 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
         let store = resolve_store(store.as_deref(), &root, repository)?;
         return super::print_json(&shared::run(&store, repository, input.as_deref(), &root)?);
     }
-    let snapshot = load_snapshot(
-        &root,
-        &inventory,
-        matches!(command.as_deref(), Some("retain" | "compare" | "prepare")),
-    )?;
+    let snapshot = match closed_snapshot {
+        Some(snapshot) => snapshot,
+        None => load_snapshot(
+            &root,
+            &inventory,
+            matches!(command.as_deref(), Some("retain" | "compare" | "prepare")),
+        )?,
+    };
     if command.as_deref() == Some("prepare") {
         return super::print_json(&prepare_native(args, &root, store.as_deref(), &snapshot)?);
     }
@@ -427,6 +436,10 @@ fn snapshot_from_inventory(
         root, cache,
     ))?;
     Ok(Snapshot {
+        prepared_inventory: cache
+            .source_inputs
+            .as_ref()
+            .and_then(|binding| binding.prepared_inventory.clone()),
         files: sources.hashes(),
         subjects: catalog.subjects.clone(),
         sources: keep_sources.then_some(sources),
@@ -644,7 +657,7 @@ fn help() {
         "  mehscan memory shared-facts --source-root ROOT --inventory DIR [--store FILE] [--input PAGE]"
     );
     println!(
-        "  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
+        "  mehscan memory export --close-receipt FILE\n  mehscan memory export --source-root ROOT --inventory DIR --stream STREAM --batch ID [--store FILE]"
     );
     println!(
         "  mehscan memory knowledge-put --source-root ROOT --inventory DIR --input FILE [--store FILE]\n  mehscan memory knowledge-list --source-root ROOT --inventory DIR [--item ID] [--history true] [--store FILE]\n  mehscan memory knowledge-withdraw --source-root ROOT --inventory DIR --item ID --author NAME --expected-revision ID [--store FILE]"
@@ -660,6 +673,20 @@ fn help() {
 fn fingerprint(value: &impl Serialize) -> Result<String, String> {
     let encoded = serde_json::to_vec(value).map_err(|e| e.to_string())?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
+}
+
+// A history read executes the same content queries for each selected batch.
+async fn query_batch(
+    conn: &Connection,
+    sql: &'static str,
+    batch: &str,
+) -> Result<turso::Rows, String> {
+    conn.prepare_cached(sql)
+        .await
+        .map_err(db_error)?
+        .query((batch,))
+        .await
+        .map_err(db_error)
 }
 
 fn db_error(error: turso::Error) -> String {

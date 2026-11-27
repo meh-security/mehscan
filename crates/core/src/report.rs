@@ -158,8 +158,55 @@ pub struct DismissedReview {
     pub rule_id: Option<String>,
 }
 
+/// Named work at source handoff, before any subsequent native audit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceReviewCase {
+    pub id: String,
+    pub owner_path: String,
+    pub actor: String,
+    pub conditions: String,
+    pub status: String,
+    pub next_deciding_facts: Vec<String>,
+    pub checks: Vec<SourceReviewCheck>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceReviewCheck {
+    pub id: String,
+    pub question: String,
+    pub status: SourceCheckStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<SourceCheckCitation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_deciding_fact: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCheckStatus {
+    Satisfied,
+    Violated,
+    Unresolved,
+    NotChecked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceCheckCitation {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingReport {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_review_cases: Vec<SourceReviewCase>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decision_records: Vec<crate::ReviewDecisionRecord>,
     pub schema_version: String,
@@ -289,6 +336,8 @@ impl FindingReport {
                 render_finding(&mut output, index + 1, finding, true);
             }
         }
+
+        render_source_cases(&mut output, &self.source_review_cases);
 
         output.push_str("\n## Confirmed issues\n\n");
         if self.findings.is_empty() {
@@ -579,6 +628,74 @@ fn enum_label(value: impl std::fmt::Debug) -> String {
     label
 }
 
+fn render_source_cases(output: &mut String, cases: &[SourceReviewCase]) {
+    if cases.is_empty() {
+        return;
+    }
+    output
+        .push_str("\n## Named source checks\n\nRecorded at source handoff, before native audit.\n");
+    for case in cases {
+        output.push_str(&format!(
+            "\n### {} in {} ({})\n\n{} — {}\n",
+            markdown_code_span(&case.id),
+            markdown_code_span(&case.owner_path),
+            markdown_text(&case.status),
+            markdown_text(&case.actor),
+            markdown_text(&case.conditions)
+        ));
+        for check in &case.checks {
+            output.push_str(&format!(
+                "\n- **{}** {} ({})",
+                enum_label(check.status),
+                markdown_description(&check.question),
+                markdown_code_span(&check.id)
+            ));
+            if let Some(summary) = &check.summary {
+                output.push_str(&format!(" — {}", markdown_description(summary)));
+            }
+            for cite in &check.evidence {
+                output.push_str(&format!(
+                    " {}",
+                    markdown_code_span(&format!(
+                        "{}:{}-{}",
+                        cite.path, cite.start_line, cite.end_line
+                    ))
+                ));
+            }
+            output.push('\n');
+            if let Some(fact) = &check.next_deciding_fact {
+                output.push_str(&format!(
+                    "  - Next fact needed: {}\n",
+                    markdown_description(fact)
+                ));
+            }
+            for condition in &check.conditions {
+                output.push_str(&format!(
+                    "  - Applies when {}\n",
+                    markdown_description(condition)
+                ));
+            }
+            for limit in &check.limitations {
+                output.push_str(&format!(
+                    "  - Limitation: {}\n",
+                    markdown_description(limit)
+                ));
+            }
+        }
+        for fact in case.next_deciding_facts.iter().filter(|fact| {
+            !case
+                .checks
+                .iter()
+                .any(|check| check.next_deciding_fact.as_ref() == Some(*fact))
+        }) {
+            output.push_str(&format!(
+                "\nNext fact needed: {}\n",
+                markdown_description(fact)
+            ));
+        }
+    }
+}
+
 fn render_availability(output: &mut String, finding: &ReportedFinding) {
     for policy in &finding.related_feature_policies {
         output.push_str(&format!("\n- Related feature policy: {} (association only; runtime gating is not established)\n", markdown_text(policy)));
@@ -798,6 +915,7 @@ mod tests {
     #[test]
     fn markdown_prioritizes_review_checks_and_summarizes_all_outcomes() {
         let report = FindingReport {
+            source_review_cases: Vec::new(),
             decision_records: Vec::new(),
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),
@@ -897,6 +1015,7 @@ mod tests {
         second.description = "A second decoder performs the same unchecked read.".to_string();
         second.provenance.review_ids = vec!["review-2".to_string()];
         let report = FindingReport {
+            source_review_cases: Vec::new(),
             decision_records: Vec::new(),
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),

@@ -122,11 +122,7 @@
   capability: cryptographic_hash
   cwe: [CWE-327]
   match:
-    any:
-      - pattern: MessageDigest.getInstance($ALGORITHM)
-        captures: { algorithm: ALGORITHM }
-      - pattern: MessageDigest.getInstance($ALGORITHM, $$$ARGUMENTS)
-        captures: { algorithm: ALGORITHM }
+    native_captures: [algorithm]
   symbols:
     - canonical: java.security.MessageDigest.getInstance
       captures: { algorithm: 0 }

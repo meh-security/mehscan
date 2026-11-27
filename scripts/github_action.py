@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -408,6 +409,9 @@ def prepare(get=None, execute=run_command):
         raise ValueError("require-complete-delta-coverage must be true or false")
     if mode != "native" and os.environ.get("MEHSCAN_STATE_STORE", ""):
         raise ValueError("review handoff currently requires fresh one-run state; persistent review is unsupported")
+    selection_input = os.environ.get("MEHSCAN_SOURCE_SELECTION")
+    if selection_input and mode == "native":
+        raise ValueError("source-selection requires Value or Comprehensive review")
     endpoints, skip = resolve_delivery(get)
     sharing = None
     if link := os.environ.get("MEHSCAN_SHARE_LINK"):
@@ -455,21 +459,17 @@ def prepare(get=None, execute=run_command):
         if runtime["engine_sha256"] != plan["scanner_sha256"] or runtime["policy"] != mode:
             raise ValueError("native runtime differs from requested scanner/profile")
         plan["review"] = {"policy": mode, "skill_root": str(skill), "runtime": runtime,
-                          "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
-                          "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
-                          "source_controller_sha256": file_digest(Path(__file__).with_name("review_source.py")),
-                          "source_recovery_sha256": file_digest(Path(__file__).with_name("review_source_recovery.py")),
-                          "review_budget_sha256": file_digest(Path(__file__).with_name("review_budget.py")),
-                          "review_scheduler_sha256": file_digest(Path(__file__).with_name("review_scheduler.py")),
-                          "review_domains_sha256": file_digest(Path(__file__).with_name("review_domains.py")),
-                          "review_work_sha256": file_digest(Path(__file__).with_name("review_work.py")),
-                          "review_questions_sha256": file_digest(Path(__file__).with_name("review_questions.py")),
-                          "fact_audit_sha256": file_digest(Path(__file__).with_name("review_fact_audit.py")),
-                          "review_evidence_sha256": file_digest(Path(__file__).with_name("review_evidence.py")),
-                          "review_case_state_sha256": file_digest(Path(__file__).with_name("review_case_state.py")),
-                          "source_profile_sha256": file_digest(Path(__file__).with_name("review_source_profile.py")),
-                          "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
-                          "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
+                          **controller_hashes()}
+        if selection_input and skip is None:
+            selection = Path(selection_input)
+            if not selection.is_absolute():
+                raise ValueError("source-selection requires an absolute path")
+            selection = selection.resolve(strict=True)
+            if selection.is_relative_to(checkout) or not selection.is_file():
+                raise ValueError("source-selection must be a regular file outside target source")
+            saved = control / "requested-selection.json"
+            shutil.copyfile(selection, saved)
+            plan["review"]["source_selection_sha256"] = file_digest(saved)
         if provider_path:
             plan["review"]["provider_contract"] = provider_path
 
@@ -619,8 +619,6 @@ def state_json(plan, execute, operation, args, cleanup=False):
     kwargs = {"env": native_environment()}
     if cleanup:
         kwargs["cancellable"] = False
-    if operation in ("plan", "work") and (store := hosted_memory(plan)):
-        args = [*args, "--memory-store", store]
     result = json.loads(execute([plan["scanner"], "state", operation, *args], **kwargs))
     if not isinstance(result, dict):
         raise ValueError("native state returned an invalid receipt")
@@ -851,26 +849,37 @@ def provider_arguments(plan):
     return ["--provider-contract", path] if path else []
 
 
+CONTROLLER_FILES = {
+    "controller_sha256": "review_worker.py",
+    "context_sha256": "review_context.py",
+    "skill_policy_sha256": "skill-runtime-v2.json",
+    "source_controller_sha256": "review_source.py",
+    "source_recovery_sha256": "review_source_recovery.py",
+    "review_budget_sha256": "review_budget.py",
+    "review_scheduler_sha256": "review_scheduler.py",
+    "review_domains_sha256": "review_domains.py",
+    "review_work_sha256": "review_work.py",
+    "review_questions_sha256": "review_questions.py",
+    "fact_audit_sha256": "review_fact_audit.py",
+    "review_evidence_sha256": "review_evidence.py",
+    "review_case_state_sha256": "review_case_state.py",
+    "source_profile_sha256": "review_source_profile.py",
+    "exporter_sha256": "review_export.py",
+    "orchestrator_sha256": "review_orchestration.py",
+}
+
+
+def controller_hashes():
+    return {key: file_digest(Path(__file__).with_name(name)) for key, name in CONTROLLER_FILES.items()}
+
+
 def review_tools(plan, execute):
     if model := plan.get("model"):
         if file_digest(model["command"]) != model["command_sha256"] or file_digest(model["config"]) != model["config_sha256"]:
             raise ValueError("configured BYOK reviewer changed after preparation")
     config = plan["review"]
-    for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"),
-                      ("review_source.py", "source_controller_sha256"),
-                      ("review_source_recovery.py", "source_recovery_sha256"),
-                      ("review_budget.py", "review_budget_sha256"),
-                      ("review_scheduler.py", "review_scheduler_sha256"),
-                      ("review_domains.py", "review_domains_sha256"),
-                      ("review_work.py", "review_work_sha256"),
-                      ("review_questions.py", "review_questions_sha256"),
-                      ("review_fact_audit.py", "fact_audit_sha256"),
-                      ("review_evidence.py", "review_evidence_sha256"),
-                      ("review_case_state.py", "review_case_state_sha256"),
-                      ("review_source_profile.py", "source_profile_sha256"),
-                      ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
-        if file_digest(Path(__file__).with_name(name)) != config[key]:
-            raise ValueError("trusted review controller changed")
+    if any(config[key] != digest for key, digest in controller_hashes().items()):
+        raise ValueError("trusted review controller changed")
     runtime = state_json(plan, execute, "runtime-template", ["--skill-root", config["skill_root"], "--policy", config["policy"], *provider_arguments(plan)])
     if runtime != config["runtime"]:
         raise ValueError("review runtime changed before handoff")
@@ -938,8 +947,14 @@ def prepare_review(plan, directory, record, get, execute, cancelled):
         if plan.get("sharing"):
             record["shared_facts"] = sync_hosted_facts(plan, directory / "inventory")
         root = str(Path(plan["checkout"]) / plan["scan_root"])
-        source_args = ["--inventory", str(directory / "inventory"), "--source-root", root]
-        claim = state_json(plan, execute, "claim", [*common, *source_args, "--attempt-id", directory.name,
+        inventory = directory / "inventory"
+        store = hosted_memory(plan)
+        memory = ["--memory-store", store] if store else ["--memory-mode", "temporary"]
+        execute([plan["scanner"], "project", "bind", "--inventory", str(inventory), "--source-root", root,
+                 *common, *memory], env=native_environment())
+        reference = inventory / "project-run.json"
+        project = ["--project-run", str(reference)]
+        claim = state_json(plan, execute, "claim", [*project, "--attempt-id", directory.name,
             "--expected-generation", "0", "--operation-key", "review-claim:" + directory.name,
             "--coordination-key", "mehscanAction/v1:" + record["snapshot_id"]])
         receipt = claim["result"]
@@ -948,9 +963,9 @@ def prepare_review(plan, directory, record, get, execute, cancelled):
         info.update(state="owned_running", generation=receipt["generation"], native_snapshot_id=receipt["snapshot_id"])
         if cancelled():
             raise CancelledRun()
-        owned = [*common, *source_args, "--generation", str(receipt["generation"]), "--owner", receipt["owner"],
+        owned = [*project, "--generation", str(receipt["generation"]), "--owner", receipt["owner"],
                  "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)]
-        draft = state_json(plan, execute, "plan-template", [*source_args, "--policy", plan["review"]["policy"], "--selection", "policy",
+        draft = state_json(plan, execute, "plan-template", [*project, "--policy", plan["review"]["policy"], "--selection", "policy",
             "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)])
         if draft["runtime"] != plan["review"]["runtime"]:
             raise ValueError("review template differs from pinned runtime")
@@ -973,7 +988,8 @@ def prepare_review(plan, directory, record, get, execute, cancelled):
         (control / "claim.json").chmod(0o600)
         handoff = {"schema_version": "1", "plan": str(directory / "plan.json"),
                    "plan_sha256": file_digest(directory / "plan.json"), "snapshot_id": record["snapshot_id"],
-                   "work_package_id": package["package_id"], "claim_sha256": file_digest(control / "claim.json")}
+                   "work_package_id": package["package_id"], "project_sha256": file_digest(reference),
+                   "claim_sha256": file_digest(control / "claim.json")}
         write_json(control / "handoff.json", handoff)
         (control / "handoff.json").chmod(0o600)
         record.update(status="review_ready", reason="active_review_handoff", review_handoff=str(control / "handoff.json"))
@@ -1072,6 +1088,8 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
     get = get or GitHub(os.environ.get("GITHUB_API_URL", "https://api.github.com"), os.environ.get("GH_TOKEN", "")).get
     terminal = "incomplete"
     effective_inventory = directory / "inventory"
+    admitted_project = None
+    claim_path = control / "claim.json"
     try:
         if cancelled():
             raise CancelledRun()
@@ -1083,23 +1101,30 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
         if not is_current(plan["endpoints"], observe(plan, get)):
             record.update(status="stale", reason="endpoints_changed_before_review")
         else:
-            source_args = ["--inventory", str(directory / "inventory"), "--source-root", str(Path(plan["checkout"]) / plan["scan_root"])]
-            work = state_json(plan, execute, "work", [*common, *source_args, "--generation", str(receipt["generation"]),
+            prepared = effective_inventory / "project-run.json"
+            if file_digest(prepared) != handoff["project_sha256"]:
+                raise ValueError("project reference changed after handoff")
+            initial = json.loads(prepared.read_text(encoding="utf-8"))
+            project = ["--project-run", str(prepared)]
+            work = state_json(plan, execute, "work", [*project, "--generation", str(receipt["generation"]),
                 "--owner", receipt["owner"], "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)])
             if work["package_id"] != handoff["work_package_id"] or work != json.loads((directory / "work.json").read_text(encoding="utf-8")):
                 raise ValueError("review work changed after handoff")
             argv = [sys.executable, str(Path(__file__).with_name("review_worker.py")), "--scanner", plan["scanner"],
-                *source_args, *common, "--claim", str(control / "claim.json"), "--work-package", str(directory / "work.json"),
+                *project, "--claim", str(claim_path), "--work-package", str(directory / "work.json"),
                 "--skill-root", plan["review"]["skill_root"], "--reviewer-command", str(Path(reviewer_command).resolve(strict=True)),
                 "--reviewer-label", reviewer_label, "--output", str(directory / "review"),
                 "--artifact-root", str(directory), *provider_arguments(plan)]
             if (directory / "bundles").exists():
                 argv += ["--run", str(directory / "bundles")]
-            if store := hosted_memory(plan):
-                argv += ["--memory-store", store]
-                if plan["review"]["policy"] == "value":
-                    selection = hosted_value_selection(plan, effective_inventory, work, control, execute)
-                    argv += ["--source-selection", str(selection), "--native-share", "100"]
+            if expected := plan["review"].get("source_selection_sha256"):
+                selection = control / "requested-selection.json"
+                if file_digest(selection) != expected:
+                    raise ValueError("source-selection changed after handoff")
+                argv += ["--source-selection", str(selection)]
+            elif plan.get("sharing") and plan["review"]["policy"] == "value":
+                selection = hosted_value_selection(plan, effective_inventory, work, control, execute)
+                argv += ["--source-selection", str(selection), "--native-share", "100"]
             # The native worker owns finalization/report validation and admission.
             worker_error = None
             try:
@@ -1116,31 +1141,46 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
                               source_selection=str(directory / "review/source-review/selection-options.json"))
                 terminal = "incomplete"
                 return record
-            source_summary=directory/"review/source-review/summary.json"
-            if not source_summary.is_file():source_summary=directory/"review/source-review/handoff.json"
-            if source_summary.is_file():
-                source=json.loads(source_summary.read_text(encoding="utf-8"))
-                if source["parent_work_package_id"]!=handoff["work_package_id"]:
-                    raise ValueError("source review belongs to a different parent work package")
-                derived_claim=Path(source["effective_args"]["claim"]).resolve(strict=True)
-                if not derived_claim.is_relative_to((control/"state").resolve(strict=True)):
-                    raise ValueError("source review ownership must remain in private native state")
-                derived=json.loads(derived_claim.read_text(encoding="utf-8"))["result"]
-                if derived["generation"]!=receipt["generation"]+1:
+            # An interrupted transfer can precede the worker's final result.
+            transfer = directory / "review/source-review/handoff.json"
+            if native_admission:
+                candidate = directory / "review/project-run.json"
+                if Path(worker_record["project_run"]).resolve(strict=True) != candidate:
+                    raise ValueError("worker returned a different attempt")
+                binding_bytes = candidate.read_bytes()
+                bindings = json.loads(binding_bytes)
+                admitted_digest = hashlib.sha256(binding_bytes).hexdigest()
+                next_claim, inventory = worker_record["private_claim"], bindings["inventory"]
+                parent = worker_record.get("source_review", {}).get("parent_work_package_id")
+            elif transfer.is_file():
+                source = json.loads(transfer.read_text(encoding="utf-8"))
+                next_claim, inventory = source["effective_args"]["claim"], source["effective_args"]["inventory"]
+                parent = source["parent_work_package_id"]
+            else:
+                next_claim, inventory, parent = claim_path, effective_inventory, None
+            next_claim = Path(next_claim).resolve(strict=True)
+            inventory = Path(inventory).resolve(strict=True)
+            if next_claim != claim_path:
+                if (parent != handoff["work_package_id"] or not next_claim.is_relative_to(control / "state")
+                        or inventory != directory / "review/source-review/inventory"):
+                    raise ValueError("source review transfer differs from this handoff")
+                derived = json.loads(next_claim.read_text(encoding="utf-8"))["result"]
+                if derived["generation"] != receipt["generation"] + 1:
                     raise ValueError("source review did not derive the next native generation")
-                augmented=(directory/"review/source-review/inventory").resolve(strict=True)
-                if Path(source["effective_args"]["inventory"]).resolve(strict=True)!=augmented:
-                    raise ValueError("source review inventory is outside its immutable attempt")
-                owned=state_json(plan,execute,"status",[*common,"--repository-key",key])
-                if owned["generation"]!=derived["generation"] or owned["snapshot_id"]!=derived["snapshot_id"]:
-                    raise ValueError("source review generation changed before result")
-                receipt=derived
-                effective_inventory = augmented
+                receipt, claim_path, effective_inventory = derived, next_claim, inventory
+                record["coordination"].update(generation=receipt["generation"], native_snapshot_id=receipt["snapshot_id"])
+                record["source_review"] = worker_record.get("source_review")
+            elif inventory != effective_inventory or parent is not None:
+                raise ValueError("source review did not transfer ownership")
+            if native_admission:
+                if (any(bindings[field] != initial[field] for field in
+                        ("schema_version", "source_root", "repository_key", "state_store", "stream", "memory_store", "memory"))
+                        or bindings["admitted_report"]["generation"] != receipt["generation"]):
+                    raise ValueError("admitted project differs from this review")
                 if admitted:
-                    state_json(plan,execute,"work",[*common,"--inventory",str(augmented),"--source-root",str(Path(plan["checkout"])/plan["scan_root"]),
-                        "--generation",str(derived["generation"]),"--owner",derived["owner"],"--skill-root",plan["review"]["skill_root"],*provider_arguments(plan)])
-                record["coordination"].update(generation=receipt["generation"],native_snapshot_id=receipt["snapshot_id"])
-                record["source_review"]=worker_record.get("source_review")
+                    state_json(plan, execute, "work", ["--project-run", str(candidate), "--generation", str(receipt["generation"]),
+                        "--owner", receipt["owner"], "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)])
+                admitted_project = candidate
             review_tools(plan, execute)
             review_source(plan, execute)
             current = state_json(plan, execute, "status", [*common, "--repository-key", key])
@@ -1187,9 +1227,20 @@ def consume_review(handoff_path, reviewer_command, reviewer_label, get=None, exe
     finally:
         record.pop("review_handoff", None)
         try:
-            ended = end_review(plan, execute, common, key, receipt, terminal, effective_inventory)
-            if plan.get("sharing") and ended.get("memory", {}).get("status") == "retained":
-                record["retention"] = {"batch": ended["memory"]["batch"], "inventory": str(effective_inventory)}
+            if admitted_project and file_digest(admitted_project) != admitted_digest:
+                record.update(status="incomplete", reason="admitted_project_changed_before_close")
+                terminal, admitted_project = "incomplete", None
+            if admitted_project:
+                ended = state_json(plan, execute, "end", ["--project-run", str(admitted_project), "--claim", str(claim_path),
+                    "--status", terminal, "--operation-key", "review-end:" + terminal], cleanup=True)
+                close_path = control / "close.json"
+                write_json(close_path, ended)
+                if record["status"] == "reviewed":
+                    outputs({"close-receipt": str(close_path)})
+            else:
+                ended = end_review(plan, execute, common, key, receipt, terminal, effective_inventory)
+            if admitted_project and plan.get("sharing") and ended.get("memory", {}).get("status") == "retained":
+                record["retention"] = {"batch": ended["memory"]["batch"]}
             record["coordination"]["state"] = "owned_" + terminal
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
             record.update(status="incomplete", reason="review_end_failed")
@@ -1204,12 +1255,13 @@ def publish_hosted(plan_path):
     record = json.loads((plan_path.parent / "run.json").read_text(encoding="utf-8"))
     if not plan.get("sharing") or not record.get("retention") or record.get("shared_facts") != "synced":
         return
-    sharing, retained = plan["sharing"], record["retention"]
+    sharing = plan["sharing"]
     client, link = load_sharing(sharing)
     binding = sharing["binding"]
+    control, _, _ = review_lane(plan, plan_path.parent)
     args = SimpleNamespace(link=Path(sharing["link"]), scanner=Path(plan["scanner"]),
-        source_root=Path(plan["checkout"]) / plan["scan_root"], inventory=Path(retained["inventory"]),
-        store=Path(hosted_memory(plan)), pull_request=binding["pull_request"], stream=binding["stream"], batch=retained["batch"])
+        source_root=Path(plan["checkout"]) / plan["scan_root"], close_receipt=control / "close.json",
+        pull_request=binding["pull_request"])
     try:
         result = client.publish(args, link)
     except (client.ShareError, OSError, ValueError, KeyError, subprocess.SubprocessError):

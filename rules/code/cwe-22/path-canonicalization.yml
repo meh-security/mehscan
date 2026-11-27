@@ -38,19 +38,7 @@
   confidence: medium
   cwe: [CWE-22]
   match:
-    any:
-      - pattern: Paths.get($VALUE).normalize()
-        captures: { value: VALUE }
-      - pattern: Path.of($VALUE).normalize()
-        captures: { value: VALUE }
-      - pattern: Paths.get($VALUE).toRealPath()
-        captures: { value: VALUE }
-      - pattern: Path.of($VALUE).toRealPath()
-        captures: { value: VALUE }
-      - pattern: new File($VALUE).getCanonicalPath()
-        captures: { value: VALUE }
-      - pattern: new File($VALUE).getCanonicalFile()
-        captures: { value: VALUE }
+    native_captures: [value]
   tags: [filesystem, path, canonicalization, java]
   ai: *canonicalization_guidance
   provenance:

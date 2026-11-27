@@ -22,6 +22,9 @@ inputs:
   review-mode:
     description: native (default), value or comprehensive; AI modes prepare a handoff, or execute BYOK review when provider-config is supplied.
     default: native
+  source-selection:
+    description: Optional absolute path outside target source to a trusted, source-bound selection for Value or Comprehensive review.
+    default: ''
   require-complete-delta-coverage:
     description: Fail the Action when required review work on the pinned delta remains. Available artifacts can still be uploaded.
     default: 'false'
@@ -56,6 +59,9 @@ outputs:
   review-handoff:
     description: Private one-run handoff path for a trusted consumer; never upload the control directory. Empty in native mode or on failure.
     value: ${{ steps.review.outcome == 'skipped' && steps.finish.outputs.review-handoff || '' }}
+  close-receipt:
+    description: Private same-job receipt for reporting a current reviewed attempt.
+    value: ${{ steps.review.outcome == 'success' && steps.review.outputs.status == 'reviewed' && (steps.coverage.outcome == 'skipped' || steps.coverage.outputs.delta-coverage-gate == 'passed') && steps.review.outputs.close-receipt || '' }}
   artifact-name:
     description: Unique execution/attempt artifact name.
     value: ${{ steps.prepare.outputs.artifact-name }}
@@ -111,6 +117,7 @@ runs:
         MEHSCAN_SOURCE_PATH: ${{ inputs.source-path }}
         MEHSCAN_SCAN_ROOT: ${{ inputs.scan-root }}
         MEHSCAN_REVIEW_MODE: ${{ inputs.review-mode }}
+        MEHSCAN_SOURCE_SELECTION: ${{ inputs.source-selection }}
         MEHSCAN_REQUIRE_COMPLETE_DELTA_COVERAGE: ${{ inputs.require-complete-delta-coverage }}
         MEHSCAN_SKILL_ROOT: ${{ inputs.skill-root }}
         MEHSCAN_PROVIDER_CONTRACT: ${{ inputs.provider-contract }}
