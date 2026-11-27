@@ -188,6 +188,20 @@ print(json.dumps(result))
     assert reviewed["completed_assignments"] == reviewed["assignments"] > 0
     assert reviewed["calls"] > 0 and record["unknown_provider_calls"] == 0
     first_receipt = close(first, "close-value")
+    if sys.platform == "linux":
+        # A Linux executable can carry trailing bytes, so this tests a distinct
+        # build identity using the same behavior and version as the scanner.
+        other_build = base / "other-build"
+        shutil.copy2(scanner, other_build)
+        with other_build.open("ab") as binary:
+            binary.write(b"release smoke: different executable digest")
+        journal = Path(json.loads(Path(first["project_run"]).read_text(encoding="utf-8"))["state_store"]) / "transactions.jsonl"
+        original = journal.read_bytes()
+        refused = subprocess.run([other_build, "state", "claim", "--close-receipt", first_receipt,
+                                  "--attempt-id", "audit", "--operation-key", "claim-audit"],
+                                 env=env, capture_output=True, text=True, timeout=30)
+        assert refused.returncode and "cannot claim a follow-up from this close receipt" in refused.stderr, refused.stderr
+        assert journal.read_bytes() == original, "incompatible receipt claim appended a transaction"
     second = base / "second-pass"
     audit_claim = base / "audit-claim.json"
     save(audit_claim, native("state", "claim", "--close-receipt", first_receipt,

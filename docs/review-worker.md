@@ -219,6 +219,19 @@ call. Partial exports validate present responses normally and do not fabricate
 verdicts for missing IDs. Source results and remaining obligations stay in the
 attempt even when later native validation fails.
 
+## Upgrade between review attempts
+
+Keep the original scanner, skill, and reviewer available until their attempts
+are closed. Recovery, receipt-based audits, and Value-to-Comprehensive
+continuation use the build and review runtime that authorized the work.
+A receipt-based follow-up with a different scanner build fails before
+claiming another generation.
+
+After upgrading, use the old close receipt to render or export the retained
+results. Start new review work from a fresh claim and plan under the current
+build. Use the same repository key, stream, and memory store to load
+applicable retained knowledge into that plan.
+
 ## Bounded Value selection
 
 Run Value's default `all` phase once without a work plan or source selection. The output

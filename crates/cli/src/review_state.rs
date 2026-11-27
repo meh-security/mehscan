@@ -2152,14 +2152,66 @@ pub(super) fn inventory(
     Ok((cache, binding))
 }
 
-fn validate_runtime_engine(runtime: &mehscan_core::ReviewRuntimeContract) -> Result<(), String> {
-    runtime.validate(runtime.policy)?;
+fn runtime_engine_digest() -> Result<String, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let bytes = fs::read(executable).map_err(|error| error.to_string())?;
-    if runtime.engine_version != env!("CARGO_PKG_VERSION")
-        || runtime.engine_sha256 != format!("{:x}", Sha256::digest(bytes))
-    {
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_runtime_engine(
+    runtime: &mehscan_core::ReviewRuntimeContract,
+    engine_digest: impl FnOnce() -> Result<String, String>,
+) -> Result<(), String> {
+    runtime.validate(runtime.policy)?;
+    let version = env!("CARGO_PKG_VERSION");
+    if runtime.engine_version != version {
+        return Err(format!(
+            "review runtime engine changed from {} to {version}; prepare a new contract and plan",
+            runtime.engine_version
+        ));
+    }
+    if runtime.engine_sha256 != engine_digest()? {
         return Err("review runtime engine changed; prepare a new contract and plan".into());
+    }
+    Ok(())
+}
+
+fn validate_receipt_claim(
+    state: &State,
+    command: &Command,
+    engine_digest: String,
+) -> Result<(), String> {
+    let Command::Claim {
+        repository_key,
+        stream,
+        expected_generation,
+        audit_parent: Some(parent),
+        ..
+    } = command
+    else {
+        return Ok(());
+    };
+    let key = stream_key(repository_key, stream)?;
+    let Some(stream) = state.streams.get(&key) else {
+        return Ok(());
+    };
+    if !stream.attempts.last().is_some_and(|attempt| {
+        attempt.generation == *expected_generation && attempt.closed_report.as_ref() == Some(parent)
+    }) {
+        return Ok(()); // Claim validation reports a stale receipt or generation.
+    }
+    let runtime = stream
+        .completion_plans
+        .get(expected_generation)
+        .and_then(|plans| plans.last())
+        .and_then(|plan| plan.plan.runtime.as_ref());
+    if let Some(runtime) = runtime {
+        validate_runtime_engine(runtime, || Ok(engine_digest)).map_err(|error| {
+            format!(
+                "cannot claim a follow-up from this close receipt: {error}. \
+                 Use the original Mehscan build for this follow-up, or start a fresh review on the current build"
+            )
+        })?;
     }
     Ok(())
 }
@@ -2170,7 +2222,7 @@ pub(super) fn validate_runtime_skill(
     provider: Option<&str>,
     root: &Path,
 ) -> Result<(), String> {
-    validate_runtime_engine(runtime)?;
+    validate_runtime_engine(runtime, runtime_engine_digest)?;
     let skill = Path::new(skill.ok_or("runtime-bound review requires --skill-root")?);
     outside_source(skill, root)?;
     if !super::engine(mehscan_engine::review_runtime::matches_skill_bundle(
@@ -2231,7 +2283,6 @@ fn runtime_template(
             Ok::<_, String>(contract)
         })
         .transpose()?;
-    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let orchestration = args
         .optional("--review-orchestration")
         .map(|path| {
@@ -2250,10 +2301,7 @@ fn runtime_template(
         policy,
         worker_protocol: mehscan_core::REVIEW_WORKER_PROTOCOL,
         engine_version: env!("CARGO_PKG_VERSION").into(),
-        engine_sha256: format!(
-            "{:x}",
-            Sha256::digest(fs::read(executable).map_err(|error| error.to_string())?)
-        ),
+        engine_sha256: runtime_engine_digest()?,
         skill_bundle_id: super::engine(mehscan_engine::review_runtime::skill_bundle_id(&skill))?,
         limits,
         provider,
@@ -2766,7 +2814,8 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             args.finish()?;
             let (_, mut binding) = inventory(&inventory_path, &root)?;
             binding.coordination_key = coordination_key;
-            Command::Claim {
+            let follows_receipt = audit_parent.is_some();
+            let command = Command::Claim {
                 repository_key: binding.repository.repository_key.clone().unwrap(),
                 stream,
                 binding,
@@ -2776,7 +2825,18 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 audit_parent,
                 continuation_policy,
                 routed_source_generation,
+            };
+            if follows_receipt {
+                // Hash the executable before taking the exclusive journal lock.
+                let engine_digest = runtime_engine_digest()?;
+                return super::print_json(&transact_checked(
+                    &store,
+                    &operation_key,
+                    command,
+                    |state, command| validate_receipt_claim(state, command, engine_digest),
+                )?);
             }
+            command
         }
         "record" => {
             let inventory_path = PathBuf::from(args.required("--inventory")?);
