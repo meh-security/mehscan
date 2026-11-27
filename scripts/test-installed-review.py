@@ -1,4 +1,4 @@
-"""Exercise the extracted package's Changed worker and skill, without inference."""
+"""Exercise the extracted package's worker and invoking-session workflow."""
 import argparse
 import json
 import os
@@ -62,6 +62,85 @@ for transport, module, name in (
                    check=True, timeout=30)
 
 
+def check_host_review(native, finalize, save, base, source):
+    inventory = base / "host-inventory"
+    native("investigate", "review-inventory", source, "--repository-key", "test:installed-package",
+           "--output", inventory)
+    project = native("project", "bind", "--source-root", source, "--inventory", inventory,
+                     "--stream", "host-session", "--memory-mode", "temporary")["project_run"]
+    claim = base / "host-claim.json"
+    save(claim, native("state", "claim", "--project-run", project, "--attempt-id", "host-value",
+                       "--expected-generation", "0", "--operation-key", "claim-host-value"))
+    plan = native("state", "plan-template", "--project-run", project, "--policy", "value")
+    initial_ids = plan["selected_review_ids"]
+    assert initial_ids and plan.get("runtime") is None
+    plan_file = base / "host-plan.json"
+    save(plan_file, {**plan, "selected_review_ids": [], "deferred_review_ids":
+                    {value: "Value prioritized the named source check." for value in initial_ids}})
+    lane = ["--project-run", project, "--claim", claim]
+    native("state", "plan", *lane, "--input", plan_file, "--operation-key", "plan-host-value")
+    evidence = {"path": "app.js", "start_line": 1, "end_line": 1}
+    reviewer = "host-session/deterministic"
+
+    def close(lane, bundles, key, work=None):
+        work_file = base / (key + "-work.json")
+        save(work_file, work if work is not None else native("state", "work", *lane))
+        record = native("state", "record", *lane, "--work-package", work_file, "--run", bundles,
+                        "--reviewer", reviewer, "--operation-key", "record-" + key)
+        receipt = base / (key + "-close.json")
+        save(receipt, native("state", "end", "--project-run", record["project_run"], *lane[2:],
+                             "--status", "finished", "--operation-key", "close-" + key))
+        return receipt
+
+    def bundle(ids, key):
+        path = base / (key + "-bundles")
+        native("investigate", "review-bundles", source, "--inventory", inventory,
+               "--review-ids", ",".join(ids), "--output", path)
+        return path
+
+    value_bundles = bundle([], "host-value")
+    manifest = value_bundles / "manifest.json"
+    save(manifest, {**json.loads(manifest.read_text(encoding="utf-8")), "source_review_cases": [{
+        "id": "callers", "owner_path": "app.js", "actor": "request handler", "conditions": "Local source",
+        "status": "open", "next_deciding_facts": ["Resolve the caller contract."],
+        "checks": [{"id": "caller", "question": "Which caller constrains the supplied value?",
+                    "status": "unresolved", "evidence": [evidence]}],
+    }]})
+    value = close(lane, value_bundles, "host-value")
+    assert native("report", "--close-receipt", value)["source_review_cases"][0]["id"] == "callers"
+    comprehensive_claim = base / "host-comprehensive-claim.json"
+    save(comprehensive_claim, native("state", "claim", "--close-receipt", value, "--policy", "comprehensive",
+                                    "--attempt-id", "host-comprehensive", "--operation-key", "claim-host-full"))
+    lane = ["--project-run", project, "--claim", comprehensive_claim]
+    work = native("state", "work", *lane)
+    ids = work["payload"]["review_ids"]
+    assert work["payload"]["policy"] == "comprehensive" and work["payload"].get("runtime") is None
+    assert set(initial_ids).issubset(ids) and not work["payload"]["deferred_review_ids"]
+    bundles = bundle(ids, "host-comprehensive")
+    journals = base / "host-journals"
+    journals.mkdir()
+    manifest = json.loads((bundles / "manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["bundles"]:
+        filename = entry["filename"]
+        draft = base / "host-draft.json"
+        save(draft, {"results": [{"review_id": value, "decision": "needs_review", "confidence": "low",
+                                 "summary": "The caller contract still needs confirmation.",
+                                 "reason": "The operation receives caller-supplied input.",
+                                 "checks": ["Resolve the caller contract."], "evidence": [evidence]}
+                                for value in entry["review_ids"]]})
+        finalize("investigate", "review-bundle-finalize", "--bundle", bundles / "requests" / filename,
+                 "--draft", draft, "--journal-dir", journals, "--source-root", source,
+                 "--output", bundles / "responses" / filename)
+    comprehensive = close(lane, bundles, "host-comprehensive", work)
+    baseline = native("report", "--close-receipt", comprehensive)
+    assert baseline["summary"]["reviewed"] == len(ids)
+    audit_claim = base / "host-audit-claim.json"
+    save(audit_claim, native("state", "claim", "--close-receipt", comprehensive, "--attempt-id", "host-audit",
+                             "--operation-key", "claim-host-audit"))
+    audit = close(["--project-run", project, "--claim", audit_claim], bundles, "host-audit")
+    assert native("report", "--close-receipt", audit)["decision_records"] == baseline["decision_records"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", required=True, type=Path)
@@ -103,6 +182,7 @@ def main():
     git("add", "app.js")
     git("commit", "--quiet", "-m", "target")
     target = git("rev-parse", "HEAD")
+    check_host_review(native, lambda *args: call(scanner, *args), save, base, source)
     inventory = base / "inventory"
     call(scanner, "investigate", "review-inventory", source, "--changed-from", previous, "--target", target,
          "--diff-mode", "files", "--repository-key", "test:installed-package", "--output", inventory)
@@ -286,7 +366,7 @@ print(json.dumps(result))
     print(json.dumps({"status":"passed", "native_admission":"passed", "pending_preserved":True,
                       "installed_worker":True, "source_review":"passed", "second_pass":"passed", "scoped_pending":True,
                       "training_labels":"not_auto_approved", "document_links":"passed", "local_memory":"passed",
-                      "inference":False}))
+                      "invoking_session_review":"passed", "inference":False}))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ source can be a managed export, an engineer’s extracted download, or a Git
 worktree. Stage the authorized source first and select the configuration from
 outside that source folder.
 
+The interactive skill can review, continue and audit a prepared run using the
+invoking session's model and account. [Invoking-session workflow](../skills/mehscan-security/references/host-review.md)
+
 Save a JSON file such as `/review-config/payments.json` with a stable project
 key. Add a stream when the configuration belongs to a known branch or release
 track.

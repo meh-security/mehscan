@@ -141,8 +141,9 @@ Keep separately discovered existing IDs unreviewed until their own evidence chec
 
 After completing the requested first-pass scope, present the actual findings and
 grouped defects, pending questions, coverage and recorded tokens/time/cost when
-available. The worker emits `review-options.json` and `review-options.md` without
-buying another model pass. Show the proposed Fast claim count and deciding
+available. In the host session, use the [Fast selection rules](second-pass-review.md#automatic-fast-selection).
+The optional worker emits `review-options.json` and `review-options.md`.
+Show the proposed Fast claim count and deciding
 questions, any cap-deferred work, the broader Full scope and a specific useful
 flow for threat review when one is supported. Do not invent price estimates.
 

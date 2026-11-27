@@ -487,11 +487,10 @@ Keep this as lightweight review navigation, updated during first pass. It does
 not require a separate model call, complete architecture or threat-model report
 before inspecting source. Exact-ID and bounded source assignments start directly.
 
-For the bare Value `all` phase, first run the controller without a source or work
-plan. It prepares `source-review/plan.json`, `selection-options.json` and
-`checkpoint.json`, reports `selection_required` and makes no provider calls.
-Use [work goals](work-goals.md) to bind new ranked budget/coverage work. The
-existing mixed source-selection route below remains available when requested.
+For an interactive review, use the source plan and work package from the
+[invoking-session workflow](host-review.md). For explicitly requested worker
+automation, the bare Value `all` phase writes a selection checkpoint before
+provider calls. Use [work goals](work-goals.md) for the automated selection.
 Use this source index, native leads, route/job registration and bounded source
 reads in the host agent's current context to prepare a compact coverage plan:
 application actors and protected effects, candidate concentrations, existing
@@ -531,7 +530,7 @@ Assign one owner per operation and preserve shared cited facts for its related
 questions. A model, view, template or SQL definition enters through the deciding
 lookup rather than an independent duplicate investigation.
 
-Save the ranked selection outside the source root and pass it as
+Save the ranked selection outside the source root. For explicit automation, pass it as
 `--source-selection FILE`. Copy the exact source fingerprint, plan ID and
 assignment IDs from the checkpoint; the [worker guide](../../../docs/review-worker.md#bounded-value-selection)
 defines the JSON fields. An optional native assignment ranking must retain every

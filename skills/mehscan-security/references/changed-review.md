@@ -47,7 +47,7 @@ when it exceeds the user's requested work.
 
 ## Change pass and selected questions
 
-For a stateful workflow, use the [local worker guide](../../../docs/review-worker.md).
+For a stateful review in this session, follow the [native project workflow](host-review.md).
 Register selected and deferred native IDs and every changed path with
 `state plan`. Keep source-only leads when no native ID represents a changed
 effect. Reviewed entries have no questions; unresolved effects use needs_review

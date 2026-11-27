@@ -4,6 +4,9 @@ Use only when the user requests Fast or Full second-pass review. The default is
 off; this option is independent of Value/Comprehensive. Keep exact claim IDs and
 their actor, operand, branch, selected property and effect separate.
 
+For an interactive skill review, use the [invoking-session audit](host-review.md#audit).
+The worker command examples apply to explicitly requested automation.
+
 A work-plan first pass can add `--second-pass fast|full` directly. Its prepared
 source and assessments enter this same audit pipeline under the remaining shared
 allowance. For a later audit, use the native-phase first-pass workflow below;
