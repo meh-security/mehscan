@@ -390,12 +390,12 @@ impl State {
                     {
                         return Err("Comprehensive continuation requires a closed full-repository Value plan".into());
                     }
-                    let runtime = plan
-                        .runtime
-                        .as_mut()
-                        .ok_or("closed Value plan has no bound runtime")?;
                     let scope = super::review_completion::template(binding, *policy);
                     if let Some(source_generation) = routed_source_generation {
+                        let runtime = plan
+                            .runtime
+                            .as_mut()
+                            .ok_or("routed Value plan has no bound runtime")?;
                         let origin = item
                             .attempts
                             .last()
@@ -439,7 +439,9 @@ impl State {
                         }
                         *runtime = original.clone();
                     }
-                    runtime.policy = *policy;
+                    if let Some(runtime) = &mut plan.runtime {
+                        runtime.policy = *policy;
+                    }
                     plan.policy = *policy;
                     plan.selected_review_ids = scope.selected_review_ids;
                     plan.excluded_review_ids = scope.excluded_review_ids;

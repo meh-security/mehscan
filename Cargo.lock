@@ -1420,7 +1420,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-cli"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "fs2",
  "mehscan-core",
@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-core"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-engine"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "ast-grep-config",
  "ast-grep-core",
