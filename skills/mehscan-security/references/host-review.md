@@ -132,6 +132,12 @@ Use native status and the named-check list to report reviewed, pending, skipped
 and deferred work. Check the close receipt's memory status before publishing.
 Keep earlier close receipts and their frozen findings.
 
+Save actionable Fast nominations beside the first-pass receipt. For each
+nomination, record its exact native `review_id` and `decision_id`, one deciding
+question and the source-backed selection reason. Keep these as scheduling
+notes outside the native response draft. The finalizer accepts verdict and
+evidence fields, while `followup` is worker metadata.
+
 ## Continue Value into Comprehensive
 
 For an open attempt, bind a revised native plan with the current
@@ -150,12 +156,15 @@ new, missing or changed deciding facts under the remaining allowance. The
 Comprehensive native plan selects all eligible IDs in that scope. For Changed
 or Impact, revise the open plan or claim a fresh attempt and build a
 Comprehensive plan on the same scoped inventory, keeping the change pass.
+If Fast already closed on the same Value plan, continue from its newer receipt.
 
 Use the frozen report and prior bundles as input to continuation. Re-admit
 unchanged responses with matching requests, current parents, valid premises and
 the original reviewer label. If a request changed, revalidate its deciding facts
-and finalize against the current request. If the answer changes, use the exact
-supersession procedure below. A new generation requires current admission.
+and finalize against the current request. Repacking can create a new decision
+ID even when the verdict and evidence are unchanged. For each new decision with
+current parents, use the exact supersession procedure below and record what was
+revalidated. A new generation requires current admission.
 Carry forward unresolved facts and source limitations. Reuse evidence where
 it still applies and account for every selected ID and required check before
 reporting the effort complete.
@@ -164,6 +173,8 @@ reporting the effort complete.
 
 Read the baseline through the exact close receipt. For Fast, select bounded
 nominations under the [Fast rules](second-pass-review.md#automatic-fast-selection).
+Match saved nominations to the decision IDs in that receipt. Keep the
+audited IDs and their proof outcomes beside the new receipt.
 If there are no nominations, report an empty audit queue. For Full, check every
 admitted decision in the requested scope. Stage a source-first assessment
 before comparing it with the baseline. Use a fresh, blind host context only
@@ -179,9 +190,10 @@ are still current heads before using it. This approach also supports an
 invoking-session Comprehensive review of a prior automated Value result.
 Eligibility and current ownership still apply.
 
-For a changed decision, first render `mehscan report --run "$RUN/bundles"
---source-root "$ROOT" --reviewer "$REVIEWER"` with the same options as admission
-to obtain the incoming decision ID. Supply `--supersessions FILE` to
+For a new decision that replaces an existing head, first render
+`mehscan report --run "$RUN/bundles" --source-root "$ROOT" --reviewer "$REVIEWER"`
+with the same options as admission to obtain the incoming decision ID.
+Supply `--supersessions FILE` to
 `state record` with entries of
 `{"decision_id":"NEW_ID","parents":["EXACT_CURRENT_HEAD"],"reason":"Deciding evidence"}`.
 Use all exact heads for the subject from the current work package. Preserve
